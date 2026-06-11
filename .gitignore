@@ -1,0 +1,8 @@
+# Secrets — never commit
+backend/.env
+backend/token.json
+backend/oauth_state.json
+backend/.env
+__pycache__/
+*.pyc
+.env

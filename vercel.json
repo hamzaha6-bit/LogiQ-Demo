@@ -1,0 +1,13 @@
+{
+  "version": 2,
+  "buildCommand": "pip install -r backend/requirements.txt",
+  "builds": [
+    { "src": "backend/main.py", "use": "@vercel/python", "config": { "maxLambdaSize": "50mb" } },
+    { "src": "index.html", "use": "@vercel/static" }
+  ],
+  "routes": [
+    { "src": "/api/(.*)", "dest": "backend/main.py" },
+    { "src": "/", "dest": "/index.html" },
+    { "src": "/(.*)", "dest": "/index.html" }
+  ]
+}

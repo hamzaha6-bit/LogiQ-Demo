@@ -1,0 +1,164 @@
+"""Stripe billing integration."""
+
+from __future__ import annotations
+
+import logging
+import os
+from typing import Any, Dict, Optional
+
+import auth_service
+from supabase_client import is_configured, rest_patch
+
+logger = logging.getLogger("logiq.billing")
+
+PLANS = {
+    "starter": {
+        "name": "Starter",
+        "price_gbp": 49,
+        "max_agents": 3,
+        "max_actions_month": 5000,
+        "max_api_calls_day": 100,
+        "max_emails_day": 50,
+        "env_price": "STRIPE_STARTER_PRICE_ID",
+    },
+    "pro": {
+        "name": "Pro",
+        "price_gbp": 149,
+        "max_agents": None,
+        "max_actions_month": 25000,
+        "max_api_calls_day": 500,
+        "max_emails_day": 500,
+        "env_price": "STRIPE_PRO_PRICE_ID",
+    },
+    "business": {
+        "name": "Business",
+        "price_gbp": 399,
+        "max_agents": None,
+        "max_actions_month": None,
+        "max_api_calls_day": None,
+        "max_emails_day": None,
+        "env_price": "STRIPE_BUSINESS_PRICE_ID",
+    },
+}
+
+
+def is_configured() -> bool:
+    return bool((os.getenv("STRIPE_SECRET_KEY") or "").strip())
+
+
+def _stripe():
+    import stripe
+
+    stripe.api_key = (os.getenv("STRIPE_SECRET_KEY") or "").strip()
+    return stripe
+
+
+def get_price_id(plan: str) -> Optional[str]:
+    cfg = PLANS.get(plan.lower())
+    if not cfg:
+        return None
+    return (os.getenv(cfg["env_price"]) or "").strip() or None
+
+
+def get_plan_limits(plan: str) -> Dict[str, Any]:
+    return PLANS.get(plan.lower(), PLANS["starter"])
+
+
+async def create_checkout(user_id: str, email: str, plan: str, success_url: str, cancel_url: str) -> Dict[str, Any]:
+    if not is_configured():
+        raise ValueError("Stripe not configured — set STRIPE_SECRET_KEY and price IDs in .env")
+
+    price_id = get_price_id(plan)
+    if not price_id:
+        raise ValueError(f"Stripe price ID not configured for plan '{plan}'")
+
+    stripe = _stripe()
+    session = stripe.checkout.Session.create(
+        mode="subscription",
+        customer_email=email or None,
+        line_items=[{"price": price_id, "quantity": 1}],
+        success_url=success_url,
+        cancel_url=cancel_url,
+        metadata={"user_id": user_id, "plan": plan.lower()},
+        client_reference_id=user_id,
+    )
+    return {"checkout_url": session.url, "session_id": session.id}
+
+
+async def handle_webhook(payload: bytes, sig_header: str) -> Dict[str, Any]:
+    if not is_configured():
+        return {"ok": False, "error": "Stripe not configured"}
+
+    webhook_secret = (os.getenv("STRIPE_WEBHOOK_SECRET") or "").strip()
+    stripe = _stripe()
+
+    try:
+        if webhook_secret:
+            event = stripe.Webhook.construct_event(payload, sig_header, webhook_secret)
+        else:
+            import json
+
+            event = stripe.Event.construct_from(json.loads(payload), stripe.api_key)
+    except Exception as exc:
+        logger.exception("Stripe webhook verification failed")
+        return {"ok": False, "error": str(exc)}
+
+    event_type = event["type"]
+    data = event["data"]["object"]
+
+    if event_type == "checkout.session.completed":
+        user_id = (data.get("metadata") or {}).get("user_id") or data.get("client_reference_id")
+        plan = (data.get("metadata") or {}).get("plan", "pro")
+        if user_id and is_configured():
+            await rest_patch("user_profiles", {"id": user_id}, {"plan": plan})
+            logger.info("Updated user %s to plan %s", user_id, plan)
+
+    elif event_type == "customer.subscription.deleted":
+        user_id = (data.get("metadata") or {}).get("user_id")
+        if user_id and is_configured():
+            await rest_patch("user_profiles", {"id": user_id}, {"plan": "starter"})
+            logger.info("Downgraded user %s to starter", user_id)
+
+    return {"ok": True, "type": event_type}
+
+
+async def get_billing_status(user_id: str) -> Dict[str, Any]:
+    profile = await auth_service.get_profile(user_id)
+    plan = profile.get("plan") or "starter"
+    limits = get_plan_limits(plan)
+
+    from usage import get_month_usage, get_today_usage
+
+    today = await get_today_usage(user_id)
+    month = await get_month_usage(user_id)
+
+    def pct(used, limit):
+        if limit is None:
+            return 0
+        return min(100, round((used / limit) * 100)) if limit else 0
+
+    api_limit = limits.get("max_api_calls_day")
+    email_limit = limits.get("max_emails_day")
+    actions_limit = limits.get("max_actions_month")
+
+    return {
+        "plan": plan,
+        "plan_name": limits["name"],
+        "limits": {
+            "max_agents": limits["max_agents"],
+            "max_actions_month": actions_limit,
+            "max_api_calls_day": api_limit,
+            "max_emails_day": email_limit,
+        },
+        "usage": {
+            "api_calls_today": today.get("api_calls", 0),
+            "emails_sent_today": today.get("emails_sent", 0),
+            "actions_this_month": month.get("actions_taken", 0),
+        },
+        "percentages": {
+            "api_calls": pct(today.get("api_calls", 0), api_limit),
+            "emails": pct(today.get("emails_sent", 0), email_limit),
+            "actions": pct(month.get("actions_taken", 0), actions_limit),
+        },
+        "stripe_configured": is_configured(),
+    }
