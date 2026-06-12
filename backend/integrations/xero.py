@@ -1,3 +1,5 @@
+import bootstrap_path  # noqa: F401
+
 import os
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple

@@ -1,3 +1,5 @@
+import bootstrap_path  # noqa: F401
+
 import json
 import os
 import re

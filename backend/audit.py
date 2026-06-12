@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import bootstrap_path  # noqa: F401
+
 import logging
 from typing import Any, Dict, List, Optional
 

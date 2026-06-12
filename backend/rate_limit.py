@@ -1,3 +1,5 @@
+import bootstrap_path  # noqa: F401
+
 import time
 from collections import defaultdict
 from typing import DefaultDict, List

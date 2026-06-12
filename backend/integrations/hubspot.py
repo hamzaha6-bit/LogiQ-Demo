@@ -1,3 +1,5 @@
+import bootstrap_path  # noqa: F401
+
 import os
 from typing import Any, Dict, Tuple
 

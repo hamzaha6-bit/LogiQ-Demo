@@ -1,25 +1,17 @@
 import sys
 import os
 
-sys.path.insert(0, os.path.dirname(__file__))
-
-import logging
-from pathlib import Path
-
-from env_loader import ENV_FILE, bootstrap_env, debug_env_status
-
-logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
-logger = logging.getLogger("logiq")
-
-bootstrap_env()
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import bootstrap_path  # noqa: F401
 
 import asyncio
 import json
+import logging
 import re
 import traceback
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-import anthropic
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -31,34 +23,201 @@ from fastapi.exception_handlers import (
 from pydantic import BaseModel, Field
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from gmail_service import (
-    GmailNotAuthorised,
-    GmailNotConfigured,
-    GmailOAuthCallbackError,
-    exchange_code,
-    get_authorization_url,
-    get_frontend_redirect,
-    get_gmail_redirect_uri,
-    handle_oauth_callback,
-    has_sheets_scope,
-    is_gmail_authorised,
-    is_gmail_configured,
-    log_gmail_startup_status,
-    send_email,
-)
-import auth_service
-import audit
-import billing
-import usage
-from auth_service import AuthError, AuthNotConfigured
-from supabase_client import env_status, is_configured as supabase_backend_configured, is_url_set
-import sheets_service
-from sheets_service import SheetsError, SheetsScopeMissing
-from integrations import hubspot, xero
-from env_loader import BACKEND_DIR, ROOT_DIR
-from rate_limit import is_rate_limited
+logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+logger = logging.getLogger("logiq")
 
 app = FastAPI(title="LogiQ API", version="1.0.0")
+_IMPORT_ERRORS: List[Dict[str, str]] = []
+
+
+def _import_failed(name: str, exc: Exception) -> None:
+    _IMPORT_ERRORS.append(
+        {"module": name, "error": str(exc), "type": type(exc).__name__}
+    )
+    logger.error("Import failed [%s]: %s", name, exc)
+    traceback.print_exc()
+
+
+@app.get("/api/ping")
+async def api_ping():
+    """Minimal route with zero local dependencies — confirms the function loads."""
+    return {"status": "ok"}
+
+
+# ─── Local / third-party imports (failures recorded, app still boots) ─────────
+
+try:
+    from env_loader import ENV_FILE, bootstrap_env, debug_env_status, BACKEND_DIR, ROOT_DIR
+
+    bootstrap_env()
+except Exception as exc:
+    _import_failed("env_loader", exc)
+    ENV_FILE = Path(__file__).resolve().parent / ".env"
+    BACKEND_DIR = Path(__file__).resolve().parent
+    ROOT_DIR = BACKEND_DIR.parent
+
+    def bootstrap_env() -> None:
+        return None
+
+    def debug_env_status() -> Dict[str, Any]:
+        return {"import_errors": _IMPORT_ERRORS}
+
+try:
+    import anthropic
+except Exception as exc:
+    _import_failed("anthropic", exc)
+    anthropic = None  # type: ignore[assignment,misc]
+
+try:
+    from gmail_service import (
+        GmailNotAuthorised,
+        GmailNotConfigured,
+        GmailOAuthCallbackError,
+        exchange_code,
+        get_authorization_url,
+        get_frontend_redirect,
+        get_gmail_redirect_uri,
+        handle_oauth_callback,
+        has_sheets_scope,
+        is_gmail_authorised,
+        is_gmail_configured,
+        log_gmail_startup_status,
+        send_email,
+    )
+except Exception as exc:
+    _import_failed("gmail_service", exc)
+
+    class GmailNotAuthorised(Exception):
+        pass
+
+    class GmailNotConfigured(Exception):
+        pass
+
+    class GmailOAuthCallbackError(Exception):
+        pass
+
+    def exchange_code(*_a, **_k):
+        raise GmailNotConfigured("gmail_service import failed")
+
+    def get_authorization_url(*_a, **_k):
+        raise GmailNotConfigured("gmail_service import failed")
+
+    def get_frontend_redirect(*_a, **_k):
+        return "/"
+
+    def get_gmail_redirect_uri(*_a, **_k):
+        return ""
+
+    def handle_oauth_callback(*_a, **_k):
+        raise GmailOAuthCallbackError("gmail_service import failed")
+
+    def has_sheets_scope(*_a, **_k):
+        return False
+
+    def is_gmail_authorised(*_a, **_k):
+        return False
+
+    def is_gmail_configured(*_a, **_k):
+        return False
+
+    def log_gmail_startup_status(*_a, **_k):
+        return None
+
+    def send_email(*_a, **_k):
+        raise GmailNotConfigured("gmail_service import failed")
+
+try:
+    import auth_service
+    from auth_service import AuthError, AuthNotConfigured
+except Exception as exc:
+    _import_failed("auth_service", exc)
+    auth_service = None  # type: ignore[assignment,misc]
+
+    class AuthError(Exception):
+        def __init__(self, message: str, status: int = 400):
+            super().__init__(message)
+            self.status = status
+
+    class AuthNotConfigured(Exception):
+        pass
+
+try:
+    import audit
+except Exception as exc:
+    _import_failed("audit", exc)
+    audit = None  # type: ignore[assignment,misc]
+
+try:
+    import billing
+except Exception as exc:
+    _import_failed("billing", exc)
+    billing = None  # type: ignore[assignment,misc]
+
+try:
+    import usage
+except Exception as exc:
+    _import_failed("usage", exc)
+    usage = None  # type: ignore[assignment,misc]
+
+try:
+    from supabase_client import env_status, is_configured as supabase_backend_configured, is_url_set
+except Exception as exc:
+    _import_failed("supabase_client", exc)
+
+    def env_status() -> Dict[str, bool]:
+        return {"url_set": False, "anon_key_set": False, "service_key_set": False}
+
+    def supabase_backend_configured() -> bool:
+        return False
+
+    def is_url_set() -> bool:
+        return False
+
+try:
+    import sheets_service
+    from sheets_service import SheetsError, SheetsScopeMissing
+except Exception as exc:
+    _import_failed("sheets_service", exc)
+    sheets_service = None  # type: ignore[assignment,misc]
+
+    class SheetsError(Exception):
+        pass
+
+    class SheetsScopeMissing(Exception):
+        pass
+
+try:
+    from integrations import hubspot, xero
+except Exception as exc:
+    _import_failed("integrations", exc)
+    hubspot = None  # type: ignore[assignment,misc]
+    xero = None  # type: ignore[assignment,misc]
+
+try:
+    from rate_limit import is_rate_limited
+except Exception as exc:
+    _import_failed("rate_limit", exc)
+
+    def is_rate_limited(_ip: str) -> bool:
+        return False
+
+
+@app.middleware("http")
+async def import_error_middleware(request: Request, call_next):
+    if _IMPORT_ERRORS and request.url.path not in (
+        "/api/ping",
+        "/api/health",
+        "/api/debug/import",
+        "/api/debug/env",
+    ):
+        return JSONResponse(
+            status_code=500,
+            content={
+                "detail": "Backend module import failed",
+                "import_errors": _IMPORT_ERRORS,
+            },
+        )
+    return await call_next(request)
 
 
 def _api_json_error(status_code: int, detail: Any) -> JSONResponse:
@@ -123,6 +282,8 @@ PROTECTED_PREFIXES = ("/api/agent/", "/api/send/")
 
 
 async def resolve_user(request: Request) -> Optional[Dict[str, Any]]:
+    if auth_service is None:
+        return None
     auth = request.headers.get("Authorization", "")
     token = request.query_params.get("token", "")
     if auth.startswith("Bearer "):
@@ -166,7 +327,9 @@ def get_anthropic_api_key() -> str:
     return key
 
 
-def get_anthropic_client() -> anthropic.Anthropic:
+def get_anthropic_client():
+    if anthropic is None:
+        raise HTTPException(status_code=503, detail="anthropic package not loaded")
     return anthropic.Anthropic(api_key=get_anthropic_api_key())
 
 
@@ -310,12 +473,26 @@ async def debug_env():
     return debug_env_status()
 
 
+@app.get("/api/debug/import")
+async def debug_import():
+    return {
+        "import_errors": _IMPORT_ERRORS,
+        "modules_loaded": len(_IMPORT_ERRORS) == 0,
+        "backend_dir": str(BACKEND_DIR),
+        "python_path": sys.path[:8],
+    }
+
+
 @app.get("/api/config")
 async def public_config():
-    return {
-        **auth_service.public_config(),
-        "stripe_configured": billing.is_configured(),
-    }
+    cfg: Dict[str, Any] = {"stripe_configured": False}
+    if auth_service is not None:
+        cfg.update(auth_service.public_config())
+    if billing is not None:
+        cfg["stripe_configured"] = billing.is_configured()
+    if _IMPORT_ERRORS:
+        cfg["import_errors"] = _IMPORT_ERRORS
+    return cfg
 
 
 @app.get("/api/health")
@@ -323,20 +500,21 @@ async def health():
     key_ok = bool((os.getenv("ANTHROPIC_API_KEY") or "").strip())
     supabase_env = env_status()
     return {
-        "status": "ok",
+        "status": "degraded" if _IMPORT_ERRORS else "ok",
         "runtime": "vercel" if os.getenv("VERCEL") else "local",
+        "import_errors": _IMPORT_ERRORS,
         "anthropic_configured": key_ok,
         "supabase_configured": is_url_set(),
         "supabase_backend_configured": supabase_backend_configured(),
         "supabase_env": supabase_env,
-        "stripe_configured": billing.is_configured(),
+        "stripe_configured": billing.is_configured() if billing is not None else False,
         "integrations": {
             "gmail": is_gmail_configured(),
             "gmail_authorised": is_gmail_authorised(),
-            "sheets": sheets_service.is_available(),
+            "sheets": sheets_service.is_available() if sheets_service is not None else False,
             "sheets_scope": has_sheets_scope(),
-            "xero": xero.is_configured(),
-            "hubspot": hubspot.is_configured(),
+            "xero": xero.is_configured() if xero is not None else False,
+            "hubspot": hubspot.is_configured() if hubspot is not None else False,
             "calendly": bool((os.getenv("CALENDLY_LINK") or "").strip()),
         },
     }
@@ -778,6 +956,9 @@ async def hubspot_contact(req: HubSpotContactRequest):
 
 @app.on_event("startup")
 async def startup_tasks():
+    if _IMPORT_ERRORS:
+        logger.warning("Skipping startup tasks — import errors: %s", _IMPORT_ERRORS)
+        return
     log_gmail_startup_status()
     schema_path = BACKEND_DIR / "schema.sql"
     if schema_path.exists():
