@@ -6,6 +6,7 @@
     { "src": "api/config.py", "use": "@vercel/python" },
     { "src": "api/chat.py", "use": "@vercel/python" },
     { "src": "api/auth.py", "use": "@vercel/python" },
+    { "src": "api/gmail_auth.py", "use": "@vercel/python" },
     { "src": "api/billing_status.py", "use": "@vercel/python" },
     { "src": "api/integrations_config.py", "use": "@vercel/python" },
     { "src": "api/audit_log.py", "use": "@vercel/python" },
@@ -19,6 +20,9 @@
     { "src": "/api/billing/status", "dest": "/api/billing_status.py" },
     { "src": "/api/integrations/config", "dest": "/api/integrations_config.py" },
     { "src": "/api/audit/log", "dest": "/api/audit_log.py" },
+    { "src": "/api/auth/gmail/connect", "dest": "/api/gmail_auth.py" },
+    { "src": "/api/auth/gmail/callback", "dest": "/api/gmail_auth.py" },
+    { "src": "/api/auth/gmail/status", "dest": "/api/gmail_auth.py" },
     { "src": "/api/auth/(.*)", "dest": "/api/auth.py" },
     { "handle": "filesystem" },
     { "src": "/(.*)", "dest": "/index.html" }
