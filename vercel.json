@@ -1,26 +1,17 @@
 {
   "version": 2,
   "builds": [
-    {
-      "src": "api/ping.py",
-      "use": "@vercel/python"
-    },
-    {
-      "src": "api/index.py",
-      "use": "@vercel/python",
-      "config": {
-        "maxLambdaSize": "50mb",
-        "includeFiles": "backend/**"
-      }
-    },
-    {
-      "src": "index.html",
-      "use": "@vercel/static"
-    }
+    { "src": "api/ping.py", "use": "@vercel/python" },
+    { "src": "api/health.py", "use": "@vercel/python" },
+    { "src": "api/chat.py", "use": "@vercel/python" },
+    { "src": "api/auth.py", "use": "@vercel/python" },
+    { "src": "index.html", "use": "@vercel/static" }
   ],
   "routes": [
     { "src": "/api/ping", "dest": "/api/ping.py" },
-    { "src": "/api/(.*)", "dest": "/api/index.py" },
+    { "src": "/api/health", "dest": "/api/health.py" },
+    { "src": "/api/chat", "dest": "/api/chat.py" },
+    { "src": "/api/auth/(.*)", "dest": "/api/auth.py" },
     { "handle": "filesystem" },
     { "src": "/(.*)", "dest": "/index.html" }
   ]
