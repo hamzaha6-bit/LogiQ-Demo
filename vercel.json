@@ -2,6 +2,10 @@
   "version": 2,
   "builds": [
     {
+      "src": "api/ping.py",
+      "use": "@vercel/python"
+    },
+    {
       "src": "api/index.py",
       "use": "@vercel/python",
       "config": {
@@ -15,6 +19,7 @@
     }
   ],
   "routes": [
+    { "src": "/api/ping", "dest": "/api/ping.py" },
     { "src": "/api/(.*)", "dest": "/api/index.py" },
     { "handle": "filesystem" },
     { "src": "/(.*)", "dest": "/index.html" }
