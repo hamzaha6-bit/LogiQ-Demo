@@ -5,7 +5,17 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, Optional, Tuple
 
-from supabase_client import get_anon_key, get_client, get_url, is_configured, rest_post, rest_upsert
+from supabase_client import (
+    env_status,
+    get_anon_key,
+    get_client,
+    get_url,
+    is_configured,
+    is_public_configured,
+    is_url_set,
+    rest_post,
+    rest_upsert,
+)
 
 logger = logging.getLogger("logiq.auth")
 
@@ -21,10 +31,14 @@ class AuthError(Exception):
 
 
 def public_config() -> Dict[str, Any]:
+    url = get_url()
+    anon = get_anon_key()
+    public_ok = is_public_configured()
     return {
-        "supabase_configured": is_configured(),
-        "supabase_url": get_url() if is_configured() else "",
-        "supabase_anon_key": get_anon_key() if is_configured() else "",
+        "supabase_configured": public_ok or is_url_set(),
+        "supabase_backend_configured": is_configured(),
+        "supabase_url": url if url else "",
+        "supabase_anon_key": anon if public_ok else "",
     }
 
 

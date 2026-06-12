@@ -813,8 +813,15 @@ async function doForgotPassword() {
 async function loadAppConfig() {
   try {
     const res = await fetch(API_BASE + '/api/config');
-    if (res.ok) appConfig = await res.json();
-  } catch(e) {}
+    const ct = res.headers.get('content-type') || '';
+    if (res.ok && ct.includes('application/json')) {
+      appConfig = await res.json();
+    } else if (res.ok) {
+      console.warn('/api/config returned non-JSON (got', ct, ') — API may be serving static HTML');
+    }
+  } catch(e) {
+    console.warn('Failed to load /api/config:', e.message);
+  }
 }
 
 async function loadBillingStatus() {
@@ -1018,7 +1025,8 @@ function renderNavAgents() {
 async function checkHealth() {
   try {
     const res = await fetch(API_BASE + '/api/health', { signal: AbortSignal.timeout(4000) });
-    if (res.ok) {
+    const ct = res.headers.get('content-type') || '';
+    if (res.ok && ct.includes('application/json')) {
       const data = await res.json();
       backendReachable = true;
       backendAvailable = true;
@@ -2874,7 +2882,7 @@ async function init() {
   await checkHealth();
   switchUserStore('_demo');
 
-  if (appConfig.supabase_configured) {
+  if (appConfig.supabase_configured || (appConfig.supabase_url && appConfig.supabase_anon_key)) {
     showAuth();
     document.getElementById('supabase-banner').classList.add('hidden');
   } else {

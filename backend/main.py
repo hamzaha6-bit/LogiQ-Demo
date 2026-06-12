@@ -1,5 +1,9 @@
-import logging
+import sys
 import os
+
+sys.path.insert(0, os.path.dirname(__file__))
+
+import logging
 from pathlib import Path
 
 from env_loader import ENV_FILE, bootstrap_env, debug_env_status
@@ -47,7 +51,7 @@ import audit
 import billing
 import usage
 from auth_service import AuthError, AuthNotConfigured
-from supabase_client import is_configured as supabase_configured
+from supabase_client import env_status, is_configured as supabase_backend_configured, is_url_set
 import sheets_service
 from sheets_service import SheetsError, SheetsScopeMissing
 from integrations import hubspot, xero
@@ -138,7 +142,7 @@ async def auth_middleware(request: Request, call_next):
         request.state.user_id = user["id"]
 
     path = request.url.path
-    if supabase_configured() and any(path.startswith(p) for p in PROTECTED_PREFIXES):
+    if supabase_backend_configured() and any(path.startswith(p) for p in PROTECTED_PREFIXES):
         if not user:
             return JSONResponse(status_code=401, content={"detail": "Authentication required"})
     return await call_next(request)
@@ -317,10 +321,14 @@ async def public_config():
 @app.get("/api/health")
 async def health():
     key_ok = bool((os.getenv("ANTHROPIC_API_KEY") or "").strip())
+    supabase_env = env_status()
     return {
         "status": "ok",
+        "runtime": "vercel" if os.getenv("VERCEL") else "local",
         "anthropic_configured": key_ok,
-        "supabase_configured": supabase_configured(),
+        "supabase_configured": is_url_set(),
+        "supabase_backend_configured": supabase_backend_configured(),
+        "supabase_env": supabase_env,
         "stripe_configured": billing.is_configured(),
         "integrations": {
             "gmail": is_gmail_configured(),
@@ -879,10 +887,10 @@ async def oauth_callback(integration: str, code: Optional[str] = None, error: Op
     return RedirectResponse(url=f"/?oauth={integration}&status={status}")
 
 
-# Vercel serverless handler
+# Vercel serverless handler (also used when backend/main.py is the build entry)
 try:
     from mangum import Mangum
 
-    handler = Mangum(app)
+    handler = Mangum(app, lifespan="off")
 except ImportError:
-    handler = None
+    handler = app

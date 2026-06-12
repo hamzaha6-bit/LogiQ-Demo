@@ -22,6 +22,8 @@ TRACKED_KEYS = (
     "GMAIL_SENDER_EMAIL",
     "GMAIL_CREDENTIALS_JSON",
     "SUPABASE_URL",
+    "SUPABASE_ANON_KEY",
+    "SUPABASE_SERVICE_KEY",
 )
 
 _file_cache: Optional[Dict[str, str]] = None
@@ -76,6 +78,7 @@ def parse_env_file(path: Path) -> Dict[str, str]:
 
 
 def _apply_parsed_env(parsed: Dict[str, str], source: str) -> None:
+    """Fill missing os.environ keys from .env files — never override existing values."""
     for key, value in parsed.items():
         if not value.strip():
             continue
@@ -88,16 +91,6 @@ def _apply_parsed_env(parsed: Dict[str, str], source: str) -> None:
                 key,
                 source,
                 len(value),
-            )
-        elif current != value.strip():
-            os.environ[key] = value
-            logger.info(
-                "ENV [%s] %s overridden from %s (%d chars, was %d chars)",
-                source,
-                key,
-                source,
-                len(value),
-                len(current),
             )
 
 
@@ -149,12 +142,23 @@ def log_env_var(key: str) -> None:
     )
 
 
+def is_vercel_runtime() -> bool:
+    return bool(os.getenv("VERCEL") or os.getenv("VERCEL_ENV"))
+
+
 def bootstrap_env() -> None:
     """Load .env with absolute paths, manual fallback, and verbose diagnostics."""
+    on_vercel = is_vercel_runtime()
     backend_info = _env_file_info(ENV_FILE)
     root_info = _env_file_info(ROOT_ENV_FILE)
 
     logger.info("=== Environment bootstrap ===")
+    if on_vercel:
+        logger.info(
+            "Vercel runtime detected (VERCEL=%s VERCEL_ENV=%s) — os.environ takes precedence",
+            os.getenv("VERCEL"),
+            os.getenv("VERCEL_ENV"),
+        )
     logger.info(
         "Backend .env: path=%s exists=%s size_bytes=%s readable=%s",
         backend_info["path"],
@@ -180,29 +184,41 @@ def bootstrap_env() -> None:
             root_info["readable"],
         )
 
-    dotenv_ok = load_dotenv(ENV_FILE, override=True)
-    logger.info("dotenv load_dotenv(backend/.env): %s", "OK" if dotenv_ok else "no variables loaded")
+    if not on_vercel:
+        dotenv_ok = load_dotenv(ENV_FILE, override=False)
+        logger.info(
+            "dotenv load_dotenv(backend/.env): %s",
+            "OK" if dotenv_ok else "no variables loaded",
+        )
 
-    if not (os.getenv("ANTHROPIC_API_KEY") or "").strip():
-        root_ok = load_dotenv(ROOT_ENV_FILE, override=True)
-        logger.info("dotenv load_dotenv(root/.env): %s", "OK" if root_ok else "skipped or empty")
+        if not (os.getenv("ANTHROPIC_API_KEY") or "").strip():
+            root_ok = load_dotenv(ROOT_ENV_FILE, override=False)
+            logger.info(
+                "dotenv load_dotenv(root/.env): %s",
+                "OK" if root_ok else "skipped or empty",
+            )
+    else:
+        logger.info("Skipping .env file load on Vercel — using injected environment variables")
 
-    parsed_backend = parse_env_file(ENV_FILE)
-    logger.info(
-        "Manual parse backend/.env: %d keys found (file size %s bytes)",
-        len(parsed_backend),
-        backend_info["size_bytes"],
-    )
-    _apply_parsed_env(parsed_backend, "manual-backend")
+    parsed_backend: Dict[str, str] = {}
+    parsed_root: Dict[str, str] = {}
+    if not on_vercel:
+        parsed_backend = parse_env_file(ENV_FILE)
+        logger.info(
+            "Manual parse backend/.env: %d keys found (file size %s bytes)",
+            len(parsed_backend),
+            backend_info["size_bytes"],
+        )
+        _apply_parsed_env(parsed_backend, "manual-backend")
 
-    if ROOT_ENV_FILE.exists():
-        parsed_root = parse_env_file(ROOT_ENV_FILE)
-        if parsed_root:
-            logger.info("Manual parse root/.env: %d keys found", len(parsed_root))
-            _apply_parsed_env(parsed_root, "manual-root")
+        if ROOT_ENV_FILE.exists():
+            parsed_root = parse_env_file(ROOT_ENV_FILE)
+            if parsed_root:
+                logger.info("Manual parse root/.env: %d keys found", len(parsed_root))
+                _apply_parsed_env(parsed_root, "manual-root")
 
     global _file_cache
-    _file_cache = parsed_backend or parse_env_file(ROOT_ENV_FILE)
+    _file_cache = parsed_backend or parsed_root
 
     logger.info("--- Tracked environment variables ---")
     for key in TRACKED_KEYS:
@@ -214,6 +230,10 @@ def debug_env_status() -> Dict[str, Any]:
     """Return set/empty status for debug endpoint (never exposes values)."""
     backend_info = _env_file_info(ENV_FILE)
     return {
+        "runtime": {
+            "vercel": is_vercel_runtime(),
+            "vercel_env": os.getenv("VERCEL_ENV"),
+        },
         "env_file": {
             "path": backend_info["path"],
             "exists": backend_info["exists"],
@@ -222,5 +242,8 @@ def debug_env_status() -> Dict[str, Any]:
             "read_error": backend_info.get("read_error"),
         },
         "variables": {key: env_var_status(key) for key in TRACKED_KEYS},
-        "gmail_configured": bool(get_env_from_file("GMAIL_SENDER_EMAIL") and get_env_from_file("GMAIL_CREDENTIALS_JSON")),
+        "gmail_configured": bool(
+            get_env_from_file("GMAIL_SENDER_EMAIL")
+            and get_env_from_file("GMAIL_CREDENTIALS_JSON")
+        ),
     }

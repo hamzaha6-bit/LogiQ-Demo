@@ -6,24 +6,46 @@ import logging
 import os
 from typing import Any, Dict, List, Optional
 
+from env_loader import get_env_from_file
+
 logger = logging.getLogger("logiq.supabase")
 
 _client = None
 
 
+def _env(key: str) -> str:
+    """Read from os.environ first (Vercel-injected), then .env file fallback."""
+    return get_env_from_file(key)
+
+
 def is_configured() -> bool:
-    return bool(
-        (os.getenv("SUPABASE_URL") or "").strip()
-        and (os.getenv("SUPABASE_SERVICE_KEY") or "").strip()
-    )
+    """Backend ready — needs URL + service role key."""
+    return bool(_env("SUPABASE_URL") and _env("SUPABASE_SERVICE_KEY"))
+
+
+def is_public_configured() -> bool:
+    """Frontend auth ready — needs URL + anon key."""
+    return bool(_env("SUPABASE_URL") and _env("SUPABASE_ANON_KEY"))
+
+
+def is_url_set() -> bool:
+    return bool(_env("SUPABASE_URL"))
+
+
+def env_status() -> Dict[str, bool]:
+    return {
+        "url_set": bool(_env("SUPABASE_URL")),
+        "anon_key_set": bool(_env("SUPABASE_ANON_KEY")),
+        "service_key_set": bool(_env("SUPABASE_SERVICE_KEY")),
+    }
 
 
 def get_anon_key() -> str:
-    return (os.getenv("SUPABASE_ANON_KEY") or "").strip()
+    return _env("SUPABASE_ANON_KEY")
 
 
 def get_url() -> str:
-    return (os.getenv("SUPABASE_URL") or "").strip().rstrip("/")
+    return _env("SUPABASE_URL").rstrip("/")
 
 
 def get_client():
@@ -33,12 +55,12 @@ def get_client():
     if _client is None:
         from supabase import create_client
 
-        _client = create_client(get_url(), os.getenv("SUPABASE_SERVICE_KEY", "").strip())
+        _client = create_client(get_url(), _env("SUPABASE_SERVICE_KEY"))
     return _client
 
 
 def rest_headers() -> Dict[str, str]:
-    key = os.getenv("SUPABASE_SERVICE_KEY", "").strip()
+    key = _env("SUPABASE_SERVICE_KEY")
     return {
         "apikey": key,
         "Authorization": f"Bearer {key}",
