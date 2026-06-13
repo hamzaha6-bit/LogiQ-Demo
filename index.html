@@ -2882,8 +2882,25 @@ async function init() {
   await checkHealth();
   switchUserStore('_demo');
 
+  const initParams = new URLSearchParams(window.location.search);
+  const gmailParam = initParams.get('gmail');
+  const oauthReturnToken = initParams.get('token');
+
+  if (gmailParam === 'connected' && oauthReturnToken) {
+    try {
+      const me = await fetch(API_BASE + '/api/auth/me', {
+        headers: { Authorization: 'Bearer ' + oauthReturnToken }
+      });
+      if (me.ok) {
+        const profile = await me.json();
+        await applySession({ access_token: oauthReturnToken, user: profile });
+        await bootApp();
+      }
+    } catch (e) {}
+  }
+
   if (appConfig.supabase_configured || (appConfig.supabase_url && appConfig.supabase_anon_key)) {
-    showAuth();
+    if (!authSession) showAuth();
     document.getElementById('supabase-banner').classList.add('hidden');
   } else {
     document.getElementById('supabase-banner').classList.remove('hidden');
@@ -2892,21 +2909,21 @@ async function init() {
     await bootApp();
   }
 
-  const payment = new URLSearchParams(window.location.search).get('payment');
+  const payment = initParams.get('payment');
   if (payment === 'success') {
     toast('✓ Payment successful — your plan is updated');
     await loadBillingStatus();
     history.replaceState({}, '', window.location.pathname);
   }
 
-  const gmailParam = new URLSearchParams(window.location.search).get('gmail');
   if (gmailParam === 'connected') {
     toast('✓ Google connected');
     loadIntegrationConfig();
     maybeShowOnboarding();
+    history.replaceState({}, '', window.location.pathname);
   }
   if (gmailParam === 'error') {
-    const reason = new URLSearchParams(window.location.search).get('reason');
+    const reason = initParams.get('reason');
     const msgs = {
       invalid_client_secret: 'Gmail failed — update client_secret in backend/.env (Google Cloud Console)',
       redirect_uri_mismatch: 'Gmail failed — redirect URI mismatch (use http://localhost:8000)',
@@ -2914,6 +2931,7 @@ async function init() {
       not_configured: 'Gmail not configured — check backend/.env',
     };
     toast(msgs[reason] || 'Gmail authorisation failed');
+    history.replaceState({}, '', window.location.pathname);
   }
 
   const anySheetConnected = [...deployedAgents.keys()].some(id => getAgentSettings(id).sheetConnected);

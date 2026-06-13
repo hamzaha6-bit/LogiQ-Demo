@@ -3,8 +3,8 @@ import base64
 import json
 import os
 import secrets
-from typing import Optional
-from urllib.parse import parse_qs, urlparse
+from typing import Optional, Tuple
+from urllib.parse import parse_qs, urlencode, urlparse
 
 import httpx
 from google_auth_oauthlib.flow import Flow
@@ -23,7 +23,24 @@ def _env(key: str) -> str:
 
 
 def _frontend_url() -> str:
-    return (_env("FRONTEND_URL") or _env("OAUTH_REDIRECT_BASE") or "https://logiqops.co.uk").rstrip("/")
+    return os.environ.get("FRONTEND_URL", "https://logiqops.co.uk").strip().rstrip("/")
+
+
+def _gmail_redirect(status: str, access_token: Optional[str] = None, reason: Optional[str] = None) -> str:
+    """Build post-OAuth redirect without double slashes: base?gmail=...&token=..."""
+    params = {"gmail": status}
+    if access_token:
+        params["token"] = access_token
+    if reason:
+        params["reason"] = reason
+    return f"{_frontend_url()}?{urlencode(params)}"
+
+
+def _log_redirect(context: str, url: str) -> None:
+    frontend_env = os.environ.get("FRONTEND_URL")
+    print(f"[gmail_auth] {context} FRONTEND_URL from os.environ: {frontend_env!r}")
+    print(f"[gmail_auth] {context} resolved frontend base: {_frontend_url()!r}")
+    print(f"[gmail_auth] {context} full redirect URL: {url}")
 
 
 def _parse_credentials_json() -> dict:
@@ -60,21 +77,26 @@ def _build_flow() -> Flow:
     return flow
 
 
-def _encode_oauth_state(user_id: Optional[str]) -> str:
-    payload = {"user_id": user_id or "", "nonce": secrets.token_urlsafe(16)}
+def _encode_oauth_state(user_id: Optional[str], access_token: Optional[str] = None) -> str:
+    payload = {
+        "user_id": user_id or "",
+        "access_token": access_token or "",
+        "nonce": secrets.token_urlsafe(16),
+    }
     return base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip("=")
 
 
-def _decode_oauth_state(state: str) -> Optional[str]:
+def _decode_oauth_state(state: str) -> Tuple[Optional[str], Optional[str]]:
     if not state:
-        return None
+        return None, None
     try:
         pad = "=" * (-len(state) % 4)
         data = json.loads(base64.urlsafe_b64decode(state + pad))
         uid = (data.get("user_id") or "").strip()
-        return uid or None
+        token = (data.get("access_token") or "").strip()
+        return uid or None, token or None
     except Exception:
-        return None
+        return None, None
 
 
 def _user_id_from_access_token(token: str) -> Optional[str]:
@@ -89,16 +111,21 @@ def _user_id_from_access_token(token: str) -> Optional[str]:
         return None
 
 
-def _resolve_user_id(handler: BaseHTTPRequestHandler) -> Optional[str]:
+def _resolve_access_token(handler: BaseHTTPRequestHandler) -> Optional[str]:
     qs = parse_qs(urlparse(handler.path).query)
     token = (qs.get("token") or [""])[0]
     if token:
-        uid = _user_id_from_access_token(token)
-        if uid:
-            return uid
+        return token
     auth = handler.headers.get("Authorization", "")
     if auth.startswith("Bearer "):
-        return _user_id_from_access_token(auth[7:].strip())
+        return auth[7:].strip()
+    return None
+
+
+def _resolve_user_id(handler: BaseHTTPRequestHandler) -> Optional[str]:
+    token = _resolve_access_token(handler)
+    if token:
+        return _user_id_from_access_token(token)
     return None
 
 
@@ -173,10 +200,11 @@ class handler(BaseHTTPRequestHandler):
         if not is_gmail_configured():
             self._json(503, {"detail": "Gmail not configured"})
             return
-        user_id = _resolve_user_id(self)
+        access_token = _resolve_access_token(self)
+        user_id = _user_id_from_access_token(access_token) if access_token else None
         try:
             flow = _build_flow()
-            state = _encode_oauth_state(user_id)
+            state = _encode_oauth_state(user_id, access_token)
             auth_url, _ = flow.authorization_url(
                 access_type="offline",
                 prompt="consent",
@@ -190,23 +218,28 @@ class handler(BaseHTTPRequestHandler):
             self._json(500, {"detail": f"Gmail OAuth error: {exc}"})
 
     def _callback(self):
-        frontend = _frontend_url()
         qs = parse_qs(urlparse(self.path).query)
         error = (qs.get("error") or [""])[0]
         if error:
-            self._redirect(f"{frontend}/?gmail=error&reason={error}")
+            url = _gmail_redirect("error", reason=error)
+            _log_redirect("callback (error)", url)
+            self._redirect(url)
             return
 
         code = (qs.get("code") or [""])[0]
         state = (qs.get("state") or [""])[0]
         if not code:
-            self._redirect(f"{frontend}/?gmail=error&reason=missing_code")
+            url = _gmail_redirect("error", reason="missing_code")
+            _log_redirect("callback (missing code)", url)
+            self._redirect(url)
             return
         if not is_gmail_configured():
-            self._redirect(f"{frontend}/?gmail=error&reason=not_configured")
+            url = _gmail_redirect("error", reason="not_configured")
+            _log_redirect("callback (not configured)", url)
+            self._redirect(url)
             return
 
-        user_id = _decode_oauth_state(state)
+        user_id, access_token = _decode_oauth_state(state)
         try:
             flow = _build_flow()
             flow.fetch_token(code=code)
@@ -216,10 +249,14 @@ class handler(BaseHTTPRequestHandler):
             token_data = json.loads(creds.to_json())
             if user_id:
                 _save_user_token(user_id, token_data)
-            self._redirect(f"{frontend}/?gmail=connected")
+            url = _gmail_redirect("connected", access_token=access_token)
+            _log_redirect("callback (success)", url)
+            self._redirect(url)
         except Exception as exc:
             reason = "redirect_uri_mismatch" if "redirect_uri" in str(exc).lower() else "oauth_error"
-            self._redirect(f"{frontend}/?gmail=error&reason={reason}")
+            url = _gmail_redirect("error", access_token=access_token, reason=reason)
+            _log_redirect("callback (exception)", url)
+            self._redirect(url)
 
     def _status(self):
         user_id = _resolve_user_id(self)
