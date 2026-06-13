@@ -682,6 +682,7 @@ const API_BASE = (window.location.protocol === 'file:' || !window.location.hostn
 let backendAvailable = false;
 let backendReachable = false;
 let authSession = null;
+const SESSION_KEY = 'logiq_session';
 let appConfig = { supabase_configured: false, stripe_configured: false, supabase_url: '', supabase_anon_key: '' };
 let billingStatus = null;
 let auditFilterAgent = '';
@@ -698,6 +699,87 @@ function switchUserStore(userId) {
   const key = userId || '_demo';
   if (!memStoreByUser[key]) memStoreByUser[key] = createEmptyStore();
   memStore = memStoreByUser[key];
+}
+
+function saveSessionToStorage() {
+  if (!authSession?.access_token) return;
+  try {
+    localStorage.setItem(SESSION_KEY, JSON.stringify({
+      access_token: authSession.access_token,
+      user: authSession.user
+    }));
+  } catch (e) {}
+}
+
+function clearSessionStorage() {
+  try { localStorage.removeItem(SESSION_KEY); } catch (e) {}
+}
+
+function readSessionFromStorage() {
+  try {
+    const raw = localStorage.getItem(SESSION_KEY);
+    if (!raw) return null;
+    const data = JSON.parse(raw);
+    if (!data?.access_token) return null;
+    return data;
+  } catch (e) {
+    clearSessionStorage();
+    return null;
+  }
+}
+
+async function validateToken(accessToken) {
+  const me = await fetch(API_BASE + '/api/auth/me', {
+    headers: { Authorization: 'Bearer ' + accessToken }
+  });
+  if (!me.ok) return null;
+  return me.json();
+}
+
+async function validateAndRestoreSession() {
+  const stored = readSessionFromStorage();
+  if (!stored?.access_token) return false;
+  try {
+    const profile = await validateToken(stored.access_token);
+    if (!profile) {
+      clearSessionStorage();
+      authSession = null;
+      return false;
+    }
+    authSession = {
+      access_token: stored.access_token,
+      user: { ...stored.user, ...profile }
+    };
+    switchUserStore(authSession.user?.id);
+    saveSessionToStorage();
+    return true;
+  } catch (e) {
+    clearSessionStorage();
+    authSession = null;
+    return false;
+  }
+}
+
+async function restoreSessionFromToken(accessToken) {
+  if (!accessToken) return false;
+  try {
+    const profile = await validateToken(accessToken);
+    if (!profile) return false;
+    authSession = { access_token: accessToken, user: profile };
+    switchUserStore(authSession.user?.id);
+    saveSessionToStorage();
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+async function bootAuthenticatedApp() {
+  showApp();
+  updateUserProfile();
+  await loadBillingStatus();
+  await loadIntegrationConfig();
+  await bootApp();
 }
 
 async function apiFetch(path, options = {}) {
@@ -748,6 +830,7 @@ function updateUserProfile() {
 async function applySession(data) {
   authSession = { access_token: data.access_token, user: data.user };
   if (data.user?.plan) authSession.user.plan = data.user.plan;
+  saveSessionToStorage();
   switchUserStore(data.user?.id);
   showApp();
   updateUserProfile();
@@ -792,6 +875,7 @@ async function doSignup() {
 async function doLogout() {
   try { await apiFetch('/api/auth/logout', { method: 'POST' }); } catch(e) {}
   authSession = null;
+  clearSessionStorage();
   showAuth();
   toast('Signed out');
 }
@@ -846,6 +930,7 @@ async function logAuditEvent(agent, action_type, fields = {}) {
 }
 
 function connectGmail() {
+  saveSessionToStorage();
   let url = API_BASE + '/api/auth/gmail/connect';
   if (authSession?.access_token) url += '?token=' + encodeURIComponent(authSession.access_token);
   window.location.href = url;
@@ -909,6 +994,7 @@ async function completeOnboarding() {
     try {
       await apiFetch('/api/auth/profile', { method: 'PATCH', body: { onboarding_complete: true } });
       if (authSession.user) authSession.user.onboarding_complete = true;
+      saveSessionToStorage();
     } catch(e) {}
   }
 }
@@ -2884,29 +2970,39 @@ async function init() {
 
   const initParams = new URLSearchParams(window.location.search);
   const gmailParam = initParams.get('gmail');
-  const oauthReturnToken = initParams.get('token');
+  const supabaseAuth = appConfig.supabase_configured || (appConfig.supabase_url && appConfig.supabase_anon_key);
 
-  if (gmailParam === 'connected' && oauthReturnToken) {
-    try {
-      const me = await fetch(API_BASE + '/api/auth/me', {
-        headers: { Authorization: 'Bearer ' + oauthReturnToken }
-      });
-      if (me.ok) {
-        const profile = await me.json();
-        await applySession({ access_token: oauthReturnToken, user: profile });
-        await bootApp();
-      }
-    } catch (e) {}
-  }
-
-  if (appConfig.supabase_configured || (appConfig.supabase_url && appConfig.supabase_anon_key)) {
-    if (!authSession) showAuth();
+  if (supabaseAuth) {
     document.getElementById('supabase-banner').classList.add('hidden');
+    const sessionValid = await validateAndRestoreSession();
+    if (sessionValid) {
+      await bootAuthenticatedApp();
+    } else {
+      showAuth();
+    }
   } else {
     document.getElementById('supabase-banner').classList.remove('hidden');
     showApp();
     updateUserProfile();
     await bootApp();
+  }
+
+  if (gmailParam === 'connected') {
+    if (!authSession) {
+      const oauthReturnToken = initParams.get('token');
+      if (oauthReturnToken) await restoreSessionFromToken(oauthReturnToken);
+      if (!authSession) await validateAndRestoreSession();
+      if (authSession) await bootAuthenticatedApp();
+    }
+    if (authSession) {
+      integrationConfig = { ...integrationConfig, gmail_authorised: true, google_authorised: true };
+      toast('✓ Google connected');
+      await loadIntegrationConfig();
+    } else {
+      toast('Gmail connected — please sign in to continue');
+      showAuth();
+    }
+    history.replaceState({}, '', window.location.pathname);
   }
 
   const payment = initParams.get('payment');
@@ -2916,12 +3012,6 @@ async function init() {
     history.replaceState({}, '', window.location.pathname);
   }
 
-  if (gmailParam === 'connected') {
-    toast('✓ Google connected');
-    loadIntegrationConfig();
-    maybeShowOnboarding();
-    history.replaceState({}, '', window.location.pathname);
-  }
   if (gmailParam === 'error') {
     const reason = initParams.get('reason');
     const msgs = {
