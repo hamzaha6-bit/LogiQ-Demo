@@ -39,6 +39,7 @@
     { "src": "/api/billing/status", "dest": "/api/app.py" },
     { "src": "/api/audit/log", "dest": "/api/app.py" },
     { "src": "/api/auth/profile", "dest": "/api/auth.py" },
+    { "src": "/api/chat/test", "dest": "/api/ai.py" },
     { "src": "/api/chat", "dest": "/api/ai.py" },
     { "src": "/api/agent/run", "dest": "/api/ai.py" },
     { "src": "/api/send/gmail", "dest": "/api/integrations.py" },

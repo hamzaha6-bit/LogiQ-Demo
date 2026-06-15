@@ -7,21 +7,18 @@ import sys
 import traceback
 from urllib.parse import urlparse
 
-_API_DIR = os.path.dirname(os.path.abspath(__file__))
-_API_LIB = os.path.normpath(os.path.join(_API_DIR, "..", "api_lib"))
-if _API_LIB not in sys.path:
-    sys.path.insert(0, _API_LIB)
-
-import anthropic
-
-from http_auth import resolve_user_id
-
 MODEL = (os.environ.get("ANTHROPIC_MODEL") or "claude-sonnet-4-5-20250929").strip()
 MAX_CHAT_TOKENS = 4096
 
 
 def _log(msg: str) -> None:
     print(f"[ai] {msg}", flush=True)
+
+
+def _ensure_api_lib() -> None:
+    api_lib = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "api_lib"))
+    if api_lib not in sys.path:
+        sys.path.insert(0, api_lib)
 
 
 def _sse_event(event: str, data: dict) -> bytes:
@@ -69,6 +66,13 @@ def _build_system_prompt(base: str, settings: dict, agent_name: str) -> str:
 
 
 class handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        path = urlparse(self.path).path.rstrip("/")
+        if path.endswith("/chat/test"):
+            self._json(200, {"status": "ok"})
+        else:
+            self._json(404, {"detail": f"Unknown route: {path}"})
+
     def do_POST(self):
         try:
             path = urlparse(self.path).path.rstrip("/")
@@ -111,6 +115,8 @@ class handler(BaseHTTPRequestHandler):
 
         _log(f"chat request model={MODEL} messages={len(messages)} max_tokens={max_tokens} system_len={len(system)}")
 
+        import anthropic
+
         try:
             client = anthropic.Anthropic(api_key=api_key)
             response = client.messages.create(
@@ -129,6 +135,9 @@ class handler(BaseHTTPRequestHandler):
             self._json(500, {"detail": str(exc) or "Chat request failed"})
 
     def _agent_run(self):
+        _ensure_api_lib()
+        from http_auth import resolve_user_id
+
         user_id = resolve_user_id(self)
         api_key = (os.environ.get("ANTHROPIC_API_KEY") or "").strip()
         if not api_key:
@@ -166,6 +175,8 @@ class handler(BaseHTTPRequestHandler):
         self.send_header("Connection", "keep-alive")
         self.send_header("X-Accel-Buffering", "no")
         self.end_headers()
+
+        import anthropic
 
         client = anthropic.Anthropic(api_key=api_key)
         total = len(items)
