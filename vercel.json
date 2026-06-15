@@ -16,7 +16,13 @@
         "includeFiles": "api_lib/action_registry.py,api_lib/gmail_oauth.py,api_lib/gmail_send.py,api_lib/google_oauth.py,api_lib/hook_handler.py,api_lib/http_auth.py,api_lib/supabase_rest.py,api_lib/sheets_service.py"
       }
     },
-    { "src": "api/ai.py", "use": "@vercel/python" },
+    {
+      "src": "api/ai.py",
+      "use": "@vercel/python",
+      "config": {
+        "includeFiles": "api_lib/action_registry.py,api_lib/http_auth.py,api_lib/supabase_rest.py"
+      }
+    },
     { "src": "index.html", "use": "@vercel/static" }
   ],
   "routes": [
