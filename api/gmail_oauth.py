@@ -5,8 +5,12 @@ import base64
 import json
 import os
 import secrets
+import traceback
 from typing import Optional, Tuple
 from urllib.parse import parse_qs, unquote, urlencode, urlparse
+
+# Allow Google to return a subset/superset of requested scopes without failing exchange.
+os.environ.setdefault("OAUTHLIB_RELAX_TOKEN_SCOPE", "1")
 
 from google_auth_oauthlib.flow import Flow
 
@@ -23,12 +27,23 @@ def _frontend_url() -> str:
     return os.environ.get("FRONTEND_URL", "https://app.logiqops.co.uk").strip().rstrip("/")
 
 
-def _gmail_redirect(status: str, access_token: Optional[str] = None, reason: Optional[str] = None) -> str:
+def _gmail_redirect(
+    status: str,
+    access_token: Optional[str] = None,
+    reason: Optional[str] = None,
+    *,
+    error_detail: str = "",
+    stage: str = "",
+) -> str:
     params = {"gmail": status}
     if access_token:
         params["token"] = access_token
     if reason:
         params["reason"] = reason
+    if error_detail:
+        params["error_detail"] = error_detail[:180]
+    if stage:
+        params["stage"] = stage
     return f"{_frontend_url()}?{urlencode(params)}"
 
 
@@ -114,38 +129,125 @@ def handle_connect(handler) -> None:
         handler._json(500, {"detail": f"Google OAuth error: {exc}"})
 
 
+def _callback_authorization_response(handler) -> str:
+    """Rebuild the full callback URL Google redirected to (for token exchange)."""
+    host = (handler.headers.get("Host") or "app.logiqops.co.uk").strip()
+    proto = (handler.headers.get("X-Forwarded-Proto") or "https").split(",")[0].strip()
+    path = handler.path if handler.path.startswith("/") else f"/{handler.path}"
+    return f"{proto}://{host}{path}"
+
+
+def _oauth_error_reason(exc: Exception) -> str:
+    msg = str(exc).lower()
+    if "redirect_uri" in msg:
+        return "redirect_uri_mismatch"
+    if "invalid_client" in msg or "client_secret" in msg:
+        return "invalid_client_secret"
+    if "scope" in msg and "changed" in msg:
+        return "scope_mismatch"
+    if "invalid_grant" in msg:
+        return "invalid_grant"
+    return "oauth_error"
+
+
+def _log_callback_start(handler, qs: dict) -> None:
+    code = (qs.get("code") or [""])[0]
+    error = (qs.get("error") or [""])[0]
+    state = (qs.get("state") or [""])[0]
+    error_description = (qs.get("error_description") or [""])[0]
+    auth_response = _callback_authorization_response(handler)
+
+    print("[gmail_auth] === OAuth callback received ===")
+    print(f"[gmail_auth] authorization_response: {auth_response!r}")
+    print(f"[gmail_auth] code: {'(missing)' if not code else f'{code[:20]}… ({len(code)} chars)'}")
+    print(f"[gmail_auth] error: {error or '(none)'}")
+    print(f"[gmail_auth] error_description: {error_description or '(none)'}")
+    print(f"[gmail_auth] state present: {bool(state)} len={len(state)}")
+    _log_redirect_uri("callback")
+
+
+def _log_callback_failure(stage: str, exc: Exception) -> None:
+    print(f"[gmail_auth] callback FAILED at stage={stage!r}: {type(exc).__name__}: {exc}")
+    print(f"[gmail_auth] traceback:\n{traceback.format_exc()}")
+
+
 def handle_callback(handler) -> None:
     qs = parse_qs(urlparse(handler.path).query)
+    _log_callback_start(handler, qs)
+
     error = (qs.get("error") or [""])[0]
+    error_description = (qs.get("error_description") or [""])[0]
     if error:
-        _redirect(handler, _gmail_redirect("error", reason=error))
+        detail = error_description or error
+        print(f"[gmail_auth] Google returned error: {error} — {error_description}")
+        _redirect(
+            handler,
+            _gmail_redirect("error", reason=error, error_detail=detail, stage="google_error"),
+        )
         return
 
     code = (qs.get("code") or [""])[0]
     state = (qs.get("state") or [""])[0]
     if not code:
-        _redirect(handler, _gmail_redirect("error", reason="missing_code"))
+        _redirect(handler, _gmail_redirect("error", reason="missing_code", stage="missing_code"))
         return
     if not is_oauth_configured():
-        _redirect(handler, _gmail_redirect("error", reason="not_configured"))
+        _redirect(handler, _gmail_redirect("error", reason="not_configured", stage="not_configured"))
         return
 
     user_id, access_token = _decode_oauth_state(state)
+    print(f"[gmail_auth] decoded state user_id: {user_id or '(missing)'}")
+    print(f"[gmail_auth] decoded state has access_token: {bool(access_token)}")
+
+    if not user_id:
+        print("[gmail_auth] WARNING: no user_id in OAuth state — token will not be saved to Supabase")
+
+    auth_response = _callback_authorization_response(handler)
     try:
         flow = _build_flow()
-        flow.fetch_token(code=code)
+        print(f"[gmail_auth] token exchange redirect_uri: {flow.oauth2session.redirect_uri!r}")
+        flow.fetch_token(authorization_response=auth_response)
         creds = flow.credentials
         if not creds or not creds.token:
             raise RuntimeError("Empty credentials after token exchange")
         token_data = json.loads(creds.to_json())
-        if user_id:
-            save_user_token(user_id, token_data)
-        _redirect(handler, _gmail_redirect("connected", access_token=access_token))
+        print(
+            f"[gmail_auth] token exchange OK — has_refresh_token={bool(token_data.get('refresh_token'))} "
+            f"scopes={token_data.get('scopes') or token_data.get('scope')}"
+        )
     except Exception as exc:
+        _log_callback_failure("token_exchange", exc)
         _log_redirect_uri("callback (token exchange failed)")
-        print(f"[gmail_auth] callback exception: {exc!r}")
-        reason = "redirect_uri_mismatch" if "redirect_uri" in str(exc).lower() else "oauth_error"
-        _redirect(handler, _gmail_redirect("error", access_token=access_token, reason=reason))
+        _redirect(
+            handler,
+            _gmail_redirect(
+                "error",
+                access_token=access_token,
+                reason=_oauth_error_reason(exc),
+                error_detail=str(exc),
+                stage="token_exchange",
+            ),
+        )
+        return
+
+    if user_id:
+        saved, save_error = save_user_token(user_id, token_data)
+        print(f"[gmail_auth] Supabase save user_integrations: saved={saved} error={save_error or '(none)'}")
+        if not saved:
+            _redirect(
+                handler,
+                _gmail_redirect(
+                    "error",
+                    access_token=access_token,
+                    reason="supabase_save_failed",
+                    error_detail=save_error or "Failed to write token to Supabase",
+                    stage="supabase_save",
+                ),
+            )
+            return
+
+    print(f"[gmail_auth] === OAuth callback succeeded (user_id={user_id or 'none'}) ===")
+    _redirect(handler, _gmail_redirect("connected", access_token=access_token))
 
 
 def handle_status(handler) -> None:

@@ -42,17 +42,31 @@ def rest_post(
     on_conflict: str = "",
     prefer: str = "resolution=merge-duplicates,return=representation",
 ) -> Optional[Dict[str, Any]]:
+    row, _err = rest_post_with_error(table, payload, on_conflict=on_conflict, prefer=prefer)
+    return row
+
+
+def rest_post_with_error(
+    table: str,
+    payload: Dict[str, Any],
+    *,
+    on_conflict: str = "",
+    prefer: str = "resolution=merge-duplicates,return=representation",
+) -> tuple[Optional[Dict[str, Any]], str]:
     url = f"{env('SUPABASE_URL').rstrip('/')}/rest/v1/{table}"
+    if not env("SUPABASE_URL") or not env("SUPABASE_SERVICE_KEY"):
+        return None, "SUPABASE_URL or SUPABASE_SERVICE_KEY not configured"
     params = {"on_conflict": on_conflict} if on_conflict else None
     with httpx.Client(timeout=20) as client:
         resp = client.post(url, headers=rest_headers(prefer), params=params, json=payload)
         if resp.status_code >= 400:
-            print(f"[supabase] POST {table} failed: {resp.status_code} {resp.text[:300]}")
-            return None
+            err = f"HTTP {resp.status_code}: {resp.text[:300]}"
+            print(f"[supabase] POST {table} failed: {err}")
+            return None, err
         data = resp.json()
         if isinstance(data, list) and data:
-            return data[0]
-        return data if isinstance(data, dict) else None
+            return data[0], ""
+        return (data if isinstance(data, dict) else None), ""
 
 
 def rest_patch(table: str, match: Dict[str, str], payload: Dict[str, Any]) -> bool:

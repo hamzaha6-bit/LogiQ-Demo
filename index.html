@@ -3171,13 +3171,23 @@ async function init() {
 
   if (gmailParam === 'error') {
     const reason = initParams.get('reason');
+    const detail = initParams.get('error_detail');
+    const stage = initParams.get('stage');
     const msgs = {
-      invalid_client_secret: 'Gmail failed — update client_secret in backend/.env (Google Cloud Console)',
-      redirect_uri_mismatch: 'Gmail failed — redirect URI mismatch (use http://localhost:8000)',
+      invalid_client_secret: 'Gmail failed — update client_secret in Google Cloud Console',
+      redirect_uri_mismatch: 'Gmail failed — redirect URI mismatch (check app.logiqops.co.uk callback URL)',
       missing_code: 'Gmail failed — no authorization code received',
-      not_configured: 'Gmail not configured — check backend/.env',
+      not_configured: 'Gmail not configured — check Vercel env vars',
+      supabase_save_failed: 'Gmail token received but failed to save — check Supabase user_integrations table',
+      scope_mismatch: 'Gmail failed — scope mismatch during token exchange (re-authorise with all scopes)',
+      invalid_grant: 'Gmail failed — authorization code expired or already used (try Connect again)',
+      oauth_error: 'Gmail OAuth token exchange failed',
+      access_denied: 'Gmail access was denied — approve all requested permissions',
     };
-    toast(msgs[reason] || 'Gmail authorisation failed');
+    let msg = msgs[reason] || 'Gmail authorisation failed';
+    if (detail) msg += ' — ' + detail;
+    if (stage) console.error('[Gmail OAuth]', stage, reason, detail);
+    toast(msg);
     history.replaceState({}, '', window.location.pathname);
   }
 

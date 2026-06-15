@@ -62,8 +62,8 @@ def load_user_token(user_id: str) -> Optional[dict]:
     return None
 
 
-def save_user_token(user_id: str, token_data: dict) -> bool:
-    row = rest_post(
+def save_user_token(user_id: str, token_data: dict) -> Tuple[bool, str]:
+    row, err = rest_post_with_error(
         "user_integrations",
         {
             "user_id": user_id,
@@ -73,7 +73,7 @@ def save_user_token(user_id: str, token_data: dict) -> bool:
         },
         on_conflict="user_id,integration",
     )
-    return row is not None
+    return row is not None, err
 
 
 def _scopes_in_token(token_data: dict) -> List[str]:
