@@ -9,25 +9,37 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from supabase import create_client
 
 try:
-    from hook_handler import handle_user_created_hook, is_user_created_hook_path
+    from hook_handler import handle_user_created_hook, json_response as hook_json_response
 except ImportError:
     handle_user_created_hook = None
+    hook_json_response = None
 
-    def is_user_created_hook_path(_path: str) -> bool:
-        return False
+
+def _is_user_created_hook_path(path: str) -> bool:
+    normalized = (path or "").rstrip("/").lower()
+    return normalized.endswith("/hook/user-created")
 
 
 class handler(BaseHTTPRequestHandler):
     def do_GET(self):
         path = urlparse(self.path).path.rstrip("/")
-        if is_user_created_hook_path(path) and handle_user_created_hook:
-            from hook_handler import json_response
-
-            json_response(
-                self,
-                200,
-                {"status": "ok", "hook": "user-created", "methods": ["GET", "POST"]},
-            )
+        if _is_user_created_hook_path(path):
+            if hook_json_response and handle_user_created_hook:
+                hook_json_response(
+                    self,
+                    200,
+                    {"status": "ok", "hook": "user-created", "methods": ["GET", "POST"]},
+                )
+            else:
+                self._json(
+                    200,
+                    {
+                        "status": "ok",
+                        "hook": "user-created",
+                        "methods": ["GET", "POST"],
+                        "via": "auth.py-fallback",
+                    },
+                )
             return
         if path.endswith("/me"):
             self._me()
@@ -37,8 +49,11 @@ class handler(BaseHTTPRequestHandler):
     def do_POST(self):
         path = urlparse(self.path).path.rstrip("/")
 
-        if is_user_created_hook_path(path) and handle_user_created_hook:
-            handle_user_created_hook(self)
+        if _is_user_created_hook_path(path):
+            if handle_user_created_hook:
+                handle_user_created_hook(self)
+            else:
+                self._json(503, {"detail": "Hook handler unavailable"})
             return
 
         try:
