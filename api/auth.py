@@ -8,6 +8,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from supabase import create_client
 
+from supabase_rest import rest_get, rest_patch, rest_post_with_error, user_id_from_bearer
+
 try:
     from hook_handler import handle_user_created_hook, json_response as hook_json_response
 except ImportError:
@@ -24,6 +26,42 @@ except ImportError:
 def _is_user_created_hook_path(path: str) -> bool:
     normalized = (path or "").rstrip("/").lower()
     return normalized.endswith("/hook/user-created")
+
+
+def _profile_row(user_id: str):
+    rows = rest_get("user_profiles", {"id": f"eq.{user_id}", "select": "name,plan,onboarding_complete"})
+    return rows[0] if rows else None
+
+
+def _ensure_profile(user_id: str, name: str = "", email: str = ""):
+    existing = _profile_row(user_id)
+    if existing:
+        return existing
+    row, err = rest_post_with_error(
+        "user_profiles",
+        {
+            "id": user_id,
+            "name": name or (email.split("@")[0] if email else "User"),
+            "plan": "starter",
+            "onboarding_complete": False,
+        },
+        on_conflict="id",
+    )
+    if row:
+        return row
+    print(f"[auth] ensure_profile failed user_id={user_id}: {err}")
+    return {"name": name, "plan": "starter", "onboarding_complete": False}
+
+
+def _profile_payload(user_id: str, email: str, fallback_name: str):
+    profile = _ensure_profile(user_id, fallback_name, email)
+    return {
+        "id": user_id,
+        "email": email,
+        "name": profile.get("name") or fallback_name,
+        "plan": profile.get("plan") or "starter",
+        "onboarding_complete": bool(profile.get("onboarding_complete")),
+    }
 
 
 class handler(BaseHTTPRequestHandler):
@@ -59,6 +97,13 @@ class handler(BaseHTTPRequestHandler):
             return
         if path.endswith("/me"):
             self._me()
+        else:
+            self._json(404, {"detail": f"Unknown auth route: {path}"})
+
+    def do_PATCH(self):
+        path = urlparse(self.path).path.rstrip("/")
+        if path.endswith("/profile"):
+            self._profile_patch()
         else:
             self._json(404, {"detail": f"Unknown auth route: {path}"})
 
@@ -122,18 +167,59 @@ class handler(BaseHTTPRequestHandler):
 
             meta = user.user_metadata or {}
             name = meta.get("name") or (user.email or "").split("@")[0]
-            self._json(
-                200,
-                {
-                    "id": str(user.id),
-                    "email": user.email or "",
-                    "name": name,
-                    "plan": "starter",
-                    "onboarding_complete": False,
-                },
-            )
+            user_id = str(user.id)
+            self._json(200, _profile_payload(user_id, user.email or "", name))
         except Exception as exc:
             self._json(401, {"detail": str(exc) or "Not authenticated"})
+
+    def _profile_patch(self):
+        auth = self.headers.get("Authorization", "")
+        token = auth[7:].strip() if auth.startswith("Bearer ") else ""
+        if not token:
+            self._json(401, {"detail": "Not authenticated"})
+            return
+
+        user_id = user_id_from_bearer(token)
+        if not user_id:
+            self._json(401, {"detail": "Not authenticated"})
+            return
+
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+            raw = self.rfile.read(length).decode("utf-8") if length else "{}"
+            body = json.loads(raw)
+        except (json.JSONDecodeError, ValueError, TypeError) as exc:
+            self._json(400, {"detail": f"Invalid JSON body: {exc}"})
+            return
+
+        updates = {}
+        if "onboarding_complete" in body:
+            updates["onboarding_complete"] = bool(body.get("onboarding_complete"))
+        if "name" in body and body.get("name"):
+            updates["name"] = str(body.get("name")).strip()
+        if "plan" in body and body.get("plan"):
+            updates["plan"] = str(body.get("plan")).strip()
+
+        if not updates:
+            self._json(400, {"detail": "No valid profile fields to update"})
+            return
+
+        _ensure_profile(user_id)
+        ok = rest_patch("user_profiles", {"id": user_id}, updates)
+        if not ok:
+            self._json(502, {"detail": "Failed to update profile — check SUPABASE_SERVICE_KEY and user_profiles table"})
+            return
+
+        profile = _profile_row(user_id) or {}
+        self._json(
+            200,
+            {
+                "id": user_id,
+                "name": profile.get("name") or "",
+                "plan": profile.get("plan") or "starter",
+                "onboarding_complete": bool(profile.get("onboarding_complete")),
+            },
+        )
 
     def _signup(self, body, url, anon_key):
         name = (body.get("name") or "").strip()
@@ -163,6 +249,7 @@ class handler(BaseHTTPRequestHandler):
             return
 
         user_id = str(user.id)
+        profile = _ensure_profile(user_id, name, email)
         if not session:
             self._json(
                 200,
@@ -180,7 +267,13 @@ class handler(BaseHTTPRequestHandler):
                 "access_token": session.access_token,
                 "refresh_token": session.refresh_token,
                 "expires_in": session.expires_in,
-                "user": {"id": user_id, "email": email, "name": name},
+                "user": {
+                    "id": user_id,
+                    "email": email,
+                    "name": profile.get("name") or name,
+                    "plan": profile.get("plan") or "starter",
+                    "onboarding_complete": bool(profile.get("onboarding_complete")),
+                },
             },
         )
 
@@ -205,6 +298,7 @@ class handler(BaseHTTPRequestHandler):
         user_id = str(result.user.id)
         meta = result.user.user_metadata or {}
         name = meta.get("name") or email.split("@")[0]
+        profile = _ensure_profile(user_id, name, email)
         session = result.session
         self._json(
             200,
@@ -212,7 +306,13 @@ class handler(BaseHTTPRequestHandler):
                 "access_token": session.access_token,
                 "refresh_token": session.refresh_token,
                 "expires_in": session.expires_in,
-                "user": {"id": user_id, "email": email, "name": name},
+                "user": {
+                    "id": user_id,
+                    "email": email,
+                    "name": profile.get("name") or name,
+                    "plan": profile.get("plan") or "starter",
+                    "onboarding_complete": bool(profile.get("onboarding_complete")),
+                },
             },
         )
 

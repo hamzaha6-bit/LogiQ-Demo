@@ -1042,7 +1042,9 @@ async function bootAuthenticatedApp() {
   updateUserProfile();
   await loadBillingStatus();
   await loadIntegrationConfig();
+  await refreshUserProfile();
   await bootApp();
+  await maybeShowOnboarding();
 }
 
 function isProductionAppHost() {
@@ -1131,6 +1133,22 @@ function updateUserProfile() {
   document.getElementById('user-avatar').textContent = name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase() || '?';
 }
 
+async function refreshUserProfile() {
+  if (!getAuthBearerToken()) return null;
+  try {
+    const res = await apiFetch('/api/auth/me');
+    if (!res.ok) return null;
+    const profile = await res.json();
+    if (authSession) {
+      authSession.user = { ...authSession.user, ...profile };
+      saveSessionToStorage();
+    }
+    return profile;
+  } catch (e) {
+    return null;
+  }
+}
+
 async function applySession(data) {
   authSession = { access_token: data.access_token, user: data.user };
   if (data.user?.plan) authSession.user.plan = data.user.plan;
@@ -1141,7 +1159,8 @@ async function applySession(data) {
   updateUserProfile();
   await loadBillingStatus();
   await loadIntegrationConfig();
-  if (!data.user?.onboarding_complete) maybeShowOnboarding();
+  await refreshUserProfile();
+  await maybeShowOnboarding();
 }
 
 async function doLogin() {
@@ -1370,15 +1389,20 @@ async function canDeployMoreAgents() {
   return deployedAgents.size < max;
 }
 
-function maybeShowOnboarding() {
-  if (!authSession || authSession.user?.onboarding_complete) return;
+async function maybeShowOnboarding() {
+  if (!authSession) return;
+  await refreshUserProfile();
+  if (authSession.user?.onboarding_complete) return;
+
+  const gmailHealth = await checkGmailHealth();
+  const gmailOk = gmailHealth.connected && gmailHealth.healthy;
   const customAgents = [...deployedAgents.keys()].filter(id => !['aria','nova'].includes(id));
   const workflowOk = (memStore.workflows || []).length > 0;
-  const gmailOk = integrationConfig.gmail_authorised;
   const agentOk = customAgents.length > 0 || workflowOk;
   const leadsOk = (memStore.leads || []).length > 0;
+
   if (gmailOk && agentOk && leadsOk) {
-    completeOnboarding();
+    await completeOnboarding();
     return;
   }
   renderOnboarding(gmailOk, agentOk, leadsOk);
@@ -1407,12 +1431,19 @@ async function dismissOnboarding() {
 
 async function completeOnboarding() {
   document.getElementById('onboarding-overlay').classList.add('hidden');
-  if (authSession?.access_token) {
-    try {
-      await apiFetch('/api/auth/profile', { method: 'PATCH', body: { onboarding_complete: true } });
-      if (authSession.user) authSession.user.onboarding_complete = true;
-      saveSessionToStorage();
-    } catch(e) {}
+  if (!authSession?.access_token) return;
+  try {
+    const res = await apiFetch('/api/auth/profile', { method: 'PATCH', body: { onboarding_complete: true } });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      console.error('[onboarding] profile PATCH failed:', err.detail || res.status);
+      return;
+    }
+    const profile = await res.json();
+    authSession.user = { ...authSession.user, ...profile, onboarding_complete: true };
+    saveSessionToStorage();
+  } catch (e) {
+    console.error('[onboarding] complete failed:', e);
   }
 }
 

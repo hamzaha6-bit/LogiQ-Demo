@@ -3,17 +3,34 @@ from http.server import BaseHTTPRequestHandler
 import json
 import os
 import re
+import traceback
 from urllib.parse import urlparse
 
 import anthropic
 
 from http_auth import resolve_user_id
 
-MODEL = "claude-sonnet-4-5"
+MODEL = (os.environ.get("ANTHROPIC_MODEL") or "claude-sonnet-4-5-20250929").strip()
+MAX_CHAT_TOKENS = 4096
+
+
+def _log(msg: str) -> None:
+    print(f"[ai] {msg}", flush=True)
 
 
 def _sse_event(event: str, data: dict) -> bytes:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n".encode()
+
+
+def _response_text(response) -> str:
+    parts = []
+    for block in response.content or []:
+        text = getattr(block, "text", None)
+        if text is None and isinstance(block, dict):
+            text = block.get("text")
+        if text:
+            parts.append(text)
+    return "".join(parts)
 
 
 def _parse_agent_json(text: str) -> dict:
@@ -47,35 +64,46 @@ def _build_system_prompt(base: str, settings: dict, agent_name: str) -> str:
 
 class handler(BaseHTTPRequestHandler):
     def do_POST(self):
-        path = urlparse(self.path).path.rstrip("/")
-        if path.endswith("/agent/run"):
-            self._agent_run()
-        elif path.endswith("/chat"):
-            self._chat()
-        else:
-            self._json(404, {"detail": f"Unknown route: {path}"})
+        try:
+            path = urlparse(self.path).path.rstrip("/")
+            if path.endswith("/agent/run"):
+                self._agent_run()
+            elif path.endswith("/chat"):
+                self._chat()
+            else:
+                self._json(404, {"detail": f"Unknown route: {path}"})
+        except Exception as exc:
+            _log(f"POST unhandled: {type(exc).__name__}: {exc}\n{traceback.format_exc()}")
+            self._json(500, {"detail": f"{type(exc).__name__}: {exc}"})
 
     def _chat(self):
         try:
-            length = int(self.headers.get("Content-Length", 0))
+            length = int(self.headers.get("Content-Length") or 0)
             raw = self.rfile.read(length).decode("utf-8") if length else "{}"
             body = json.loads(raw)
-        except (json.JSONDecodeError, ValueError) as exc:
+        except (json.JSONDecodeError, ValueError, TypeError) as exc:
             self._json(400, {"detail": f"Invalid JSON body: {exc}"})
             return
 
         api_key = (os.environ.get("ANTHROPIC_API_KEY") or "").strip()
         if not api_key:
+            _log("chat rejected: ANTHROPIC_API_KEY missing or empty")
             self._json(503, {"detail": "ANTHROPIC_API_KEY not configured"})
             return
 
         system = body.get("system") or ""
         messages = body.get("messages") or []
-        max_tokens = int(body.get("max_tokens") or 1200)
+        try:
+            max_tokens = int(body.get("max_tokens") or 1200)
+        except (TypeError, ValueError):
+            max_tokens = 1200
+        max_tokens = max(1, min(max_tokens, MAX_CHAT_TOKENS))
 
         if not messages:
             self._json(400, {"detail": "messages is required"})
             return
+
+        _log(f"chat request model={MODEL} messages={len(messages)} max_tokens={max_tokens} system_len={len(system)}")
 
         try:
             client = anthropic.Anthropic(api_key=api_key)
@@ -85,11 +113,13 @@ class handler(BaseHTTPRequestHandler):
                 system=system,
                 messages=[{"role": m.get("role", "user"), "content": m.get("content", "")} for m in messages],
             )
-            content = response.content[0].text if response.content else ""
+            content = _response_text(response)
             self._json(200, {"content": content})
         except anthropic.APIError as exc:
+            _log(f"chat Anthropic APIError: {exc}")
             self._json(502, {"detail": str(exc)})
         except Exception as exc:
+            _log(f"chat failed: {type(exc).__name__}: {exc}\n{traceback.format_exc()}")
             self._json(500, {"detail": str(exc) or "Chat request failed"})
 
     def _agent_run(self):

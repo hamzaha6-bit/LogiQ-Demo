@@ -16,7 +16,7 @@ class handler(BaseHTTPRequestHandler):
                 200,
                 {
                     "status": "ok",
-                    "anthropic_configured": bool(os.environ.get("ANTHROPIC_API_KEY")),
+                    "anthropic_configured": bool((os.environ.get("ANTHROPIC_API_KEY") or "").strip()),
                     "supabase_configured": bool(os.environ.get("SUPABASE_URL")),
                 },
             )
