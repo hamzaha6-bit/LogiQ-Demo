@@ -15,10 +15,10 @@ except ImportError:
     hook_json_response = None
 
 try:
-    from gmail_oauth import handle_callback, handle_connect, handle_status, is_gmail_auth_path
+    from gmail_oauth import handle_callback, handle_connect, handle_disconnect, handle_status, is_gmail_auth_path
 except ImportError:
     is_gmail_auth_path = lambda _p: False
-    handle_connect = handle_callback = handle_status = None
+    handle_connect = handle_callback = handle_status = handle_disconnect = None
 
 
 def _is_user_created_hook_path(path: str) -> bool:
@@ -70,6 +70,10 @@ class handler(BaseHTTPRequestHandler):
                 handle_user_created_hook(self)
             else:
                 self._json(503, {"detail": "Hook handler unavailable"})
+            return
+
+        if is_gmail_auth_path(path) and path.endswith("/disconnect") and handle_disconnect:
+            handle_disconnect(self)
             return
 
         try:

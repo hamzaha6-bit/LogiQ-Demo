@@ -77,6 +77,20 @@ def rest_patch(table: str, match: Dict[str, str], payload: Dict[str, Any]) -> bo
         return resp.status_code < 400
 
 
+def rest_delete(table: str, match: Dict[str, str]) -> tuple[bool, str]:
+    url = f"{env('SUPABASE_URL').rstrip('/')}/rest/v1/{table}"
+    if not env("SUPABASE_URL") or not env("SUPABASE_SERVICE_KEY"):
+        return False, "SUPABASE_URL or SUPABASE_SERVICE_KEY not configured"
+    params = {k: f"eq.{v}" for k, v in match.items()}
+    with httpx.Client(timeout=20) as client:
+        resp = client.delete(url, headers=rest_headers("return=minimal"), params=params)
+        if resp.status_code >= 400:
+            err = f"HTTP {resp.status_code}: {resp.text[:300]}"
+            print(f"[supabase] DELETE {table} failed: {err}")
+            return False, err
+        return True, ""
+
+
 def user_id_from_bearer(token: str) -> Optional[str]:
     if not token:
         return None

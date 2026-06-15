@@ -304,6 +304,65 @@ a { color: var(--brand); text-decoration: none; }
 .insight-card h4 { font-size: 13px; font-weight: 600; margin-bottom: 8px; }
 .insight-card p { font-size: 12px; color: var(--text2); line-height: 1.6; }
 
+/* Integrations page */
+.integrations-header { margin-bottom: 24px; }
+.integrations-header h1 { font-size: 22px; font-weight: 700; margin-bottom: 6px; }
+.integrations-header p { font-size: 13px; color: var(--text2); }
+.integrations-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+}
+.integration-card {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 20px;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-height: 200px;
+  transition: border-color .15s, box-shadow .15s;
+}
+.integration-card:hover:not(.coming-soon) {
+  border-color: var(--brand-m);
+  box-shadow: 0 2px 12px rgba(91, 75, 245, .08);
+}
+.integration-card.connected { border-color: var(--ok-b); }
+.integration-card.coming-soon { opacity: 0.55; }
+.integration-card-top { display: flex; align-items: flex-start; gap: 14px; }
+.integration-icon {
+  width: 44px; height: 44px; border-radius: 12px;
+  background: var(--brand-ll); display: flex; align-items: center; justify-content: center;
+  font-size: 22px; flex-shrink: 0;
+}
+.integration-card.coming-soon .integration-icon { background: var(--bg2); }
+.integration-meta { flex: 1; min-width: 0; }
+.integration-name { font-size: 15px; font-weight: 600; margin-bottom: 4px; }
+.integration-desc { font-size: 12px; color: var(--text2); line-height: 1.5; }
+.integration-status {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .03em;
+}
+.integration-status .status-dot {
+  width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;
+}
+.integration-status.connected { color: var(--ok); }
+.integration-status.connected .status-dot { background: var(--ok); }
+.integration-status.disconnected { color: var(--text3); }
+.integration-status.disconnected .status-dot { background: var(--text3); }
+.integration-account {
+  font-size: 12px; color: var(--text2); padding: 8px 10px;
+  background: var(--bg2); border-radius: 8px; word-break: break-all;
+}
+.integration-card-actions { margin-top: auto; display: flex; gap: 8px; flex-wrap: wrap; }
+.integration-card-actions .btn-primary,
+.integration-card-actions .btn-ghost { font-size: 12px; padding: 8px 14px; border-radius: 10px; }
+.integration-soon-tag {
+  font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em;
+  color: var(--text3); background: var(--bg2); padding: 4px 8px; border-radius: 6px;
+}
+
 /* Agent operational dashboard (below chat) */
 .agent-view-scroll {
   flex: 1; overflow-y: auto; min-height: 0; display: flex; flex-direction: column; background: var(--bg);
@@ -585,6 +644,7 @@ input[type=file].hidden-input { display: none; }
     </nav>
     <nav class="nav-section">
       <div class="nav-label">PLATFORM</div>
+      <button class="nav-item" data-page="integrations">Integrations</button>
       <button class="nav-item" data-page="pricing">Pricing</button>
       <button class="nav-item" data-page="landscape">Landscape</button>
     </nav>
@@ -618,6 +678,7 @@ input[type=file].hidden-input { display: none; }
     </header>
     <div class="content" id="content-area">
       <div class="page active" id="page-dashboard"></div>
+      <div class="page" id="page-integrations"></div>
       <div class="page" id="page-workforce"></div>
       <div class="page page-chat" id="page-build"></div>
       <div class="page" id="page-pricing"></div>
@@ -1021,11 +1082,62 @@ async function logAuditEvent(agent, action_type, fields = {}) {
   } catch(e) {}
 }
 
-function connectGmail() {
+async function connectGmail() {
+  const btn = document.getElementById('btn-connect-gmail');
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = 'Redirecting…';
+  }
+
+  if (!authSession?.access_token) {
+    const stored = readSessionFromStorage();
+    if (stored?.access_token) {
+      authSession = { access_token: stored.access_token, user: stored.user || {} };
+    }
+  }
+  if (!authSession?.access_token) {
+    const restored = await validateAndRestoreSession();
+    if (!restored) {
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = 'Connect Gmail';
+      }
+      toast('Sign in first to connect Gmail');
+      showAuth('login');
+      return;
+    }
+  }
+
   saveSessionToStorage();
-  let url = API_BASE + '/api/auth/gmail/connect';
-  if (authSession?.access_token) url += '?token=' + encodeURIComponent(authSession.access_token);
-  window.location.href = url;
+  const token = authSession.access_token;
+  window.location.href = API_BASE + '/api/auth/gmail/connect?token=' + encodeURIComponent(token);
+}
+
+async function disconnectGmail() {
+  if (!confirm('Disconnect Gmail? Agents will not be able to send emails until you reconnect.')) return;
+  try {
+    const res = await apiFetch('/api/auth/gmail/disconnect', { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      toast(data.detail || 'Failed to disconnect Gmail');
+      return;
+    }
+    integrationConfig = {
+      ...integrationConfig,
+      gmail: false,
+      gmail_authorised: false,
+      google_authorised: false,
+      sheets_scope: false,
+      calendar_scope: false,
+      sheets_available: false,
+      sender_email: '',
+    };
+    toast('Gmail disconnected');
+    if (currentPage === 'integrations') renderIntegrations();
+    if (currentPage === 'dashboard') renderDashboard();
+  } catch (e) {
+    toast('Failed to disconnect Gmail');
+  }
 }
 
 async function checkGmailHealth() {
@@ -1172,11 +1284,12 @@ function navigate(page) {
     n.classList.toggle('active', n.dataset.page === page);
   });
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-  const titles = { dashboard:'Dashboard', workforce:'Workforce', build:'Build', pricing:'Pricing', landscape:'Landscape' };
+  const titles = { dashboard:'Dashboard', integrations:'Integrations', workforce:'Workforce', build:'Build', pricing:'Pricing', landscape:'Landscape' };
   if (titles[page]) {
     document.getElementById('page-' + page)?.classList.add('active');
     document.getElementById('page-title').textContent = titles[page];
     if (page === 'dashboard') renderDashboard();
+    if (page === 'integrations') renderIntegrations();
     if (page === 'workforce') renderWorkforce();
     if (page === 'build') renderBuild();
   } else if (deployedAgents.has(page)) {
@@ -1525,7 +1638,7 @@ async function renderDashboard() {
 
   el.innerHTML = `
     <div class="dash-greeting"><h1>${greeting()}, ${esc(userName)} 👋</h1>
-      <p>${liveAgents.length} agents active — your workforce is running.</p></div>
+      <p>${liveAgents.length} agents active — <a href="#" onclick="navigate('integrations');return false" style="color:var(--brand);font-weight:500">Manage integrations</a></p></div>
     <div class="grid-3" style="margin-bottom:20px">
       <div class="card metric-card ${usageClass(apiPct)}"><div class="metric-label">API calls today</div>
         <div class="metric-value">${usage.api_calls_today || 0}</div>
@@ -1579,6 +1692,149 @@ async function renderDashboard() {
         </div>
       </div>
     </div>`;
+}
+
+const INTEGRATION_CATALOG = [
+  {
+    id: 'gmail',
+    name: 'Gmail',
+    icon: '📧',
+    description: 'Send emails from your inbox. Agents draft and send on your behalf.',
+    type: 'oauth',
+  },
+  {
+    id: 'sheets',
+    name: 'Google Sheets',
+    icon: '📊',
+    description: 'Import and sync data from Google Sheets into your agents.',
+    requiresGmail: true,
+    scopeKey: 'sheets_scope',
+  },
+  {
+    id: 'calendar',
+    name: 'Google Calendar',
+    icon: '📅',
+    description: 'Check availability, create events, and send calendar invites.',
+    requiresGmail: true,
+    scopeKey: 'calendar_scope',
+  },
+  {
+    id: 'calendly',
+    name: 'Calendly',
+    icon: '🗓️',
+    description: 'Embed scheduling links in outreach and follow-up emails.',
+    comingSoon: true,
+  },
+  {
+    id: 'tally',
+    name: 'Tally',
+    icon: '📝',
+    description: 'Collect form responses and feed them into your workflows.',
+    comingSoon: true,
+  },
+  {
+    id: 'whatsapp',
+    name: 'WhatsApp',
+    icon: '💬',
+    description: 'Send and receive WhatsApp messages through your agents.',
+    comingSoon: true,
+  },
+];
+
+async function renderIntegrations() {
+  const el = document.getElementById('page-integrations');
+  if (!el) return;
+
+  el.innerHTML = `
+    <div class="integrations-header">
+      <h1>Integrations</h1>
+      <p>Connect the tools your agents use to read data, send messages, and schedule meetings.</p>
+    </div>
+    <div class="integrations-grid" id="integrations-grid">
+      <div class="empty-state" style="padding:48px;grid-column:1/-1"><p>Loading integrations…</p></div>
+    </div>`;
+
+  let gmailHealth = { healthy: false, connected: false, email: '', sheets_scope: false, calendar_scope: false };
+  if (authSession && backendAvailable) {
+    gmailHealth = await checkGmailHealth();
+    await loadIntegrationConfig();
+  }
+
+  const gmailOk = gmailHealth.healthy;
+  const email = gmailHealth.email || integrationConfig.sender_email || '';
+
+  const cards = INTEGRATION_CATALOG.map(item => {
+    if (item.comingSoon) {
+      return `
+        <div class="integration-card coming-soon">
+          <div class="integration-card-top">
+            <div class="integration-icon">${item.icon}</div>
+            <div class="integration-meta">
+              <div class="integration-name">${esc(item.name)}</div>
+              <div class="integration-desc">${esc(item.description)}</div>
+            </div>
+          </div>
+          <span class="integration-soon-tag">Coming soon</span>
+          <div class="integration-status disconnected"><span class="status-dot"></span>Not connected</div>
+        </div>`;
+    }
+
+    if (item.id === 'gmail') {
+      return `
+        <div class="integration-card${gmailOk ? ' connected' : ''}">
+          <div class="integration-card-top">
+            <div class="integration-icon">${item.icon}</div>
+            <div class="integration-meta">
+              <div class="integration-name">${esc(item.name)}</div>
+              <div class="integration-desc">${esc(item.description)}</div>
+            </div>
+          </div>
+          <div class="integration-status ${gmailOk ? 'connected' : 'disconnected'}">
+            <span class="status-dot"></span>${gmailOk ? 'Connected' : 'Not connected'}
+          </div>
+          ${gmailOk && email ? `<div class="integration-account">${esc(email)}</div>` : ''}
+          <div class="integration-card-actions">
+            ${gmailOk
+              ? '<button class="btn-ghost" onclick="disconnectGmail()">Disconnect</button>'
+              : '<button class="btn-primary" id="btn-connect-gmail" onclick="connectGmail()">Connect</button>'}
+          </div>
+        </div>`;
+    }
+
+    if (item.requiresGmail) {
+      const scopeOk = gmailOk && gmailHealth[item.scopeKey];
+      const needsReauth = gmailOk && !scopeOk;
+      return `
+        <div class="integration-card${scopeOk ? ' connected' : ''}">
+          <div class="integration-card-top">
+            <div class="integration-icon">${item.icon}</div>
+            <div class="integration-meta">
+              <div class="integration-name">${esc(item.name)}</div>
+              <div class="integration-desc">${esc(item.description)}</div>
+            </div>
+          </div>
+          <div class="integration-status ${scopeOk ? 'connected' : 'disconnected'}">
+            <span class="status-dot"></span>${scopeOk ? 'Connected' : 'Not connected'}
+          </div>
+          ${scopeOk && email
+            ? `<div class="integration-account">Via ${esc(email)}</div>`
+            : needsReauth
+              ? '<div class="integration-account">Reconnect Gmail to grant access</div>'
+              : '<div class="integration-account">Connect Gmail to enable</div>'}
+          <div class="integration-card-actions">
+            ${needsReauth
+              ? '<button class="btn-primary" onclick="connectGmail()">Reconnect Gmail</button>'
+              : scopeOk
+                ? '<span style="font-size:12px;color:var(--text3)">Included with Gmail</span>'
+                : '<button class="btn-primary" id="btn-connect-gmail" onclick="connectGmail()">Connect Gmail</button>'}
+          </div>
+        </div>`;
+    }
+
+    return '';
+  }).join('');
+
+  document.getElementById('integrations-grid').innerHTML = cards;
 }
 
 function reviewAction(actionId, agentName) {
@@ -3159,6 +3415,8 @@ async function init() {
         console.error('[Gmail OAuth] status after connect:', health);
       }
       await loadIntegrationConfig();
+      if (currentPage === 'dashboard') renderDashboard();
+      if (currentPage === 'integrations') renderIntegrations();
     } else {
       toast('Gmail connected — please sign in to continue');
       showAuth('login');

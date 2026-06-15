@@ -14,7 +14,7 @@ os.environ.setdefault("OAUTHLIB_RELAX_TOKEN_SCOPE", "1")
 
 from google_auth_oauthlib.flow import Flow
 
-from google_oauth import GOOGLE_SCOPES, check_gmail_health, is_oauth_configured, parse_client_config, save_user_token
+from google_oauth import GOOGLE_SCOPES, check_gmail_health, disconnect_user_token, is_oauth_configured, parse_client_config, save_user_token
 from http_auth import resolve_access_token, resolve_user_id
 from supabase_rest import user_id_from_bearer
 
@@ -294,6 +294,19 @@ def handle_status(handler) -> None:
             "error": health.get("error", ""),
         },
     )
+
+
+def handle_disconnect(handler) -> None:
+    user_id = resolve_user_id(handler)
+    if not user_id:
+        handler._json(401, {"detail": "Sign in required"})
+        return
+    ok, err = disconnect_user_token(user_id)
+    print(f"[gmail_auth] disconnect user_id={user_id} ok={ok} error={err or '(none)'}")
+    if not ok:
+        handler._json(502, {"detail": err or "Failed to disconnect Gmail"})
+        return
+    handler._json(200, {"success": True, "connected": False})
 
 
 def _redirect(handler, url: str) -> None:

@@ -48,6 +48,7 @@
     { "src": "/api/auth/gmail/connect", "dest": "/api/auth.py" },
     { "src": "/api/auth/gmail/callback", "dest": "/api/auth.py" },
     { "src": "/api/auth/gmail/status", "dest": "/api/auth.py" },
+    { "src": "/api/auth/gmail/disconnect", "dest": "/api/auth.py" },
     { "src": "/api/auth/signup", "dest": "/api/auth.py" },
     { "src": "/api/auth/login", "dest": "/api/auth.py" },
     { "src": "/api/auth/logout", "dest": "/api/auth.py" },

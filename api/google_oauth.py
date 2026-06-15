@@ -10,7 +10,7 @@ from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 
-from supabase_rest import env, rest_get, rest_patch, rest_post
+from supabase_rest import env, rest_delete, rest_get, rest_patch, rest_post, rest_post_with_error
 
 GMAIL_REDIRECT_URI = env("GMAIL_REDIRECT_URI") or "https://app.logiqops.co.uk/api/auth/gmail/callback"
 
@@ -74,6 +74,13 @@ def save_user_token(user_id: str, token_data: dict) -> Tuple[bool, str]:
         on_conflict="user_id,integration",
     )
     return row is not None, err
+
+
+def disconnect_user_token(user_id: str) -> Tuple[bool, str]:
+    return rest_delete(
+        "user_integrations",
+        {"user_id": user_id, "integration": "gmail"},
+    )
 
 
 def _scopes_in_token(token_data: dict) -> List[str]:
