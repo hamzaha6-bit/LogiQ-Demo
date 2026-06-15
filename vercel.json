@@ -11,21 +11,21 @@
       "src": "api/auth.py",
       "use": "@vercel/python",
       "config": {
-        "includeFiles": "api/hook_handler.py,api/gmail_send.py,api/gmail_oauth.py,api/google_oauth.py,api/http_auth.py,api/supabase_rest.py"
+        "includeFiles": "api_lib/action_registry.py,api_lib/gmail_oauth.py,api_lib/gmail_send.py,api_lib/google_oauth.py,api_lib/hook_handler.py,api_lib/http_auth.py,api_lib/supabase_rest.py,api_lib/sheets_service.py"
       }
     },
     {
       "src": "api/integrations.py",
       "use": "@vercel/python",
       "config": {
-        "includeFiles": "api/sheets_service.py,api/google_oauth.py,api/http_auth.py,api/supabase_rest.py"
+        "includeFiles": "api_lib/action_registry.py,api_lib/gmail_oauth.py,api_lib/gmail_send.py,api_lib/google_oauth.py,api_lib/hook_handler.py,api_lib/http_auth.py,api_lib/supabase_rest.py,api_lib/sheets_service.py"
       }
     },
     {
       "src": "api/ai.py",
       "use": "@vercel/python",
       "config": {
-        "includeFiles": "api/http_auth.py,api/supabase_rest.py,api/google_oauth.py"
+        "includeFiles": "api_lib/action_registry.py,api_lib/gmail_oauth.py,api_lib/gmail_send.py,api_lib/google_oauth.py,api_lib/hook_handler.py,api_lib/http_auth.py,api_lib/supabase_rest.py,api_lib/sheets_service.py"
       }
     },
     { "src": "index.html", "use": "@vercel/static" }
@@ -59,7 +59,6 @@
     { "src": "/api/auth/login", "dest": "/api/auth.py" },
     { "src": "/api/auth/logout", "dest": "/api/auth.py" },
     { "src": "/api/auth/me", "dest": "/api/auth.py" },
-    { "src": "/api/auth/profile", "dest": "/api/auth.py" },
     { "handle": "filesystem" },
     { "src": "/(.*)", "dest": "/index.html" }
   ],

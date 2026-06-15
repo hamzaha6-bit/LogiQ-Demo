@@ -4,7 +4,10 @@ import os
 import sys
 from urllib.parse import urlparse
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+_API_DIR = os.path.dirname(os.path.abspath(__file__))
+_API_LIB = os.path.normpath(os.path.join(_API_DIR, "..", "api_lib"))
+if _API_LIB not in sys.path:
+    sys.path.insert(0, _API_LIB)
 
 from supabase import create_client
 

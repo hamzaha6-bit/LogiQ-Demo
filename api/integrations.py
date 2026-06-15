@@ -2,8 +2,14 @@
 from http.server import BaseHTTPRequestHandler
 import json
 import os
+import sys
 from datetime import datetime, timezone
 from urllib.parse import parse_qs, urlparse
+
+_API_DIR = os.path.dirname(os.path.abspath(__file__))
+_API_LIB = os.path.normpath(os.path.join(_API_DIR, "..", "api_lib"))
+if _API_LIB not in sys.path:
+    sys.path.insert(0, _API_LIB)
 
 from google_oauth import (
     CALENDAR_SCOPE,
