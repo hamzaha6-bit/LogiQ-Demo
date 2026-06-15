@@ -349,6 +349,8 @@ a { color: var(--brand); text-decoration: none; }
 }
 .integration-status.connected { color: var(--ok); }
 .integration-status.connected .status-dot { background: var(--ok); }
+.integration-status.warning { color: var(--warn, #D97706); }
+.integration-status.warning .status-dot { background: var(--warn, #D97706); }
 .integration-status.disconnected { color: var(--text3); }
 .integration-status.disconnected .status-dot { background: var(--text3); }
 .integration-account {
@@ -511,6 +513,8 @@ a { color: var(--brand); text-decoration: none; }
   opacity: 0; transition: opacity .3s; pointer-events: none;
 }
 .toast.show { opacity: 1; }
+.toast.toast-ok { background: var(--ok); }
+.toast.toast-err { background: var(--err); }
 .error-msg { color: var(--err); font-size: 12px; padding: 8px; background: var(--err-bg); border-radius: 7px; margin: 8px 0; }
 .loading-text { color: var(--text3); font-size: 12px; font-style: italic; }
 .csv-btn { font-size: 12px; color: var(--brand); cursor: pointer; font-weight: 500; }
@@ -1149,6 +1153,45 @@ async function checkGmailHealth() {
   }
 }
 
+function gmailVerifiedStatus(health) {
+  if (health.connected && health.healthy) {
+    return { cls: 'connected', label: 'Connected and healthy', cardConnected: true };
+  }
+  if (health.connected && !health.healthy) {
+    return { cls: 'warning', label: 'Connection issue', cardConnected: false };
+  }
+  return { cls: 'disconnected', label: 'Not connected', cardConnected: false };
+}
+
+async function testIntegrationConnection(id) {
+  if (!authSession) {
+    toast('Sign in to test connections', 'error');
+    return;
+  }
+  try {
+    let ok = false;
+    if (id === 'gmail' || id === 'sheets') {
+      const res = await apiFetch('/api/auth/gmail/status');
+      const data = await res.json().catch(() => ({}));
+      if (id === 'gmail') {
+        ok = data.connected === true && data.healthy === true;
+      } else {
+        ok = data.connected === true && data.healthy === true && data.sheets_scope === true;
+      }
+    } else if (id === 'calendar') {
+      const res = await apiFetch('/api/integrations/calendar/status');
+      const data = await res.json().catch(() => ({}));
+      ok = data.healthy === true && data.calendar_scope === true;
+    }
+    toast(
+      ok ? 'Connected and healthy' : 'Connection issue — please reconnect',
+      ok ? 'success' : 'error'
+    );
+  } catch (e) {
+    toast('Connection issue — please reconnect', 'error');
+  }
+}
+
 async function startCheckout(plan) {
   if (!appConfig.stripe_configured) { toast('Coming soon — Stripe not configured'); return; }
   if (!authSession) { toast('Sign in to subscribe'); showAuth('login'); return; }
@@ -1169,7 +1212,7 @@ async function canDeployMoreAgents() {
 
 function maybeShowOnboarding() {
   if (!authSession || authSession.user?.onboarding_complete) return;
-  const customAgents = [...deployedAgents.keys()].filter(id => !['cleo','nova'].includes(id));
+  const customAgents = [...deployedAgents.keys()].filter(id => !['aria','nova'].includes(id));
   const gmailOk = integrationConfig.gmail_authorised;
   const agentOk = customAgents.length > 0;
   const leadsOk = (memStore.leads || []).length > 0;
@@ -1222,7 +1265,7 @@ let currentPage = 'dashboard';
 const agentSettings = {};
 
 const DEFAULT_AGENTS = {
-  ARIA: { id:'aria', name:'Aria', emoji:'📣', role:'Sales & Outreach', table:'leads', live:false,
+  ARIA: { id:'aria', name:'Aria', emoji:'📣', role:'Sales & Outreach', table:'leads', live:true,
     fields:[{name:'name',label:'Name',type:'text'},{name:'company',label:'Company',type:'text'},{name:'role',label:'Role',type:'text'},{name:'industry',label:'Industry',type:'text'}],
     itemLabel:'lead', runLabel:'Run Aria', emptyMsg:'No leads yet. Add one above or upload a CSV.',
     systemPrompt:'You are Aria, an outreach agent. Review this lead\'s full history. How many times contacted? How long since last contact? What status? Reason explicitly about what action is right. If emailing, write personalised copy referencing previous touchpoints, specific to their industry, under 80 words. Return JSON only, no markdown: {reasoning, action (email/wait/escalate), subject, body}',
@@ -1237,7 +1280,7 @@ const DEFAULT_AGENTS = {
     itemLabel:'enquiry', runLabel:'Run Nova', emptyMsg:'No enquiries yet. Add one above.',
     systemPrompt:'You are Nova, a comms agent. Read this enquiry carefully. What is the person actually asking? What tone is right? Draft a response that directly addresses their question. Return JSON only, no markdown: {reasoning, action (respond/escalate), subject, body}',
     statusField:'status', defaultStatus:'new', idField:'name' },
-  CLEO: { id:'cleo', name:'Cleo', emoji:'📊', role:'Reporting', table:'reports', live:true,
+  CLEO: { id:'cleo', name:'Cleo', emoji:'📊', role:'Reporting', table:'reports', live:false,
     fields:[{name:'title',label:'Report title',type:'text'},{name:'period',label:'Period',type:'select',options:['week','month','quarter']},{name:'raw_data',label:'Raw data',type:'text'}],
     itemLabel:'report', runLabel:'Run Cleo', emptyMsg:'No reports yet. Add one above.',
     systemPrompt:'You are Cleo, a reporting agent. Analyse this data. Identify trends and anomalies vs previous periods if available. Produce a structured board-ready report: executive summary, key metrics, anomalies flagged, recommendations. Return JSON only, no markdown: {reasoning, action (report), subject, body}',
@@ -1274,8 +1317,8 @@ Rules: Be concise. Use **bold** for emphasis. Never deploy without user confirma
 const CLEO_MODAL_PROMPT = "You are Cleo, a reporting agent. Help with summaries, board reports, KPI analysis, results in plain English. Use bold for key figures. Sign off as 'Prepared by Cleo — LogiQ Reporting Agent'.";
 const NOVA_MODAL_PROMPT = "You are Nova, a comms agent. Draft emails, onboarding sequences, complaint responses. Ready-to-send copy always. Use bold for subject lines. Sign off as 'The Team at [Company]'.";
 
-// Init deployed: Cleo + Nova
-['CLEO','NOVA'].forEach(k => { const a = DEFAULT_AGENTS[k]; deployedAgents.set(a.id, {...a}); });
+// Phase 1 agents in sidebar: Aria + Nova (Cleo is Phase 2)
+['ARIA','NOVA'].forEach(k => { const a = DEFAULT_AGENTS[k]; deployedAgents.set(a.id, {...a}); });
 
 // ═══ 2. NAVIGATION ═══
 function navigate(page) {
@@ -1385,10 +1428,11 @@ function requireSupabase() {
   if (!KEYS.supabaseUrl || !KEYS.supabaseAnon) { showBanner('key-supabase-url'); return false; }
   return true;
 }
-function toast(msg) {
+function toast(msg, type) {
   const t = document.getElementById('toast');
-  t.textContent = msg; t.classList.add('show');
-  setTimeout(() => t.classList.remove('show'), 2800);
+  t.textContent = msg;
+  t.className = 'toast show' + (type === 'success' ? ' toast-ok' : type === 'error' ? ' toast-err' : '');
+  setTimeout(() => { t.className = 'toast'; }, 2800);
 }
 
 // ═══ 4. SUPABASE ═══
@@ -1760,8 +1804,9 @@ async function renderIntegrations() {
     await loadIntegrationConfig();
   }
 
-  const gmailOk = gmailHealth.healthy;
+  const gmailStatus = gmailVerifiedStatus(gmailHealth);
   const email = gmailHealth.email || integrationConfig.sender_email || '';
+  const gmailFullyOk = gmailHealth.connected && gmailHealth.healthy;
 
   const cards = INTEGRATION_CATALOG.map(item => {
     if (item.comingSoon) {
@@ -1781,7 +1826,7 @@ async function renderIntegrations() {
 
     if (item.id === 'gmail') {
       return `
-        <div class="integration-card${gmailOk ? ' connected' : ''}">
+        <div class="integration-card${gmailStatus.cardConnected ? ' connected' : ''}">
           <div class="integration-card-top">
             <div class="integration-icon">${item.icon}</div>
             <div class="integration-meta">
@@ -1789,21 +1834,25 @@ async function renderIntegrations() {
               <div class="integration-desc">${esc(item.description)}</div>
             </div>
           </div>
-          <div class="integration-status ${gmailOk ? 'connected' : 'disconnected'}">
-            <span class="status-dot"></span>${gmailOk ? 'Connected' : 'Not connected'}
+          <div class="integration-status ${gmailStatus.cls}">
+            <span class="status-dot"></span>${gmailStatus.label}
           </div>
-          ${gmailOk && email ? `<div class="integration-account">${esc(email)}</div>` : ''}
+          ${gmailHealth.connected && email ? `<div class="integration-account">${esc(email)}</div>` : ''}
+          ${gmailHealth.connected && !gmailHealth.healthy && gmailHealth.error
+            ? `<div class="integration-account" style="color:var(--err)">${esc(gmailHealth.error)}</div>`
+            : ''}
           <div class="integration-card-actions">
-            ${gmailOk
-              ? '<button class="btn-ghost" onclick="disconnectGmail()">Disconnect</button>'
+            ${gmailHealth.connected
+              ? `<button class="btn-ghost" onclick="testIntegrationConnection('gmail')">Test connection</button>
+                 <button class="btn-ghost" onclick="disconnectGmail()">Disconnect</button>`
               : '<button class="btn-primary" id="btn-connect-gmail" onclick="connectGmail()">Connect</button>'}
           </div>
         </div>`;
     }
 
     if (item.requiresGmail) {
-      const scopeOk = gmailOk && gmailHealth[item.scopeKey];
-      const needsReauth = gmailOk && !scopeOk;
+      const scopeOk = gmailFullyOk && gmailHealth[item.scopeKey];
+      const needsReauth = gmailHealth.connected && (!gmailFullyOk || !gmailHealth[item.scopeKey]);
       return `
         <div class="integration-card${scopeOk ? ' connected' : ''}">
           <div class="integration-card-top">
@@ -1814,7 +1863,7 @@ async function renderIntegrations() {
             </div>
           </div>
           <div class="integration-status ${scopeOk ? 'connected' : 'disconnected'}">
-            <span class="status-dot"></span>${scopeOk ? 'Connected' : 'Not connected'}
+            <span class="status-dot"></span>${scopeOk ? 'Connected and healthy' : 'Not connected'}
           </div>
           ${scopeOk && email
             ? `<div class="integration-account">Via ${esc(email)}</div>`
@@ -1825,7 +1874,8 @@ async function renderIntegrations() {
             ${needsReauth
               ? '<button class="btn-primary" onclick="connectGmail()">Reconnect Gmail</button>'
               : scopeOk
-                ? '<span style="font-size:12px;color:var(--text3)">Included with Gmail</span>'
+                ? `<button class="btn-ghost" onclick="testIntegrationConnection('${item.id}')">Test connection</button>
+                   <span style="font-size:12px;color:var(--text3)">Included with Gmail</span>`
                 : '<button class="btn-primary" id="btn-connect-gmail" onclick="connectGmail()">Connect Gmail</button>'}
           </div>
         </div>`;
