@@ -797,6 +797,78 @@ function readSessionFromStorage() {
   }
 }
 
+/** Bearer token from in-memory session or localStorage (integrations must not rely on cached config). */
+function getAuthBearerToken() {
+  if (authSession?.access_token) return authSession.access_token;
+  const stored = readSessionFromStorage();
+  if (!stored?.access_token) return null;
+  authSession = authSession || { access_token: stored.access_token, user: stored.user || {} };
+  if (!authSession.access_token) authSession.access_token = stored.access_token;
+  return stored.access_token;
+}
+
+function normalizeGmailStatus(data) {
+  const d = data && typeof data === 'object' ? data : {};
+  return {
+    connected: d.connected === true,
+    healthy: d.healthy === true,
+    email: d.email || '',
+    sheets_scope: d.sheets_scope === true,
+    calendar_scope: d.calendar_scope === true,
+    error: d.error || '',
+  };
+}
+
+async function fetchIntegrationStatuses() {
+  const token = getAuthBearerToken();
+  const emptyGmail = normalizeGmailStatus(null);
+  const emptyCalendar = { healthy: false, calendar_scope: false, email: '' };
+  if (!token) return { gmail: emptyGmail, calendar: emptyCalendar };
+
+  await ensureBackendReachable();
+
+  let gmail = emptyGmail;
+  let calendar = emptyCalendar;
+
+  try {
+    const res = await fetch(API_BASE + '/api/auth/gmail/status', {
+      headers: { Authorization: 'Bearer ' + token },
+    });
+    if (res.ok) gmail = normalizeGmailStatus(await res.json().catch(() => ({})));
+  } catch (e) {
+    console.warn('[integrations] gmail/status failed:', e);
+  }
+
+  try {
+    const res = await fetch(API_BASE + '/api/integrations/calendar/status', {
+      headers: { Authorization: 'Bearer ' + token },
+    });
+    if (res.ok) {
+      const d = await res.json().catch(() => ({}));
+      calendar = {
+        healthy: d.healthy === true,
+        calendar_scope: d.calendar_scope === true,
+        email: d.email || '',
+      };
+    }
+  } catch (e) {
+    console.warn('[integrations] calendar/status failed:', e);
+  }
+
+  integrationConfig = {
+    ...integrationConfig,
+    gmail: gmail.connected && gmail.healthy,
+    gmail_authorised: gmail.connected && gmail.healthy,
+    google_authorised: gmail.connected && gmail.healthy,
+    sheets_scope: gmail.sheets_scope,
+    calendar_scope: gmail.calendar_scope,
+    sheets_available: gmail.sheets_scope && gmail.healthy,
+    sender_email: gmail.email,
+  };
+
+  return { gmail, calendar };
+}
+
 async function validateToken(accessToken) {
   const me = await fetch(API_BASE + '/api/auth/me', {
     headers: { Authorization: 'Bearer ' + accessToken }
@@ -923,7 +995,8 @@ function goToAppHome() {
 async function apiFetch(path, options = {}) {
   const opts = { ...options };
   opts.headers = { ...(opts.headers || {}) };
-  if (authSession?.access_token) opts.headers['Authorization'] = 'Bearer ' + authSession.access_token;
+  const token = getAuthBearerToken();
+  if (token) opts.headers['Authorization'] = 'Bearer ' + token;
   if (opts.body && typeof opts.body === 'object' && !(opts.body instanceof FormData)) {
     opts.headers['Content-Type'] = 'application/json';
     opts.body = JSON.stringify(opts.body);
@@ -1146,10 +1219,15 @@ async function disconnectGmail() {
 
 async function checkGmailHealth() {
   try {
-    const res = await apiFetch('/api/auth/gmail/status');
-    return await res.json().catch(() => ({}));
+    const token = getAuthBearerToken();
+    if (!token) return normalizeGmailStatus(null);
+    const res = await fetch(API_BASE + '/api/auth/gmail/status', {
+      headers: { Authorization: 'Bearer ' + token },
+    });
+    if (!res.ok) return normalizeGmailStatus(null);
+    return normalizeGmailStatus(await res.json().catch(() => ({})));
   } catch (e) {
-    return { healthy: false, connected: false };
+    return normalizeGmailStatus(null);
   }
 }
 
@@ -1164,29 +1242,25 @@ function gmailVerifiedStatus(health) {
 }
 
 async function testIntegrationConnection(id) {
-  if (!authSession) {
+  if (!getAuthBearerToken()) {
     toast('Sign in to test connections', 'error');
     return;
   }
   try {
+    const { gmail, calendar } = await fetchIntegrationStatuses();
     let ok = false;
-    if (id === 'gmail' || id === 'sheets') {
-      const res = await apiFetch('/api/auth/gmail/status');
-      const data = await res.json().catch(() => ({}));
-      if (id === 'gmail') {
-        ok = data.connected === true && data.healthy === true;
-      } else {
-        ok = data.connected === true && data.healthy === true && data.sheets_scope === true;
-      }
+    if (id === 'gmail') {
+      ok = gmail.connected && gmail.healthy;
+    } else if (id === 'sheets') {
+      ok = gmail.connected && gmail.healthy && gmail.sheets_scope;
     } else if (id === 'calendar') {
-      const res = await apiFetch('/api/integrations/calendar/status');
-      const data = await res.json().catch(() => ({}));
-      ok = data.healthy === true && data.calendar_scope === true;
+      ok = calendar.healthy && calendar.calendar_scope;
     }
     toast(
       ok ? 'Connected and healthy' : 'Connection issue — please reconnect',
       ok ? 'success' : 'error'
     );
+    if (currentPage === 'integrations') await renderIntegrations();
   } catch (e) {
     toast('Connection issue — please reconnect', 'error');
   }
@@ -1798,15 +1872,19 @@ async function renderIntegrations() {
       <div class="empty-state" style="padding:48px;grid-column:1/-1"><p>Loading integrations…</p></div>
     </div>`;
 
-  let gmailHealth = { healthy: false, connected: false, email: '', sheets_scope: false, calendar_scope: false };
-  if (authSession && backendAvailable) {
-    gmailHealth = await checkGmailHealth();
+  let gmailHealth = normalizeGmailStatus(null);
+  let calendarHealth = { healthy: false, calendar_scope: false, email: '' };
+  if (getAuthBearerToken()) {
     await loadIntegrationConfig();
+    const statuses = await fetchIntegrationStatuses();
+    gmailHealth = statuses.gmail;
+    calendarHealth = statuses.calendar;
   }
 
   const gmailStatus = gmailVerifiedStatus(gmailHealth);
-  const email = gmailHealth.email || integrationConfig.sender_email || '';
+  const email = gmailHealth.email || '';
   const gmailFullyOk = gmailHealth.connected && gmailHealth.healthy;
+  const hasAuth = !!getAuthBearerToken();
 
   const cards = INTEGRATION_CATALOG.map(item => {
     if (item.comingSoon) {
@@ -1842,17 +1920,19 @@ async function renderIntegrations() {
             ? `<div class="integration-account" style="color:var(--err)">${esc(gmailHealth.error)}</div>`
             : ''}
           <div class="integration-card-actions">
+            ${hasAuth ? '<button class="btn-ghost" onclick="testIntegrationConnection(\'gmail\')">Test connection</button>' : ''}
             ${gmailHealth.connected
-              ? `<button class="btn-ghost" onclick="testIntegrationConnection('gmail')">Test connection</button>
-                 <button class="btn-ghost" onclick="disconnectGmail()">Disconnect</button>`
+              ? '<button class="btn-ghost" onclick="disconnectGmail()">Disconnect</button>'
               : '<button class="btn-primary" id="btn-connect-gmail" onclick="connectGmail()">Connect</button>'}
           </div>
         </div>`;
     }
 
     if (item.requiresGmail) {
-      const scopeOk = gmailFullyOk && gmailHealth[item.scopeKey];
-      const needsReauth = gmailHealth.connected && (!gmailFullyOk || !gmailHealth[item.scopeKey]);
+      const scopeOk = item.id === 'calendar'
+        ? gmailFullyOk && (gmailHealth.calendar_scope || calendarHealth.calendar_scope)
+        : gmailFullyOk && gmailHealth[item.scopeKey];
+      const needsReauth = gmailHealth.connected && !scopeOk;
       return `
         <div class="integration-card${scopeOk ? ' connected' : ''}">
           <div class="integration-card-top">
@@ -2841,11 +2921,14 @@ function showSheetsReauthPrompt() {
 }
 
 async function loadIntegrationConfig() {
+  if (!getAuthBearerToken() && !backendAvailable) return;
+  if (!backendAvailable) await ensureBackendReachable();
   if (!backendAvailable) return;
   try {
     const res = await apiFetch('/api/integrations/config');
     if (!res.ok) return;
-    integrationConfig = await res.json();
+    const data = await res.json();
+    integrationConfig = { ...integrationConfig, ...data };
     if (integrationConfig.calendly_link && !getAgentSettings('nova').calendlyLink) {
       getAgentSettings('nova').calendlyLink = integrationConfig.calendly_link;
     }
@@ -3457,10 +3540,27 @@ async function init() {
     }
     if (authSession) {
       const health = await checkGmailHealth();
-      if (health.healthy) {
-        integrationConfig = { ...integrationConfig, gmail_authorised: true, google_authorised: true };
+      if (health.connected && health.healthy) {
+        integrationConfig = {
+          ...integrationConfig,
+          gmail_authorised: true,
+          google_authorised: true,
+          gmail: true,
+          sheets_scope: health.sheets_scope,
+          calendar_scope: health.calendar_scope,
+          sender_email: health.email,
+        };
         toast('✓ Google connected' + (health.email ? ' as ' + health.email : ''));
       } else {
+        integrationConfig = {
+          ...integrationConfig,
+          gmail_authorised: false,
+          google_authorised: false,
+          gmail: false,
+          sheets_scope: false,
+          calendar_scope: false,
+          sender_email: '',
+        };
         toast(health.error || 'Google connected but token not saved — try Connect again while signed in');
         console.error('[Gmail OAuth] status after connect:', health);
       }
