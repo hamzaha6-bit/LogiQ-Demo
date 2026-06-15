@@ -777,7 +777,43 @@ async function restoreSessionFromToken(accessToken) {
     return false;
   }
 }
+// ── Email confirmation / recovery redirect handler ───────────────────────────
+// Supabase appends the session to the URL hash after the user clicks the
+// confirmation link: #access_token=...&type=signup  (or #error=... if expired).
+function parseAuthHash() {
+  const raw = (window.location.hash || '').replace(/^#/, '');
+  if (!raw) return null;
+  const p = new URLSearchParams(raw);
+  if (!p.get('access_token') && !p.get('error')) return null;
+  return {
+    accessToken: p.get('access_token') || '',
+    type: p.get('type') || '',
+    error: p.get('error') || '',
+    errorDescription: (p.get('error_description') || '').replace(/\+/g, ' '),
+  };
+}
 
+async function handleEmailConfirmation() {
+  const h = parseAuthHash();
+  if (!h) return false;
+  // Strip the hash so tokens never linger in the address bar or history.
+  history.replaceState({}, '', window.location.pathname + window.location.search);
+  if (h.error) {
+    showAuth('login');
+    showAuthError(h.errorDescription || 'That link is invalid or has expired. Request a new one.');
+    return false;
+  }
+  const ok = await restoreSessionFromToken(h.accessToken);
+  if (ok) {
+    goToAppHome();
+    toast('Email confirmed — welcome to LogiQ');
+    await bootAuthenticatedApp();
+    return true;
+  }
+  showAuth('login');
+  showAuthError('Could not complete sign-in. Please log in.');
+  return false;
+}
 async function bootAuthenticatedApp() {
   showApp();
   updateUserProfile();
@@ -910,7 +946,14 @@ async function doSignup() {
     const res = await apiFetch('/api/auth/signup', { method: 'POST', body: { name, email, password } });
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || 'Signup failed');
-    if (!data.access_token) { showAuthError(data.message || 'Check your email to confirm'); return; }
+    if (!data.access_token) {
+      document.getElementById('signup-name').value = '';
+      document.getElementById('signup-password').value = '';
+      showAuthTab('login');
+      document.getElementById('login-email').value = email;
+      toast('Account created. Check your email to confirm, then sign in.');
+      return;
+    }
     await applySession(data);
     toast('Account created — welcome to LogiQ');
     bootApp();
@@ -3059,7 +3102,8 @@ async function init() {
   await loadAppConfig();
   await checkHealth();
   switchUserStore('_demo');
-
+// Handle email-confirmation / recovery redirects before any marketing-site redirect.
+  if (await handleEmailConfirmation()) return;
   const initParams = new URLSearchParams(window.location.search);
   const gmailParam = initParams.get('gmail');
   const supabaseAuth = appConfig.supabase_configured || (appConfig.supabase_url && appConfig.supabase_anon_key);
