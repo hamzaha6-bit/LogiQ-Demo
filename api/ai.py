@@ -1,8 +1,9 @@
-"""SSE agent pipeline — mirrors backend/main.py agent_run."""
+"""AI routes: chat and agent pipeline (SSE)."""
 from http.server import BaseHTTPRequestHandler
 import json
 import os
 import re
+from urllib.parse import urlparse
 
 import anthropic
 
@@ -46,6 +47,52 @@ def _build_system_prompt(base: str, settings: dict, agent_name: str) -> str:
 
 class handler(BaseHTTPRequestHandler):
     def do_POST(self):
+        path = urlparse(self.path).path.rstrip("/")
+        if path.endswith("/agent/run"):
+            self._agent_run()
+        elif path.endswith("/chat"):
+            self._chat()
+        else:
+            self._json(404, {"detail": f"Unknown route: {path}"})
+
+    def _chat(self):
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            raw = self.rfile.read(length).decode("utf-8") if length else "{}"
+            body = json.loads(raw)
+        except (json.JSONDecodeError, ValueError) as exc:
+            self._json(400, {"detail": f"Invalid JSON body: {exc}"})
+            return
+
+        api_key = (os.environ.get("ANTHROPIC_API_KEY") or "").strip()
+        if not api_key:
+            self._json(503, {"detail": "ANTHROPIC_API_KEY not configured"})
+            return
+
+        system = body.get("system") or ""
+        messages = body.get("messages") or []
+        max_tokens = int(body.get("max_tokens") or 1200)
+
+        if not messages:
+            self._json(400, {"detail": "messages is required"})
+            return
+
+        try:
+            client = anthropic.Anthropic(api_key=api_key)
+            response = client.messages.create(
+                model=MODEL,
+                max_tokens=max_tokens,
+                system=system,
+                messages=[{"role": m.get("role", "user"), "content": m.get("content", "")} for m in messages],
+            )
+            content = response.content[0].text if response.content else ""
+            self._json(200, {"content": content})
+        except anthropic.APIError as exc:
+            self._json(502, {"detail": str(exc)})
+        except Exception as exc:
+            self._json(500, {"detail": str(exc) or "Chat request failed"})
+
+    def _agent_run(self):
         user_id = resolve_user_id(self)
         api_key = (os.environ.get("ANTHROPIC_API_KEY") or "").strip()
         if not api_key:

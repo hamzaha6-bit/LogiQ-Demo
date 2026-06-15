@@ -14,6 +14,12 @@ except ImportError:
     handle_user_created_hook = None
     hook_json_response = None
 
+try:
+    from gmail_oauth import handle_callback, handle_connect, handle_status, is_gmail_auth_path
+except ImportError:
+    is_gmail_auth_path = lambda _p: False
+    handle_connect = handle_callback = handle_status = None
+
 
 def _is_user_created_hook_path(path: str) -> bool:
     normalized = (path or "").rstrip("/").lower()
@@ -40,6 +46,16 @@ class handler(BaseHTTPRequestHandler):
                         "via": "auth.py-fallback",
                     },
                 )
+            return
+        if is_gmail_auth_path(path):
+            if path.endswith("/connect") and handle_connect:
+                handle_connect(self)
+            elif path.endswith("/callback") and handle_callback:
+                handle_callback(self)
+            elif path.endswith("/status") and handle_status:
+                handle_status(self)
+            else:
+                self._json(404, {"detail": f"Unknown Gmail auth route: {path}"})
             return
         if path.endswith("/me"):
             self._me()
