@@ -6,20 +6,13 @@ import secrets
 from typing import Optional, Tuple
 from urllib.parse import parse_qs, urlencode, urlparse
 
-import httpx
 from google_auth_oauthlib.flow import Flow
-from supabase import create_client
 
-GMAIL_REDIRECT_URI = "https://logiqops.co.uk/api/auth/gmail/callback"
-GMAIL_SCOPES = [
-    "https://www.googleapis.com/auth/gmail.send",
-    "https://www.googleapis.com/auth/gmail.readonly",
-    "https://www.googleapis.com/auth/spreadsheets.readonly",
-]
+from google_oauth import GOOGLE_SCOPES, check_gmail_health, is_oauth_configured, parse_client_config, save_user_token
+from http_auth import resolve_access_token, resolve_user_id
+from supabase_rest import user_id_from_bearer
 
-
-def _env(key: str) -> str:
-    return (os.environ.get(key) or "").strip()
+GMAIL_REDIRECT_URI = os.environ.get("GMAIL_REDIRECT_URI", "https://logiqops.co.uk/api/auth/gmail/callback").strip()
 
 
 def _frontend_url() -> str:
@@ -27,7 +20,6 @@ def _frontend_url() -> str:
 
 
 def _gmail_redirect(status: str, access_token: Optional[str] = None, reason: Optional[str] = None) -> str:
-    """Build post-OAuth redirect without double slashes: base?gmail=...&token=..."""
     params = {"gmail": status}
     if access_token:
         params["token"] = access_token
@@ -36,43 +28,8 @@ def _gmail_redirect(status: str, access_token: Optional[str] = None, reason: Opt
     return f"{_frontend_url()}?{urlencode(params)}"
 
 
-def _log_redirect(context: str, url: str) -> None:
-    frontend_env = os.environ.get("FRONTEND_URL")
-    print(f"[gmail_auth] {context} FRONTEND_URL from os.environ: {frontend_env!r}")
-    print(f"[gmail_auth] {context} resolved frontend base: {_frontend_url()!r}")
-    print(f"[gmail_auth] {context} full redirect URL: {url}")
-
-
-def _parse_credentials_json() -> dict:
-    raw = _env("GMAIL_CREDENTIALS_JSON")
-    if not raw:
-        raise ValueError("GMAIL_CREDENTIALS_JSON not set")
-    config = json.loads(raw)
-    section = config.get("web") or config.get("installed")
-    if not section:
-        raise ValueError("GMAIL_CREDENTIALS_JSON must contain web or installed")
-    section_name = "web" if config.get("web") else "installed"
-    section["redirect_uris"] = [GMAIL_REDIRECT_URI]
-    config[section_name] = section
-    return config
-
-
-def is_gmail_configured() -> bool:
-    if not _env("GMAIL_SENDER_EMAIL") or not _env("GMAIL_CREDENTIALS_JSON"):
-        return False
-    try:
-        _parse_credentials_json()
-        return True
-    except Exception:
-        return False
-
-
 def _build_flow() -> Flow:
-    flow = Flow.from_client_config(
-        _parse_credentials_json(),
-        scopes=GMAIL_SCOPES,
-        redirect_uri=GMAIL_REDIRECT_URI,
-    )
+    flow = Flow.from_client_config(parse_client_config(), scopes=GOOGLE_SCOPES, redirect_uri=GMAIL_REDIRECT_URI)
     flow.oauth2session.redirect_uri = GMAIL_REDIRECT_URI
     return flow
 
@@ -99,91 +56,6 @@ def _decode_oauth_state(state: str) -> Tuple[Optional[str], Optional[str]]:
         return None, None
 
 
-def _user_id_from_access_token(token: str) -> Optional[str]:
-    url, anon = _env("SUPABASE_URL"), _env("SUPABASE_ANON_KEY")
-    if not token or not url or not anon:
-        return None
-    try:
-        client = create_client(url, anon)
-        user = client.auth.get_user(token).user
-        return str(user.id) if user else None
-    except Exception:
-        return None
-
-
-def _resolve_access_token(handler: BaseHTTPRequestHandler) -> Optional[str]:
-    qs = parse_qs(urlparse(handler.path).query)
-    token = (qs.get("token") or [""])[0]
-    if token:
-        return token
-    auth = handler.headers.get("Authorization", "")
-    if auth.startswith("Bearer "):
-        return auth[7:].strip()
-    return None
-
-
-def _resolve_user_id(handler: BaseHTTPRequestHandler) -> Optional[str]:
-    token = _resolve_access_token(handler)
-    if token:
-        return _user_id_from_access_token(token)
-    return None
-
-
-def _supabase_rest_headers() -> dict:
-    key = _env("SUPABASE_SERVICE_KEY")
-    return {
-        "apikey": key,
-        "Authorization": f"Bearer {key}",
-        "Content-Type": "application/json",
-        "Prefer": "resolution=merge-duplicates,return=minimal",
-    }
-
-
-def _save_user_token(user_id: str, token_data: dict) -> bool:
-    url = _env("SUPABASE_URL").rstrip("/")
-    service_key = _env("SUPABASE_SERVICE_KEY")
-    if not user_id or not url or not service_key:
-        return False
-    with httpx.Client(timeout=15) as client:
-        resp = client.post(
-            f"{url}/rest/v1/user_integrations",
-            headers=_supabase_rest_headers(),
-            params={"on_conflict": "user_id,integration"},
-            json={"user_id": user_id, "integration": "gmail", "token_data": token_data},
-        )
-        return resp.status_code < 400
-
-
-def _load_user_token(user_id: str) -> Optional[dict]:
-    url = _env("SUPABASE_URL").rstrip("/")
-    service_key = _env("SUPABASE_SERVICE_KEY")
-    if not user_id or not url or not service_key:
-        return None
-    with httpx.Client(timeout=15) as client:
-        resp = client.get(
-            f"{url}/rest/v1/user_integrations",
-            headers=_supabase_rest_headers(),
-            params={
-                "user_id": f"eq.{user_id}",
-                "integration": "eq.gmail",
-                "select": "token_data",
-                "limit": "1",
-            },
-        )
-        if resp.status_code == 200:
-            rows = resp.json()
-            if rows and rows[0].get("token_data"):
-                return rows[0]["token_data"]
-    return None
-
-
-def _is_connected(user_id: Optional[str]) -> bool:
-    if not user_id:
-        return False
-    data = _load_user_token(user_id)
-    return bool(data and data.get("token"))
-
-
 class handler(BaseHTTPRequestHandler):
     def do_GET(self):
         path = urlparse(self.path).path.rstrip("/")
@@ -197,11 +69,11 @@ class handler(BaseHTTPRequestHandler):
             self._json(404, {"detail": f"Unknown Gmail auth route: {path}"})
 
     def _connect(self):
-        if not is_gmail_configured():
-            self._json(503, {"detail": "Gmail not configured"})
+        if not is_oauth_configured():
+            self._json(503, {"detail": "Google OAuth not configured"})
             return
-        access_token = _resolve_access_token(self)
-        user_id = _user_id_from_access_token(access_token) if access_token else None
+        access_token = resolve_access_token(self)
+        user_id = user_id_from_bearer(access_token) if access_token else None
         try:
             flow = _build_flow()
             state = _encode_oauth_state(user_id, access_token)
@@ -215,28 +87,22 @@ class handler(BaseHTTPRequestHandler):
             self.send_header("Location", auth_url)
             self.end_headers()
         except Exception as exc:
-            self._json(500, {"detail": f"Gmail OAuth error: {exc}"})
+            self._json(500, {"detail": f"Google OAuth error: {exc}"})
 
     def _callback(self):
         qs = parse_qs(urlparse(self.path).query)
         error = (qs.get("error") or [""])[0]
         if error:
-            url = _gmail_redirect("error", reason=error)
-            _log_redirect("callback (error)", url)
-            self._redirect(url)
+            self._redirect(_gmail_redirect("error", reason=error))
             return
 
         code = (qs.get("code") or [""])[0]
         state = (qs.get("state") or [""])[0]
         if not code:
-            url = _gmail_redirect("error", reason="missing_code")
-            _log_redirect("callback (missing code)", url)
-            self._redirect(url)
+            self._redirect(_gmail_redirect("error", reason="missing_code"))
             return
-        if not is_gmail_configured():
-            url = _gmail_redirect("error", reason="not_configured")
-            _log_redirect("callback (not configured)", url)
-            self._redirect(url)
+        if not is_oauth_configured():
+            self._redirect(_gmail_redirect("error", reason="not_configured"))
             return
 
         user_id, access_token = _decode_oauth_state(state)
@@ -248,23 +114,28 @@ class handler(BaseHTTPRequestHandler):
                 raise RuntimeError("Empty credentials after token exchange")
             token_data = json.loads(creds.to_json())
             if user_id:
-                _save_user_token(user_id, token_data)
-            url = _gmail_redirect("connected", access_token=access_token)
-            _log_redirect("callback (success)", url)
-            self._redirect(url)
+                save_user_token(user_id, token_data)
+            self._redirect(_gmail_redirect("connected", access_token=access_token))
         except Exception as exc:
             reason = "redirect_uri_mismatch" if "redirect_uri" in str(exc).lower() else "oauth_error"
-            url = _gmail_redirect("error", access_token=access_token, reason=reason)
-            _log_redirect("callback (exception)", url)
-            self._redirect(url)
+            self._redirect(_gmail_redirect("error", access_token=access_token, reason=reason))
 
     def _status(self):
-        user_id = _resolve_user_id(self)
+        user_id = resolve_user_id(self)
+        if not user_id:
+            self._json(200, {"connected": False, "configured": is_oauth_configured(), "healthy": False})
+            return
+        health = check_gmail_health(user_id)
         self._json(
             200,
             {
-                "connected": _is_connected(user_id),
-                "configured": is_gmail_configured(),
+                "connected": health.get("connected", False),
+                "healthy": health.get("healthy", False),
+                "configured": is_oauth_configured(),
+                "email": health.get("email", ""),
+                "sheets_scope": health.get("sheets_scope", False),
+                "calendar_scope": health.get("calendar_scope", False),
+                "error": health.get("error", ""),
             },
         )
 

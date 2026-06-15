@@ -97,6 +97,24 @@ CREATE INDEX IF NOT EXISTS idx_audit_log_user ON audit_log(user_id, created_at D
 CREATE INDEX IF NOT EXISTS idx_usage_tracking_user_date ON usage_tracking(user_id, date);
 CREATE INDEX IF NOT EXISTS idx_user_integrations_user ON user_integrations(user_id, integration);
 
+-- Google Sheets schema lock (per user + agent + spreadsheet)
+CREATE TABLE IF NOT EXISTS sheet_connections (
+  id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+  user_id uuid REFERENCES auth.users(id) ON DELETE CASCADE,
+  agent_id text NOT NULL,
+  spreadsheet_id text NOT NULL,
+  sheet_url text NOT NULL,
+  locked_schema jsonb NOT NULL,
+  poll_cursor int DEFAULT 1,
+  status text DEFAULT 'active',
+  schema_mismatch jsonb,
+  locked_at timestamptz DEFAULT now(),
+  updated_at timestamptz DEFAULT now(),
+  UNIQUE(user_id, agent_id, spreadsheet_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_sheet_connections_user ON sheet_connections(user_id, agent_id);
+
 -- ─── Welcome email (Supabase Auth Hook) ───────────────────────────────────────
 -- In Supabase Dashboard → Authentication → Hooks → Before User Created:
 --   Type: HTTP

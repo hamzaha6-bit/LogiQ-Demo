@@ -315,6 +315,8 @@ a { color: var(--brand); text-decoration: none; }
 .chat-section .chat-messages-full { flex: none; overflow-y: visible; min-height: 120px; }
 .agent-ops-dashboard { flex-shrink: 0; padding: 28px; background: var(--bg2); }
 .agent-ops-dashboard.hidden { display: none; }
+.sheet-connect-panel { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; padding: 8px 16px 12px; border-top: 1px solid var(--border); }
+.sheet-connect-panel.hidden { display: none; }
 .ops-dash-header {
   display: flex; align-items: center; justify-content: space-between;
   flex-wrap: wrap; gap: 12px; margin-bottom: 20px;
@@ -981,6 +983,15 @@ function connectGmail() {
   let url = API_BASE + '/api/auth/gmail/connect';
   if (authSession?.access_token) url += '?token=' + encodeURIComponent(authSession.access_token);
   window.location.href = url;
+}
+
+async function checkGmailHealth() {
+  try {
+    const res = await apiFetch('/api/auth/gmail/status');
+    return await res.json().catch(() => ({}));
+  } catch (e) {
+    return { healthy: false, connected: false };
+  }
 }
 
 async function startCheckout(plan) {
@@ -2361,6 +2372,12 @@ async function renderAgentPage(id) {
           <div class="chat-toolbar">
             <span class="csv-btn" onclick="document.getElementById('csv-chat-${id}').click()">↑ Upload CSV</span>
             <input type="file" class="hidden-input" id="csv-chat-${id}" accept=".csv" onchange="agentUploadCSV('${id}',this)">
+            <span class="csv-btn" onclick="document.getElementById('sheet-panel-${id}').classList.toggle('hidden')">📊 Google Sheet</span>
+          </div>
+          <div class="sheet-connect-panel hidden" id="sheet-panel-${id}">
+            <input type="url" id="sheet-url-${id}" placeholder="https://docs.google.com/spreadsheets/d/…" style="flex:1;min-width:200px;padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px">
+            <button class="btn-sm brand" onclick="connectGoogleSheet('${id}')">Connect sheet</button>
+            <span id="sheet-status-${id}" style="font-size:12px;color:var(--text2)"></span>
           </div>
           <div class="chat-compose">
             <textarea id="agent-input-${id}" rows="1" placeholder="Message ${agent.name}…" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendAgentMessage('${id}');}"></textarea>
@@ -2449,6 +2466,19 @@ function sheetItemKey(agent, item) {
   return v ? String(v) : JSON.stringify(item);
 }
 
+function showSchemaPausePrompt(agentId, mismatch) {
+  const s = getAgentSettings(agentId);
+  s.sheetPaused = true;
+  const detail = mismatch?.missing_columns?.length
+    ? 'Missing columns: ' + mismatch.missing_columns.join(', ')
+    : mismatch?.added_columns?.length
+      ? 'New columns: ' + mismatch.added_columns.join(', ')
+      : 'Column order or headers changed';
+  toast('⚠ Sheet schema changed — sync paused. ' + detail);
+  const el = document.getElementById('sheet-status-' + agentId);
+  if (el) el.innerHTML = '<span style="color:#dc2626">Schema mismatch — reconnect sheet after fixing headers</span>';
+}
+
 function showSheetsReauthPrompt() {
   const id = 'sheets-reauth-toast';
   let el = document.getElementById(id);
@@ -2482,7 +2512,7 @@ async function connectGoogleSheet(agentId) {
   if (!url) { toast('Enter a Google Sheets URL'); return; }
   try {
     const res = await apiFetch('/api/integrations/sheets/connect', {
-      method:'POST', body: { url }
+      method:'POST', body: { url, agent: agentId }
     });
     const data = await res.json().catch(() => ({}));
     if (res.status === 401) { showSheetsReauthPrompt(); toast(data.detail || 'Re-authorise Google for Sheets'); return; }
@@ -2490,7 +2520,11 @@ async function connectGoogleSheet(agentId) {
     const s = getAgentSettings(agentId);
     s.sheetUrl = url;
     s.sheetConnected = true;
-    toast('✓ Google Sheet connected (' + (data.row_count||0) + ' rows, ' + (data.columns?.length||0) + ' columns)');
+    s.sheetPaused = false;
+    s.lockedSchema = data.schema;
+    const statusEl = document.getElementById('sheet-status-' + agentId);
+    if (statusEl) statusEl.textContent = '✓ Connected · ' + (data.columns?.length||0) + ' columns locked';
+    toast('✓ Google Sheet connected (' + (data.row_count||0) + ' rows, schema locked)');
     startSheetsPolling();
     await pollSheetRows(agentId);
     renderAgentPage(agentId);
@@ -2512,11 +2546,15 @@ async function pollAllAgentSheets() {
 async function pollSheetRows(agentId) {
   const s = getAgentSettings(agentId);
   const agent = deployedAgents.get(agentId);
-  if (!s.sheetConnected || !s.sheetUrl || !backendAvailable || !agent) return;
+  if (!s.sheetConnected || !s.sheetUrl || !backendAvailable || !agent || s.sheetPaused) return;
   try {
     const res = await apiFetch('/api/integrations/sheets/poll?url=' + encodeURIComponent(s.sheetUrl) + '&agent=' + encodeURIComponent(agentId));
     const data = await res.json().catch(() => ({}));
     if (res.status === 401) { showSheetsReauthPrompt(); return; }
+    if (res.status === 409 || data.paused) {
+      showSchemaPausePrompt(agentId, data.schema_mismatch);
+      return;
+    }
     if (!res.ok || !data.rows?.length) return;
     const mapper = SHEET_ROW_MAPPERS[agentId];
     if (!mapper) return;
@@ -2690,6 +2728,13 @@ async function runPipeline(id) {
   await ensureBackendReachable();
 
   if (backendReachable) {
+    const gmailHealth = await checkGmailHealth();
+    if (!gmailHealth.healthy) {
+      toast(gmailHealth.error || 'Connect Gmail before running workflows');
+      connectGmail();
+      if (btn) btn.disabled = false;
+      return;
+    }
     const settings = getAgentSettings(id);
     const payload = {
       agent: { name: agent.name, system_prompt: agent.systemPrompt },

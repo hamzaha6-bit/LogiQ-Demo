@@ -79,6 +79,8 @@ try:
         get_gmail_redirect_uri,
         handle_oauth_callback,
         has_sheets_scope,
+        has_calendar_scope,
+        check_gmail_health,
         is_gmail_authorised,
         is_gmail_configured,
         log_gmail_startup_status,
@@ -113,6 +115,12 @@ except Exception as exc:
 
     def has_sheets_scope(*_a, **_k):
         return False
+
+    def has_calendar_scope(*_a, **_k):
+        return False
+
+    def check_gmail_health(*_a, **_k):
+        return {"healthy": False, "connected": False}
 
     def is_gmail_authorised(*_a, **_k):
         return False
@@ -175,7 +183,7 @@ except Exception as exc:
 
 try:
     import sheets_service
-    from sheets_service import SheetsError, SheetsScopeMissing
+    from sheets_service import SchemaMismatchError, SheetsError, SheetsScopeMissing
 except Exception as exc:
     _import_failed("sheets_service", exc)
     sheets_service = None  # type: ignore[assignment,misc]
@@ -390,6 +398,18 @@ class GmailSendResponse(BaseModel):
 
 class SheetsConnectRequest(BaseModel):
     url: str
+    agent: str = "aria"
+
+
+class CalendarEventRequest(BaseModel):
+    summary: str
+    start: str
+    end: str
+    description: str = ""
+    attendees: List[str] = Field(default_factory=list)
+    timezone: str = "UTC"
+    calendar_id: str = "primary"
+    send_updates: str = "all"
 
 
 class HubSpotContactRequest(BaseModel):
@@ -830,10 +850,11 @@ async def gmail_callback(request: Request):
 @app.get("/api/auth/gmail/status")
 async def gmail_status(request: Request):
     user_id = get_request_user_id(request)
+    health = check_gmail_health(user_id)
     return {
-        "connected": is_gmail_authorised(user_id),
+        **health,
+        "connected": health.get("connected", is_gmail_authorised(user_id)),
         "configured": is_gmail_configured(),
-        "sheets_scope": has_sheets_scope(user_id),
         "redirect_uri": get_gmail_redirect_uri(),
     }
 
@@ -848,6 +869,7 @@ async def integrations_config():
         "sheets_configured": sheets_service.is_configured(),
         "sheets_available": sheets_service.is_available(),
         "sheets_scope": has_sheets_scope(),
+        "calendar_scope": has_calendar_scope(),
         "xero_configured": xero.is_configured(),
         "hubspot_configured": hubspot.is_configured(),
     }
@@ -860,8 +882,10 @@ async def sheets_connect(req: SheetsConnectRequest, request: Request):
     if not url:
         raise HTTPException(status_code=400, detail="Sheet URL is required")
     try:
-        result = sheets_service.connect(url, user_id=user_id)
+        result = sheets_service.connect(url, agent_id=req.agent.strip(), user_id=user_id)
         return result
+    except SchemaMismatchError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except SheetsScopeMissing as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
     except GmailNotAuthorised as exc:
@@ -905,6 +929,8 @@ async def sheets_poll(url: str, agent: str, request: Request):
         raise HTTPException(status_code=400, detail="agent query parameter is required")
     try:
         return sheets_service.poll(url.strip(), agent.strip(), user_id=user_id)
+    except SchemaMismatchError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except SheetsScopeMissing as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
     except GmailNotAuthorised as exc:
@@ -926,6 +952,70 @@ async def sheets_status():
         "sheets_scope": has_sheets_scope(),
         "google_authorised": is_gmail_authorised(),
     }
+
+
+@app.get("/api/integrations/calendar/availability")
+async def calendar_availability(
+    request: Request,
+    time_min: str,
+    time_max: str,
+    calendar_id: str = "primary",
+):
+    from googleapiclient.discovery import build
+
+    from gmail_service import get_credentials
+
+    user_id = get_request_user_id(request)
+    if not has_calendar_scope(user_id):
+        raise HTTPException(status_code=401, detail="Re-authorise Google for Calendar access")
+    try:
+        creds = get_credentials(user_id)
+        service = build("calendar", "v3", credentials=creds, cache_discovery=False)
+        result = (
+            service.freebusy()
+            .query(body={"timeMin": time_min, "timeMax": time_max, "items": [{"id": calendar_id}]})
+            .execute()
+        )
+        busy = result.get("calendars", {}).get(calendar_id, {}).get("busy", [])
+        return {"success": True, "calendar_id": calendar_id, "busy": busy}
+    except GmailNotAuthorised as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.post("/api/integrations/calendar/events")
+async def calendar_create_event(req: CalendarEventRequest, request: Request):
+    from googleapiclient.discovery import build
+
+    from gmail_service import get_credentials
+
+    user_id = get_request_user_id(request)
+    if not has_calendar_scope(user_id):
+        raise HTTPException(status_code=401, detail="Re-authorise Google for Calendar write access")
+    attendees = [{"email": e.strip()} for e in req.attendees if e.strip()]
+    event_body = {
+        "summary": req.summary,
+        "description": req.description,
+        "start": {"dateTime": req.start, "timeZone": req.timezone},
+        "end": {"dateTime": req.end, "timeZone": req.timezone},
+    }
+    if attendees:
+        event_body["attendees"] = attendees
+    send_updates = req.send_updates if attendees else "none"
+    try:
+        creds = get_credentials(user_id)
+        service = build("calendar", "v3", credentials=creds, cache_discovery=False)
+        created = (
+            service.events()
+            .insert(calendarId=req.calendar_id, body=event_body, sendUpdates=send_updates)
+            .execute()
+        )
+        return {"success": True, "event_id": created.get("id"), "html_link": created.get("htmlLink")}
+    except GmailNotAuthorised as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @app.get("/api/integrations/xero/invoices")

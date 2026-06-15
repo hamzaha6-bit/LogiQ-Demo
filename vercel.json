@@ -19,9 +19,49 @@
         "includeFiles": "api/hook_handler.py,api/gmail_send.py"
       }
     },
-    { "src": "api/gmail_auth.py", "use": "@vercel/python" },
+    {
+      "src": "api/gmail_auth.py",
+      "use": "@vercel/python",
+      "config": {
+        "includeFiles": "api/google_oauth.py,api/supabase_rest.py,api/http_auth.py"
+      }
+    },
+    {
+      "src": "api/sheets.py",
+      "use": "@vercel/python",
+      "config": {
+        "includeFiles": "api/sheets_service.py,api/google_oauth.py,api/supabase_rest.py,api/http_auth.py"
+      }
+    },
+    {
+      "src": "api/send_gmail.py",
+      "use": "@vercel/python",
+      "config": {
+        "includeFiles": "api/google_oauth.py,api/supabase_rest.py,api/http_auth.py"
+      }
+    },
+    {
+      "src": "api/calendar.py",
+      "use": "@vercel/python",
+      "config": {
+        "includeFiles": "api/google_oauth.py,api/supabase_rest.py,api/http_auth.py"
+      }
+    },
+    {
+      "src": "api/agent_run.py",
+      "use": "@vercel/python",
+      "config": {
+        "includeFiles": "api/http_auth.py,api/supabase_rest.py,api/google_oauth.py"
+      }
+    },
+    {
+      "src": "api/integrations_config.py",
+      "use": "@vercel/python",
+      "config": {
+        "includeFiles": "api/google_oauth.py,api/supabase_rest.py,api/http_auth.py"
+      }
+    },
     { "src": "api/billing_status.py", "use": "@vercel/python" },
-    { "src": "api/integrations_config.py", "use": "@vercel/python" },
     { "src": "api/audit_log.py", "use": "@vercel/python" },
     { "src": "index.html", "use": "@vercel/static" }
   ],
@@ -32,8 +72,18 @@
     { "src": "/api/health", "dest": "/api/health.py" },
     { "src": "/api/config", "dest": "/api/config.py" },
     { "src": "/api/chat", "dest": "/api/chat.py" },
+    { "src": "/api/agent/run", "dest": "/api/agent_run.py" },
+    { "src": "/api/send/gmail", "dest": "/api/send_gmail.py" },
     { "src": "/api/billing/status", "dest": "/api/billing_status.py" },
     { "src": "/api/integrations/config", "dest": "/api/integrations_config.py" },
+    { "src": "/api/integrations/sheets/connect", "dest": "/api/sheets.py" },
+    { "src": "/api/integrations/sheets/read", "dest": "/api/sheets.py" },
+    { "src": "/api/integrations/sheets/poll", "dest": "/api/sheets.py" },
+    { "src": "/api/integrations/sheets/status", "dest": "/api/sheets.py" },
+    { "src": "/api/integrations/sheets/write", "dest": "/api/sheets.py" },
+    { "src": "/api/integrations/calendar/availability", "dest": "/api/calendar.py" },
+    { "src": "/api/integrations/calendar/events", "dest": "/api/calendar.py" },
+    { "src": "/api/integrations/calendar/status", "dest": "/api/calendar.py" },
     { "src": "/api/audit/log", "dest": "/api/audit_log.py" },
     { "src": "/api/auth/gmail/connect", "dest": "/api/gmail_auth.py" },
     { "src": "/api/auth/gmail/callback", "dest": "/api/gmail_auth.py" },

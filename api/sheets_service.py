@@ -1,31 +1,20 @@
-"""Google Sheets with Supabase schema lock — local dev parity with api/sheets_service.py."""
-
+"""Google Sheets with Supabase schema lock — read, write, validate, poll."""
 from __future__ import annotations
 
-import bootstrap_path  # noqa: F401
-
 import hashlib
-import logging
+import json
 import re
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
-import httpx
-from googleapiclient.discovery import build
-
-from gmail_service import (
-    GmailNotAuthorised,
-    GmailNotConfigured,
-    SHEETS_READONLY_SCOPE,
+from google_oauth import (
     SHEETS_SCOPE,
-    get_credentials,
-    has_sheets_scope,
-    is_gmail_authorised,
-    is_gmail_configured,
+    check_gmail_health,
+    get_sheets_service,
+    has_scope,
+    load_user_token,
 )
-from supabase_client import get_url, is_configured, rest_headers
-
-logger = logging.getLogger("logiq.sheets")
+from supabase_rest import rest_get, rest_patch, rest_post
 
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}|^\d{1,2}/\d{1,2}/\d{2,4}")
@@ -40,10 +29,6 @@ AGENT_TABLES = {
 }
 
 
-class SheetsScopeMissing(Exception):
-    pass
-
-
 class SheetsError(Exception):
     pass
 
@@ -52,23 +37,6 @@ class SchemaMismatchError(Exception):
     def __init__(self, message: str, diff: Dict[str, Any]):
         super().__init__(message)
         self.diff = diff
-
-
-def is_configured() -> bool:
-    return is_gmail_configured()
-
-
-def is_available() -> bool:
-    return is_gmail_configured() and is_gmail_authorised() and has_sheets_scope()
-
-
-def _require_access(user_id: Optional[str] = None) -> None:
-    if not is_gmail_configured():
-        raise GmailNotConfigured("Google not configured")
-    if not is_gmail_authorised(user_id):
-        raise GmailNotAuthorised("Connect Google first — visit /api/auth/gmail/connect")
-    if not has_sheets_scope(user_id):
-        raise SheetsScopeMissing("Re-authorise Google for Sheets access")
 
 
 def parse_spreadsheet_id(url: str) -> Optional[str]:
@@ -131,47 +99,19 @@ def build_schema(columns: List[str], sample_rows: List[Dict[str, str]]) -> Dict[
     }
 
 
-def _rest_get(table: str, params: Dict[str, str]) -> List[Dict[str, Any]]:
-    if not is_configured():
-        return []
-    url = f"{get_url()}/rest/v1/{table}"
-    with httpx.Client(timeout=20) as client:
-        resp = client.get(url, headers=rest_headers(), params=params)
-        if resp.status_code >= 400:
-            return []
-        data = resp.json()
-        return data if isinstance(data, list) else []
-
-
-def _rest_post(table: str, payload: Dict[str, Any], on_conflict: str = "") -> Optional[Dict[str, Any]]:
-    if not is_configured():
-        return None
-    url = f"{get_url()}/rest/v1/{table}"
-    params = {"on_conflict": on_conflict} if on_conflict else None
-    headers = {**rest_headers(), "Prefer": "resolution=merge-duplicates,return=representation"}
-    with httpx.Client(timeout=20) as client:
-        resp = client.post(url, headers=headers, params=params, json=payload)
-        if resp.status_code >= 400:
-            logger.warning("Supabase POST %s failed: %s", table, resp.text[:200])
-            return None
-        data = resp.json()
-        if isinstance(data, list) and data:
-            return data[0]
-        return data if isinstance(data, dict) else None
-
-
-def _rest_patch(match: Dict[str, str], payload: Dict[str, Any]) -> bool:
-    if not is_configured():
-        return False
-    url = f"{get_url()}/rest/v1/sheet_connections"
-    params = {k: f"eq.{v}" for k, v in match.items()}
-    with httpx.Client(timeout=20) as client:
-        resp = client.patch(url, headers={**rest_headers(), "Prefer": "return=minimal"}, params=params, json=payload)
-        return resp.status_code < 400
+def _fetch_values(user_id: str, spreadsheet_id: str) -> List[List[str]]:
+    service = get_sheets_service(user_id)
+    result = (
+        service.spreadsheets()
+        .values()
+        .get(spreadsheetId=spreadsheet_id, range="A:ZZ")
+        .execute()
+    )
+    return result.get("values", [])
 
 
 def get_connection(user_id: str, agent_id: str, spreadsheet_id: str) -> Optional[Dict[str, Any]]:
-    rows = _rest_get(
+    rows = rest_get(
         "sheet_connections",
         {
             "user_id": f"eq.{user_id}",
@@ -201,7 +141,8 @@ def _validate_schema(locked: Dict[str, Any], columns: List[str]) -> Optional[Dic
 
 
 def _pause_connection(conn_id: str, diff: Dict[str, Any]) -> None:
-    _rest_patch(
+    rest_patch(
+        "sheet_connections",
         {"id": conn_id},
         {
             "status": "paused_schema_mismatch",
@@ -211,23 +152,15 @@ def _pause_connection(conn_id: str, diff: Dict[str, Any]) -> None:
     )
 
 
-def _fetch_values(user_id: Optional[str], spreadsheet_id: str) -> List[List[str]]:
-    creds = get_credentials(user_id)
-    service = build("sheets", "v4", credentials=creds, cache_discovery=False)
-    result = service.spreadsheets().values().get(spreadsheetId=spreadsheet_id, range="A:ZZ").execute()
-    return result.get("values", [])
+def _require_sheets(user_id: str) -> None:
+    if not load_user_token(user_id):
+        raise SheetsError("Connect Google first — /api/auth/gmail/connect")
+    if not has_scope(user_id, SHEETS_SCOPE) and not has_scope(user_id, "spreadsheets.readonly"):
+        raise SheetsError("Re-authorise Google for Sheets access")
 
 
-def connect(url: str, agent_id: str = "aria", user_id: Optional[str] = None) -> Dict[str, Any]:
-    _require_access(user_id)
-    if not user_id:
-        rows, columns = read_sheet_with_columns(url.strip(), user_id=user_id)
-        return {
-            "success": True,
-            "row_count": len(rows),
-            "columns": columns,
-            "spreadsheet_id": parse_spreadsheet_id(url),
-        }
+def connect(url: str, agent_id: str, user_id: str) -> Dict[str, Any]:
+    _require_sheets(user_id)
     spreadsheet_id = parse_spreadsheet_id(url)
     if not spreadsheet_id:
         raise SheetsError("Invalid Google Sheets URL")
@@ -237,7 +170,7 @@ def connect(url: str, agent_id: str = "aria", user_id: Optional[str] = None) -> 
     if not columns:
         raise SheetsError("Sheet has no header row")
     locked_schema = build_schema(columns, rows)
-    row = _rest_post(
+    row = rest_post(
         "sheet_connections",
         {
             "user_id": user_id,
@@ -264,29 +197,70 @@ def connect(url: str, agent_id: str = "aria", user_id: Optional[str] = None) -> 
     }
 
 
-def read_sheet_with_columns(url: str, user_id: Optional[str] = None) -> Tuple[List[Dict[str, str]], List[str]]:
-    _require_access(user_id)
+def read_sheet(url: str, agent_id: str, user_id: str) -> Dict[str, Any]:
+    _require_sheets(user_id)
     spreadsheet_id = parse_spreadsheet_id(url)
     if not spreadsheet_id:
         raise SheetsError("Invalid Google Sheets URL")
+    conn = get_connection(user_id, agent_id, spreadsheet_id)
+    if not conn:
+        raise SheetsError("Sheet not connected — call /api/integrations/sheets/connect first")
+    if conn.get("status") == "paused_schema_mismatch":
+        raise SchemaMismatchError(
+            "Sheet schema changed — workflow paused",
+            conn.get("schema_mismatch") or {},
+        )
     values = _fetch_values(user_id, spreadsheet_id)
-    return _rows_from_values(values)
+    rows, columns = _rows_from_values(values)
+    locked = conn.get("locked_schema") or {}
+    diff = _validate_schema(locked, columns)
+    if diff:
+        _pause_connection(conn["id"], diff)
+        raise SchemaMismatchError("Sheet schema changed — workflow paused", diff)
+    return {"success": True, "rows": rows, "columns": columns, "row_count": len(rows)}
 
 
-def read_sheet(url: str, user_id: Optional[str] = None) -> List[Dict[str, str]]:
-    rows, _ = read_sheet_with_columns(url, user_id=user_id)
-    return rows
-
-
-def poll(url: str, agent: str, user_id: Optional[str] = None) -> Dict[str, Any]:
-    agent_key = agent.lower().strip()
+def write_row(
+    url: str,
+    agent_id: str,
+    user_id: str,
+    row_data: Dict[str, str],
+) -> Dict[str, Any]:
+    _require_sheets(user_id)
     spreadsheet_id = parse_spreadsheet_id(url)
     if not spreadsheet_id:
         raise SheetsError("Invalid Google Sheets URL")
-    if not user_id:
-        return _poll_legacy(url, agent_key, user_id)
+    conn = get_connection(user_id, agent_id, spreadsheet_id)
+    if not conn:
+        raise SheetsError("Sheet not connected")
+    if conn.get("status") == "paused_schema_mismatch":
+        raise SchemaMismatchError("Sheet paused due to schema mismatch", conn.get("schema_mismatch") or {})
+    locked = conn.get("locked_schema") or {}
+    column_names = locked.get("column_names") or [c["name"] for c in locked.get("columns", [])]
+    values = _fetch_values(user_id, spreadsheet_id)
+    _, columns = _rows_from_values(values)
+    diff = _validate_schema(locked, columns)
+    if diff:
+        _pause_connection(conn["id"], diff)
+        raise SchemaMismatchError("Sheet schema changed — write blocked", diff)
+    row_values = [str(row_data.get(col, "")) for col in column_names]
+    service = get_sheets_service(user_id)
+    service.spreadsheets().values().append(
+        spreadsheetId=spreadsheet_id,
+        range="A:ZZ",
+        valueInputOption="USER_ENTERED",
+        insertDataOption="INSERT_ROWS",
+        body={"values": [row_values]},
+    ).execute()
+    return {"success": True, "written_columns": column_names}
 
-    conn = get_connection(user_id, agent, spreadsheet_id)
+
+def poll(url: str, agent_id: str, user_id: str) -> Dict[str, Any]:
+    agent_key = agent_id.lower().strip()
+    spreadsheet_id = parse_spreadsheet_id(url)
+    if not spreadsheet_id:
+        raise SheetsError("Invalid Google Sheets URL")
+    conn = get_connection(user_id, agent_id, spreadsheet_id)
     if not conn:
         raise SheetsError("Sheet not connected")
     if conn.get("status") == "paused_schema_mismatch":
@@ -325,7 +299,8 @@ def poll(url: str, agent: str, user_id: Optional[str] = None) -> Dict[str, Any]:
             row[header] = raw_row[i].strip() if i < len(raw_row) else ""
         if any(v for v in row.values()):
             new_rows.append(row)
-    _rest_patch(
+    rest_patch(
+        "sheet_connections",
         {"id": conn["id"]},
         {"poll_cursor": len(values), "updated_at": datetime.now(timezone.utc).isoformat()},
     )
@@ -340,46 +315,17 @@ def poll(url: str, agent: str, user_id: Optional[str] = None) -> Dict[str, Any]:
     }
 
 
-_poll_state: Dict[str, int] = {}
-
-
-def _poll_key(agent: str, spreadsheet_id: str) -> str:
-    return f"{agent}:{spreadsheet_id}"
-
-
-def _poll_legacy(url: str, agent_key: str, user_id: Optional[str]) -> Dict[str, Any]:
-    _require_access(user_id)
+def connection_status(user_id: str, agent_id: str, url: str) -> Dict[str, Any]:
     spreadsheet_id = parse_spreadsheet_id(url)
     if not spreadsheet_id:
-        raise SheetsError("Invalid Google Sheets URL")
-    values = _fetch_values(user_id, spreadsheet_id)
-    if len(values) < 2:
-        return {"success": True, "agent": agent_key, "table": AGENT_TABLES.get(agent_key, "leads"), "rows": [], "new_count": 0, "columns": []}
-    headers = [str(h).strip() for h in values[0]]
-    columns = [h for h in headers if h]
-    state_key = _poll_key(agent_key, spreadsheet_id)
-    start_index = _poll_state.get(state_key, 1)
-    new_rows: List[Dict[str, str]] = []
-    for raw_row in values[start_index:]:
-        row: Dict[str, str] = {}
-        for i, header in enumerate(headers):
-            if not header:
-                continue
-            row[header] = raw_row[i].strip() if i < len(raw_row) else ""
-        if any(v for v in row.values()):
-            new_rows.append(row)
-    _poll_state[state_key] = len(values)
+        return {"connected": False}
+    conn = get_connection(user_id, agent_id, spreadsheet_id)
+    if not conn:
+        return {"connected": False}
     return {
-        "success": True,
-        "agent": agent_key,
-        "table": AGENT_TABLES.get(agent_key, "leads"),
-        "rows": new_rows,
-        "new_count": len(new_rows),
-        "columns": columns,
+        "connected": True,
+        "status": conn.get("status", "active"),
+        "schema": conn.get("locked_schema"),
+        "schema_mismatch": conn.get("schema_mismatch"),
+        "poll_cursor": conn.get("poll_cursor", 1),
     }
-
-
-def reset_poll_state(url: str, agent: str) -> None:
-    spreadsheet_id = parse_spreadsheet_id(url)
-    if spreadsheet_id:
-        _poll_state[_poll_key(agent.lower(), spreadsheet_id)] = 1

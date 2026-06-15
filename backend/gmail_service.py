@@ -35,9 +35,13 @@ if GMAIL_REDIRECT_URI.endswith("/"):
 GMAIL_SCOPES = [
     "https://www.googleapis.com/auth/gmail.send",
     "https://www.googleapis.com/auth/gmail.readonly",
-    "https://www.googleapis.com/auth/spreadsheets.readonly",
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/calendar.readonly",
+    "https://www.googleapis.com/auth/calendar.events",
 ]
+SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets"
 SHEETS_READONLY_SCOPE = "https://www.googleapis.com/auth/spreadsheets.readonly"
+CALENDAR_EVENTS_SCOPE = "https://www.googleapis.com/auth/calendar.events"
 GMAIL_AUTH_MESSAGE = "Gmail not authorised — visit /api/auth/gmail/connect"
 
 
@@ -317,11 +321,20 @@ def _scopes_in_token_data(data: Optional[Dict[str, Any]]) -> list:
 
 
 def has_sheets_scope(user_id: Optional[str] = None) -> bool:
-    """True if user's Gmail token includes Google Sheets read scope."""
+    """True if user's token includes Google Sheets read or write scope."""
     data = _load_user_token_data(user_id) if user_id else None
     if not data:
         data = _token_data_from_file()
-    return SHEETS_READONLY_SCOPE in _scopes_in_token_data(data)
+    scopes = _scopes_in_token_data(data)
+    return SHEETS_SCOPE in scopes or SHEETS_READONLY_SCOPE in scopes
+
+
+def has_calendar_scope(user_id: Optional[str] = None) -> bool:
+    data = _load_user_token_data(user_id) if user_id else None
+    if not data:
+        data = _token_data_from_file()
+    scopes = _scopes_in_token_data(data)
+    return CALENDAR_EVENTS_SCOPE in scopes or "calendar.readonly" in " ".join(scopes)
 
 
 def is_gmail_authorised(user_id: Optional[str] = None) -> bool:
@@ -592,10 +605,46 @@ def get_credentials(user_id: Optional[str] = None) -> Credentials:
     return creds
 
 
+def check_gmail_health(user_id: Optional[str] = None) -> Dict[str, Any]:
+    """Validate token, refresh if needed, probe Gmail profile."""
+    result: Dict[str, Any] = {
+        "connected": False,
+        "healthy": False,
+        "email": "",
+        "sheets_scope": False,
+        "calendar_scope": False,
+        "error": "",
+    }
+    if user_id:
+        token_data = _load_user_token_data(user_id)
+    else:
+        token_data = _token_data_from_file()
+    if not token_data:
+        result["error"] = "not_connected"
+        return result
+    result["connected"] = True
+    result["sheets_scope"] = has_sheets_scope(user_id)
+    result["calendar_scope"] = has_calendar_scope(user_id)
+    try:
+        creds = get_credentials(user_id)
+        service = build("gmail", "v1", credentials=creds, cache_discovery=False)
+        profile = service.users().getProfile(userId="me").execute()
+        result["email"] = profile.get("emailAddress", "")
+        result["healthy"] = True
+    except Exception as exc:
+        result["error"] = str(exc)
+    return result
+
+
 def send_email(
     to: str, subject: str, body: str, from_name: str = "", user_id: Optional[str] = None
 ) -> Tuple[bool, str]:
-    sender = get_sender_email()
+    health = check_gmail_health(user_id) if user_id else {"healthy": is_gmail_authorised()}
+    if user_id and not health.get("healthy"):
+        raise GmailNotAuthorised(health.get("error") or "Connect your Gmail first")
+    sender = health.get("email") if user_id else get_sender_email()
+    if not sender:
+        sender = get_sender_email()
     creds = get_credentials(user_id)
 
     from_header = f'"{from_name}" <{sender}>' if from_name else sender
