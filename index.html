@@ -679,6 +679,8 @@ input[type=file].hidden-input { display: none; }
 // ═══ 1. STATE ═══
 const API_BASE = (window.location.protocol === 'file:' || !window.location.hostname)
   ? 'http://127.0.0.1:8000' : '';
+const MARKETING_SITE_URL = 'https://logiqops.co.uk';
+const PRODUCTION_APP_HOST = 'app.logiqops.co.uk';
 let backendAvailable = false;
 let backendReachable = false;
 let authSession = null;
@@ -782,6 +784,39 @@ async function bootAuthenticatedApp() {
   await bootApp();
 }
 
+function isProductionAppHost() {
+  return window.location.hostname === PRODUCTION_APP_HOST;
+}
+
+function normalizedAppPath() {
+  const path = window.location.pathname.replace(/\/+$/, '') || '/';
+  return path.toLowerCase();
+}
+
+function isAuthEntryPath() {
+  const path = normalizedAppPath();
+  return path === '/login' || path === '/signup';
+}
+
+function authTabForPath() {
+  return normalizedAppPath() === '/signup' ? 'signup' : 'login';
+}
+
+function hasAuthFlowCallbackParams() {
+  const params = new URLSearchParams(window.location.search);
+  return params.has('gmail') || params.has('payment') || params.has('oauth') || params.has('token');
+}
+
+function redirectToMarketingSite() {
+  window.location.replace(MARKETING_SITE_URL);
+}
+
+function goToAppHome() {
+  if (normalizedAppPath() !== '/') {
+    history.replaceState({}, '', '/');
+  }
+}
+
 async function apiFetch(path, options = {}) {
   const opts = { ...options };
   opts.headers = { ...(opts.headers || {}) };
@@ -794,12 +829,18 @@ async function apiFetch(path, options = {}) {
   return res;
 }
 
-function showAuthTab(tab) {
+function showAuthTab(tab, syncUrl = true) {
   document.getElementById('auth-tab-login').classList.toggle('active', tab === 'login');
   document.getElementById('auth-tab-signup').classList.toggle('active', tab === 'signup');
   document.getElementById('auth-form-login').classList.toggle('active', tab === 'login');
   document.getElementById('auth-form-signup').classList.toggle('active', tab === 'signup');
   document.getElementById('auth-error').classList.add('hidden');
+  if (syncUrl && isProductionAppHost() && !authSession) {
+    const path = tab === 'signup' ? '/signup' : '/login';
+    if (normalizedAppPath() !== path) {
+      history.replaceState({}, '', path + window.location.search);
+    }
+  }
 }
 
 function showAuthError(msg) {
@@ -813,9 +854,10 @@ function showApp() {
   document.getElementById('app-root').classList.remove('hidden');
 }
 
-function showAuth() {
+function showAuth(preferredTab) {
   document.getElementById('auth-screen').classList.remove('hidden');
   document.getElementById('app-root').classList.add('hidden');
+  showAuthTab(preferredTab || authTabForPath());
 }
 
 function updateUserProfile() {
@@ -832,6 +874,7 @@ async function applySession(data) {
   if (data.user?.plan) authSession.user.plan = data.user.plan;
   saveSessionToStorage();
   switchUserStore(data.user?.id);
+  goToAppHome();
   showApp();
   updateUserProfile();
   await loadBillingStatus();
@@ -876,8 +919,12 @@ async function doLogout() {
   try { await apiFetch('/api/auth/logout', { method: 'POST' }); } catch(e) {}
   authSession = null;
   clearSessionStorage();
-  showAuth();
   toast('Signed out');
+  if (isProductionAppHost()) {
+    window.location.replace('/login');
+    return;
+  }
+  showAuth('login');
 }
 
 async function doForgotPassword() {
@@ -938,7 +985,7 @@ function connectGmail() {
 
 async function startCheckout(plan) {
   if (!appConfig.stripe_configured) { toast('Coming soon — Stripe not configured'); return; }
-  if (!authSession) { toast('Sign in to subscribe'); showAuth(); return; }
+  if (!authSession) { toast('Sign in to subscribe'); showAuth('login'); return; }
   try {
     const res = await apiFetch('/api/billing/create-checkout', { method: 'POST', body: { plan } });
     const data = await res.json();
@@ -2976,9 +3023,30 @@ async function init() {
     document.getElementById('supabase-banner').classList.add('hidden');
     const sessionValid = await validateAndRestoreSession();
     if (sessionValid) {
+      if (isAuthEntryPath()) goToAppHome();
       await bootAuthenticatedApp();
+    } else if (isProductionAppHost()) {
+      if (!isAuthEntryPath() && !hasAuthFlowCallbackParams()) {
+        redirectToMarketingSite();
+        return;
+      }
+      showAuth(authTabForPath());
     } else {
       showAuth();
+    }
+  } else if (isProductionAppHost()) {
+    document.getElementById('supabase-banner').classList.add('hidden');
+    const sessionValid = await validateAndRestoreSession();
+    if (sessionValid) {
+      if (isAuthEntryPath()) goToAppHome();
+      showApp();
+      updateUserProfile();
+      await bootApp();
+    } else if (!isAuthEntryPath() && !hasAuthFlowCallbackParams()) {
+      redirectToMarketingSite();
+      return;
+    } else {
+      showAuth(authTabForPath());
     }
   } else {
     document.getElementById('supabase-banner').classList.remove('hidden');
@@ -3000,7 +3068,7 @@ async function init() {
       await loadIntegrationConfig();
     } else {
       toast('Gmail connected — please sign in to continue');
-      showAuth();
+      showAuth('login');
     }
     history.replaceState({}, '', window.location.pathname);
   }

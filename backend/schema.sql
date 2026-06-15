@@ -96,3 +96,10 @@ CREATE TABLE IF NOT EXISTS agent_actions (
 CREATE INDEX IF NOT EXISTS idx_audit_log_user ON audit_log(user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_usage_tracking_user_date ON usage_tracking(user_id, date);
 CREATE INDEX IF NOT EXISTS idx_user_integrations_user ON user_integrations(user_id, integration);
+
+-- ─── Welcome email (Supabase Auth Hook) ───────────────────────────────────────
+-- In Supabase Dashboard → Authentication → Hooks → Before User Created:
+--   Type: HTTP
+--   URL:  https://logiqops.co.uk/api/auth/hook/user-created
+--   Secret: copy to Vercel as SUPABASE_AUTH_HOOK_SECRET (full v1,whsec_… value)
+-- Requires Vercel env: GMAIL_SENDER_EMAIL=hamza@logiq.org.uk, GMAIL_TOKEN_JSON=<OAuth token JSON>

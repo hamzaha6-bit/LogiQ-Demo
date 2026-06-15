@@ -5,7 +5,20 @@
     { "src": "api/health.py", "use": "@vercel/python" },
     { "src": "api/config.py", "use": "@vercel/python" },
     { "src": "api/chat.py", "use": "@vercel/python" },
-    { "src": "api/auth.py", "use": "@vercel/python" },
+    {
+      "src": "api/auth/hook/user-created.py",
+      "use": "@vercel/python",
+      "config": {
+        "includeFiles": "api/gmail_send.py,api/hook_handler.py"
+      }
+    },
+    {
+      "src": "api/auth.py",
+      "use": "@vercel/python",
+      "config": {
+        "includeFiles": "api/hook_handler.py,api/gmail_send.py"
+      }
+    },
     { "src": "api/gmail_auth.py", "use": "@vercel/python" },
     { "src": "api/billing_status.py", "use": "@vercel/python" },
     { "src": "api/integrations_config.py", "use": "@vercel/python" },
@@ -20,6 +33,7 @@
     { "src": "/api/billing/status", "dest": "/api/billing_status.py" },
     { "src": "/api/integrations/config", "dest": "/api/integrations_config.py" },
     { "src": "/api/audit/log", "dest": "/api/audit_log.py" },
+    { "src": "/api/auth/hook/user-created/?", "dest": "/api/auth/hook/user-created.py" },
     { "src": "/api/auth/gmail/connect", "dest": "/api/gmail_auth.py" },
     { "src": "/api/auth/gmail/callback", "dest": "/api/gmail_auth.py" },
     { "src": "/api/auth/gmail/status", "dest": "/api/gmail_auth.py" },
