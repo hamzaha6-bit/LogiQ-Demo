@@ -12,11 +12,13 @@ from google_oauth import GOOGLE_SCOPES, check_gmail_health, is_oauth_configured,
 from http_auth import resolve_access_token, resolve_user_id
 from supabase_rest import user_id_from_bearer
 
-GMAIL_REDIRECT_URI = os.environ.get("GMAIL_REDIRECT_URI", "https://logiqops.co.uk/api/auth/gmail/callback").strip()
+GMAIL_REDIRECT_URI = os.environ.get(
+    "GMAIL_REDIRECT_URI", "https://app.logiqops.co.uk/api/auth/gmail/callback"
+).strip()
 
 
 def _frontend_url() -> str:
-    return os.environ.get("FRONTEND_URL", "https://logiqops.co.uk").strip().rstrip("/")
+    return os.environ.get("FRONTEND_URL", "https://app.logiqops.co.uk").strip().rstrip("/")
 
 
 def _gmail_redirect(status: str, access_token: Optional[str] = None, reason: Optional[str] = None) -> str:

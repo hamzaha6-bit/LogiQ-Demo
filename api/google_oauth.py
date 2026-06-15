@@ -12,7 +12,7 @@ from googleapiclient.discovery import build
 
 from supabase_rest import env, rest_get, rest_patch, rest_post
 
-GMAIL_REDIRECT_URI = env("GMAIL_REDIRECT_URI") or "https://logiqops.co.uk/api/auth/gmail/callback"
+GMAIL_REDIRECT_URI = env("GMAIL_REDIRECT_URI") or "https://app.logiqops.co.uk/api/auth/gmail/callback"
 
 GOOGLE_SCOPES = [
     "https://www.googleapis.com/auth/gmail.send",
