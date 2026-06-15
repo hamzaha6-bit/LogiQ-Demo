@@ -149,6 +149,12 @@ a { color: var(--brand); text-decoration: none; }
 .btn-sm.brand:hover { background: var(--brand-h); }
 .btn-sm.ok { background: var(--ok); color: #fff; border-color: var(--ok); }
 .btn-sm.err { color: var(--err); border-color: var(--err-b); }
+.btn-emergency {
+  background: var(--err); color: #fff; border: none; border-radius: 8px;
+  padding: 10px 16px; font-size: 13px; font-weight: 600; cursor: pointer;
+}
+.btn-emergency:hover { filter: brightness(0.95); }
+.btn-emergency:disabled { opacity: 0.6; cursor: not-allowed; }
 
 .empty-state {
   text-align: center; padding: 40px 20px; color: var(--text3);
@@ -1920,6 +1926,9 @@ async function renderDashboard() {
   const recent = actions.slice(0, 10);
   const liveAgents = [...deployedAgents.values()];
   const userName = authSession?.user?.name?.split(' ')[0] || 'there';
+  const { data: allWorkflows } = await dbGet('workflows', {});
+  const userId = getCurrentUserId();
+  const activeWorkflowCount = (allWorkflows || []).filter(w => w.user_id === userId && w.status === 'active').length;
 
   const usage = billingStatus?.usage || {};
   const limits = billingStatus?.limits || {};
@@ -1943,6 +1952,15 @@ async function renderDashboard() {
   el.innerHTML = `
     <div class="dash-greeting"><h1>${greeting()}, ${esc(userName)} 👋</h1>
       <p>${liveAgents.length} agents active — <a href="#" onclick="navigate('integrations');return false" style="color:var(--brand);font-weight:500">Manage integrations</a></p></div>
+    <div class="card" style="margin-bottom:20px;border-color:var(--err-b);background:var(--err-bg)">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap">
+        <div>
+          <div class="card-title" style="color:var(--err);margin-bottom:4px">Emergency stop</div>
+          <p style="font-size:12px;color:var(--text2);margin:0">${activeWorkflowCount} active workflow${activeWorkflowCount === 1 ? '' : 's'} — pause everything instantly if something goes wrong.</p>
+        </div>
+        <button class="btn-emergency" id="emergency-stop-btn" onclick="emergencyStopWorkflows()" ${activeWorkflowCount ? '' : 'disabled'}>Stop all workflows</button>
+      </div>
+    </div>
     <div class="grid-3" style="margin-bottom:20px">
       <div class="card metric-card ${usageClass(apiPct)}"><div class="metric-label">API calls today</div>
         <div class="metric-value">${usage.api_calls_today || 0}</div>
@@ -2483,6 +2501,34 @@ async function deployBlueprintPlan() {
   await runWorkflow(saved.id);
   updateApprovalBadgeCount();
   if (currentPage === 'dashboard') renderDashboard();
+}
+
+async function emergencyStopWorkflows() {
+  if (!getAuthBearerToken()) {
+    toast('Sign in to use emergency stop', 'err');
+    return;
+  }
+  if (!confirm('Emergency stop will pause ALL active workflows immediately. Continue?')) return;
+  const btn = document.getElementById('emergency-stop-btn');
+  if (btn) btn.disabled = true;
+  try {
+    const res = await apiFetch('/api/workflows/emergency-stop', { method: 'POST' });
+    if (!res.ok) throw new Error(await parseApiError(res));
+    const data = await res.json();
+    const userId = getCurrentUserId();
+    (memStore.workflows || []).forEach(wf => {
+      if (userId && wf.user_id === userId && wf.status === 'active') {
+        wf.status = 'paused';
+        wf.updated_at = new Date().toISOString();
+      }
+    });
+    logAuditEvent('Platform', 'emergency_stop', { paused_count: data.paused_count || 0, status: 'completed' });
+    toast(`Emergency stop — ${data.paused_count || 0} workflow(s) paused`, 'success');
+    if (currentPage === 'dashboard') renderDashboard();
+  } catch (err) {
+    toast(err.message || 'Emergency stop failed', 'err');
+    if (btn) btn.disabled = false;
+  }
 }
 
 async function runWorkflow(workflowId) {

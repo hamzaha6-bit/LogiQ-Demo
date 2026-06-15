@@ -2,7 +2,8 @@
 from __future__ import annotations
 
 import os
-from typing import Any, Dict, List, Optional
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 
@@ -105,3 +106,60 @@ def user_id_from_bearer(token: str) -> Optional[str]:
         return str(user.id) if user else None
     except Exception:
         return None
+
+
+def user_id_from_email(email: str) -> Optional[str]:
+    target = (email or "").strip().lower()
+    if not target:
+        return None
+    url = env("SUPABASE_URL").rstrip("/")
+    key = env("SUPABASE_SERVICE_KEY")
+    if not url or not key:
+        return None
+    headers = {"apikey": key, "Authorization": f"Bearer {key}"}
+    page = 1
+    with httpx.Client(timeout=30) as client:
+        while True:
+            resp = client.get(
+                f"{url}/auth/v1/admin/users",
+                headers=headers,
+                params={"page": page, "per_page": 200},
+            )
+            if resp.status_code >= 400:
+                return None
+            body = resp.json()
+            users = body.get("users") if isinstance(body, dict) else []
+            for user in users:
+                if (user.get("email") or "").strip().lower() == target:
+                    return str(user.get("id"))
+            if len(users) < 200:
+                break
+            page += 1
+    return None
+
+
+def pause_workflows_for_user(user_id: str, *, active_only: bool = False) -> Tuple[int, str]:
+    if not user_id:
+        return 0, "user_id is required"
+    url = f"{env('SUPABASE_URL').rstrip('/')}/rest/v1/workflows"
+    if not env("SUPABASE_URL") or not env("SUPABASE_SERVICE_KEY"):
+        return 0, "SUPABASE_URL or SUPABASE_SERVICE_KEY not configured"
+    params: Dict[str, str] = {"user_id": f"eq.{user_id}"}
+    if active_only:
+        params["status"] = "eq.active"
+    payload = {"status": "paused", "updated_at": datetime.now(timezone.utc).isoformat()}
+    with httpx.Client(timeout=20) as client:
+        resp = client.patch(
+            url,
+            headers=rest_headers("return=representation"),
+            params=params,
+            json=payload,
+        )
+        if resp.status_code >= 400:
+            err = f"HTTP {resp.status_code}: {resp.text[:300]}"
+            print(f"[supabase] PATCH workflows failed: {err}")
+            return 0, err
+        data = resp.json()
+        if isinstance(data, list):
+            return len(data), ""
+        return 0, ""
