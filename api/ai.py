@@ -1,7 +1,8 @@
-"""Minimal ai.py — stdlib only, for Vercel cold-start diagnostics."""
+"""ai.py — anthropic import test for Vercel cold-start diagnostics."""
 from http.server import BaseHTTPRequestHandler
 import json
-import os
+
+import anthropic
 
 
 class handler(BaseHTTPRequestHandler):
