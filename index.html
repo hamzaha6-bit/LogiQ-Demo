@@ -273,6 +273,88 @@ a { color: var(--brand); text-decoration: none; }
 .typing-dots span:nth-child(3) { animation-delay: .4s; }
 @keyframes blink { 0%,80%,100%{opacity:.3} 40%{opacity:1} }
 
+/* Blueprint AI */
+.blueprint-agent-picker {
+  display: flex; align-items: center; gap: 10px; padding: 12px 28px 0; flex-shrink: 0;
+}
+.blueprint-agent-picker span { font-size: 12px; color: var(--text2); font-weight: 500; }
+.agent-pick {
+  font-size: 12px; font-weight: 600; padding: 6px 14px; border-radius: 10px;
+  border: 1px solid var(--border); background: var(--bg); color: var(--text2); cursor: pointer;
+  transition: border-color .15s, background .15s, color .15s;
+}
+.agent-pick:hover { border-color: var(--brand-m); color: var(--brand); }
+.agent-pick.active { background: var(--brand-ll); border-color: var(--brand); color: var(--brand); }
+.blueprint-compose {
+  flex-shrink: 0; padding: 16px 28px 20px; border-top: 1px solid var(--border); background: var(--bg);
+}
+.blueprint-compose textarea {
+  width: 100%; min-height: 88px; padding: 16px 18px; border: 1px solid var(--border);
+  border-radius: 14px; outline: none; resize: vertical; font-size: 15px; line-height: 1.55;
+  font-family: inherit; margin-bottom: 12px; transition: border-color .15s, box-shadow .15s;
+}
+.blueprint-compose textarea:focus {
+  border-color: var(--brand); box-shadow: 0 0 0 3px rgba(91, 75, 245, .12);
+}
+.blueprint-compose textarea::placeholder { color: var(--text3); }
+.blueprint-send-row { display: flex; justify-content: flex-end; align-items: center; gap: 12px; }
+.blueprint-send-row .hint { font-size: 12px; color: var(--text3); margin-right: auto; }
+.btn-blueprint-send {
+  background: #5B4BF5; color: #fff; border: none; padding: 10px 22px;
+  border-radius: 14px; font-size: 14px; font-weight: 600; cursor: pointer;
+  transition: background .15s, transform .1s;
+}
+.btn-blueprint-send:hover { background: #4A3BE0; }
+.btn-blueprint-send:disabled { opacity: .55; cursor: not-allowed; }
+.blueprint-plan {
+  margin-top: 8px; padding: 20px; border: 1px solid var(--brand-m); border-radius: 14px;
+  background: var(--bg); width: 100%; max-width: min(900px, 92%);
+}
+.blueprint-plan-header { margin-bottom: 16px; }
+.blueprint-plan-header h3 { font-size: 16px; font-weight: 700; margin-bottom: 4px; }
+.blueprint-plan-header p { font-size: 13px; color: var(--text2); line-height: 1.5; }
+.blueprint-steps { display: flex; flex-direction: column; gap: 10px; margin-bottom: 18px; }
+.blueprint-step {
+  display: grid; grid-template-columns: 36px 1fr auto; gap: 12px; align-items: start;
+  padding: 14px 16px; border: 1px solid var(--border); border-radius: 14px; background: var(--bg2);
+}
+.blueprint-step.approval-required { border-color: #FCD34D; background: #FFFBEB; }
+.step-num {
+  width: 28px; height: 28px; border-radius: 8px; background: var(--brand); color: #fff;
+  font-size: 12px; font-weight: 700; display: flex; align-items: center; justify-content: center;
+}
+.step-title { font-size: 14px; font-weight: 600; margin-bottom: 4px; }
+.step-meta { font-size: 11px; color: var(--text3); margin-bottom: 6px; }
+.step-desc { font-size: 13px; color: var(--text2); line-height: 1.5; }
+.step-badge {
+  font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em;
+  padding: 4px 8px; border-radius: 6px; white-space: nowrap;
+}
+.step-badge.auto { background: var(--ok-bg); color: var(--ok); }
+.step-badge.approval { background: #FEF3C7; color: #B45309; }
+.blueprint-plan-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+.approval-card {
+  padding: 16px; border: 1px solid var(--border); border-radius: 14px;
+  background: var(--bg2); margin-bottom: 12px;
+}
+.approval-card.pending { border-left: 3px solid #F59E0B; }
+.approval-card-header {
+  display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 10px;
+}
+.approval-card-header h4 { font-size: 14px; font-weight: 600; }
+.approval-payload {
+  font-size: 13px; color: var(--text2); line-height: 1.55; white-space: pre-wrap;
+  padding: 12px; background: var(--bg); border-radius: 10px; border: 1px solid var(--border);
+  margin-bottom: 12px;
+}
+.approval-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.nav-badge {
+  display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px;
+  padding: 0 5px; margin-left: 6px; border-radius: 9px; background: var(--err); color: #fff;
+  font-size: 10px; font-weight: 700; vertical-align: middle;
+}
+.nav-badge.hidden { display: none; }
+
 /* Pricing */
 .price-card { text-align: center; padding: 24px 18px; position: relative; }
 .price-card.popular { border-color: var(--brand); box-shadow: 0 0 0 1px var(--brand-m); }
@@ -642,7 +724,7 @@ input[type=file].hidden-input { display: none; }
     </div>
     <nav class="nav-section">
       <div class="nav-label">MAIN</div>
-      <button class="nav-item active" data-page="dashboard">Dashboard</button>
+      <button class="nav-item active" data-page="dashboard">Dashboard<span class="nav-badge hidden" id="nav-approval-badge">0</span></button>
       <button class="nav-item" data-page="workforce">Workforce</button>
       <button class="nav-item" data-page="build">Build</button>
     </nav>
@@ -759,7 +841,11 @@ const KEYS = { anthropic: '', supabaseUrl: '', supabaseAnon: '' };
 let supabaseClient = null;
 
 function createEmptyStore() {
-  return { leads:[], lead_emails:[], invoices:[], invoice_emails:[], enquiries:[], reports:[], tasks:[], agent_actions:[], agent_activity:[], agent_meta:{} };
+  return {
+    leads:[], lead_emails:[], invoices:[], invoice_emails:[], enquiries:[], reports:[], tasks:[],
+    agent_actions:[], agent_activity:[], agent_meta:{},
+    workflows:[], workflow_approvals:[],
+  };
 }
 const memStoreByUser = {};
 let memStore = createEmptyStore();
@@ -1287,8 +1373,9 @@ async function canDeployMoreAgents() {
 function maybeShowOnboarding() {
   if (!authSession || authSession.user?.onboarding_complete) return;
   const customAgents = [...deployedAgents.keys()].filter(id => !['aria','nova'].includes(id));
+  const workflowOk = (memStore.workflows || []).length > 0;
   const gmailOk = integrationConfig.gmail_authorised;
-  const agentOk = customAgents.length > 0;
+  const agentOk = customAgents.length > 0 || workflowOk;
   const leadsOk = (memStore.leads || []).length > 0;
   if (gmailOk && agentOk && leadsOk) {
     completeOnboarding();
@@ -1305,7 +1392,7 @@ function renderOnboarding(gmailOk, agentOk, leadsOk) {
       ${gmailOk ? '' : '<button class="btn-sm brand" style="margin-left:auto" onclick="connectGmail()">Connect</button>'}
     </div>
     <div class="onboarding-step${agentOk?' done':''}"><div class="step-num">${agentOk?'✓':'2'}</div>
-      <div><strong>Deploy your first agent</strong><div style="font-size:12px;color:var(--text2)">Use Blueprint AI in Build</div></div>
+      <div><strong>Build your first workflow</strong><div style="font-size:12px;color:var(--text2)">Describe what to automate in Blueprint</div></div>
       ${agentOk ? '' : '<button class="btn-sm brand" style="margin-left:auto" onclick="dismissOnboarding();navigate(\'build\')">Build</button>'}
     </div>
     <div class="onboarding-step${leadsOk?' done':''}"><div class="step-num">${leadsOk?'✓':'3'}</div>
@@ -1331,6 +1418,8 @@ async function completeOnboarding() {
 
 let blueprintHistory = [];
 let blueprintUserTurns = 0;
+let blueprintPlan = null;
+let blueprintSelectedAgent = 'aria';
 const agentChatState = {};
 let modalHistories = { cleo: [], nova: [] };
 const deployedAgents = new Map();
@@ -1373,20 +1462,83 @@ CREATE TABLE IF NOT EXISTS invoice_emails (id uuid DEFAULT gen_random_uuid() PRI
 CREATE TABLE IF NOT EXISTS enquiries (id uuid DEFAULT gen_random_uuid() PRIMARY KEY, name text, company text, message text, status text DEFAULT 'new', response_draft text, created_at timestamptz DEFAULT now());
 CREATE TABLE IF NOT EXISTS reports (id uuid DEFAULT gen_random_uuid() PRIMARY KEY, title text, period text, raw_data text, content text, created_at timestamptz DEFAULT now());
 CREATE TABLE IF NOT EXISTS tasks (id uuid DEFAULT gen_random_uuid() PRIMARY KEY, title text, supplier text, due_date date, status text DEFAULT 'open', notes text, created_at timestamptz DEFAULT now());
-CREATE TABLE IF NOT EXISTS agent_actions (id uuid DEFAULT gen_random_uuid() PRIMARY KEY, agent text, item_id text, reasoning text, action_type text, output text, status text DEFAULT 'queued', created_at timestamptz DEFAULT now());`;
+CREATE TABLE IF NOT EXISTS agent_actions (id uuid DEFAULT gen_random_uuid() PRIMARY KEY, agent text, item_id text, reasoning text, action_type text, output text, status text DEFAULT 'queued', created_at timestamptz DEFAULT now());
+CREATE TABLE IF NOT EXISTS workflows (id uuid DEFAULT gen_random_uuid() PRIMARY KEY, user_id uuid, agent_id text, name text, description text, trigger_description text, steps jsonb DEFAULT '[]', status text DEFAULT 'active', created_at timestamptz DEFAULT now());
+CREATE TABLE IF NOT EXISTS workflow_approvals (id uuid DEFAULT gen_random_uuid() PRIMARY KEY, user_id uuid, workflow_id uuid, agent_id text, step_number int, primitive_code text, action_name text, integration text, summary text, payload jsonb DEFAULT '{}', status text DEFAULT 'pending', expires_at timestamptz, resolved_at timestamptz, created_at timestamptz DEFAULT now());`;
 
-const BLUEPRINT_PROMPT = `You are LogiQ Blueprint AI — you help businesses deploy AI agents from a conversation.
+const ACTION_REGISTRY = {
+  'GM-01': { integration:'Gmail', name:'List messages', requires_approval:false },
+  'GM-02': { integration:'Gmail', name:'Read message', requires_approval:false },
+  'GM-03': { integration:'Gmail', name:'Send email', requires_approval:true },
+  'GM-04': { integration:'Gmail', name:'Reply to thread', requires_approval:true },
+  'GM-05': { integration:'Gmail', name:'Draft email', requires_approval:false },
+  'GM-06': { integration:'Gmail', name:'Label message', requires_approval:false },
+  'GM-07': { integration:'Gmail', name:'Search inbox', requires_approval:false },
+  'GM-08': { integration:'Gmail', name:'Get thread', requires_approval:false },
+  'GS-01': { integration:'Google Sheets', name:'Read sheet', requires_approval:false },
+  'GS-02': { integration:'Google Sheets', name:'Append row', requires_approval:false },
+  'GS-03': { integration:'Google Sheets', name:'Update row', requires_approval:false },
+  'GS-04': { integration:'Google Sheets', name:'Poll for new rows', requires_approval:false },
+  'GS-05': { integration:'Google Sheets', name:'Connect sheet', requires_approval:false },
+  'GS-06': { integration:'Google Sheets', name:'Delete row', requires_approval:true },
+  'GS-07': { integration:'Google Sheets', name:'Write cell', requires_approval:false },
+  'GC-01': { integration:'Google Calendar', name:'Check availability', requires_approval:false },
+  'GC-02': { integration:'Google Calendar', name:'List events', requires_approval:false },
+  'GC-03': { integration:'Google Calendar', name:'Create event', requires_approval:false },
+  'GC-04': { integration:'Google Calendar', name:'Update event', requires_approval:false },
+  'GC-05': { integration:'Google Calendar', name:'Cancel event', requires_approval:true },
+  'GC-06': { integration:'Google Calendar', name:'Send calendar invite', requires_approval:true },
+};
 
-Available agents: Aria (sales/outreach & leads), Finn (finance/invoicing), Nova (customer comms), Zara (operations), Cleo (reporting).
+const IRREVERSIBLE_PRIMITIVES = new Set(['GM-03','GM-04','GC-05','GC-06','GS-06']);
 
-FLOW — follow strictly:
-1. DISCOVERY: Ask 2-3 focused questions ONE AT A TIME about their use case (what the business does, biggest operational pain, who their customers are, what data they have). Do not deploy yet.
-2. CONFIRM: After you have enough context, summarize what you will build and ask them to confirm. Example: "I'll deploy **Aria** to handle sales outreach — importing leads, drafting emails, and sending via Gmail. **Ready to deploy?**"
-3. DEPLOY: Only after the user explicitly confirms (yes/ready/deploy/go ahead), end your message with exactly one deployment token on its own line:
-   [DEPLOY:ARIA], [DEPLOY:FINN], [DEPLOY:NOVA], [DEPLOY:CLEO], or [DEPLOY:ZARA]
-   For custom needs: [DEPLOY:CUSTOM:AgentName:emoji:role_description]
+function blueprintRegistryPromptBlock() {
+  return Object.entries(ACTION_REGISTRY).map(([code, m]) =>
+    `${code}: ${m.name} (${m.integration})${m.requires_approval ? ' [requires approval]' : ''}`
+  ).join('\n');
+}
 
-Rules: Be concise. Use **bold** for emphasis. Never deploy without user confirmation. Never mention UK specifically.`;
+function buildBlueprintSystemPrompt() {
+  return `You are LogiQ Blueprint — an intelligent colleague who turns plain-English automation ideas into structured workflows.
+
+AVAILABLE PRIMITIVES (use ONLY these codes — never invent new actions):
+${blueprintRegistryPromptBlock()}
+
+PHASE 1 AGENTS: aria (sales/outreach — leads, follow-ups, Gmail) or nova (customer comms — enquiries, support replies).
+
+When the user describes what they want to automate:
+1. If their request CANNOT be built using only the primitives above, respond conversationally explaining what is not supported yet and suggest a nearby alternative using available primitives. Do NOT output JSON.
+2. If it CAN be built, respond with a brief friendly summary (2-3 sentences), then output a JSON block on its own line wrapped in \`\`\`json fences:
+
+\`\`\`json
+{
+  "supported": true,
+  "title": "Short workflow name",
+  "summary": "What this workflow accomplishes",
+  "agent": "aria" or "nova",
+  "steps": [
+    {
+      "step": 1,
+      "code": "GM-07",
+      "description": "Plain English: what this step does in context",
+      "params": {}
+    }
+  ]
+}
+\`\`\`
+
+Rules:
+- Every step.code MUST be one of the registered primitives listed above.
+- Set requires_approval implicitly from the registry (GM-03, GM-04, GC-05, GC-06, GS-06 always need approval).
+- For steps that send email (GM-03, GM-04), include params: { "to", "subject", "body" } with realistic draft content.
+- For calendar irreversible steps (GC-05, GC-06), include params with event details.
+- For GS-06, include params describing the row to delete.
+- Prefer 3–8 steps. Be practical, not generic.
+- Tone: warm, concise, colleague-like — not a form or checklist.
+- Never mention internal codes to the user in prose; codes belong only in JSON.`;
+}
+
+const BLUEPRINT_PROMPT = buildBlueprintSystemPrompt();
 
 const CLEO_MODAL_PROMPT = "You are Cleo, a reporting agent. Help with summaries, board reports, KPI analysis, results in plain English. Use bold for key figures. Sign off as 'Prepared by Cleo — LogiQ Reporting Agent'.";
 const NOVA_MODAL_PROMPT = "You are Nova, a comms agent. Draft emails, onboarding sequences, complaint responses. Ready-to-send copy always. Use bold for subject lines. Sign off as 'The Team at [Company]'.";
@@ -1727,10 +1879,13 @@ function greeting() {
 async function renderDashboard() {
   const el = document.getElementById('page-dashboard');
   await loadBillingStatus();
+  const { pendingWf, pendingActions } = await loadPendingApprovals();
+  const pendingTotal = pendingWf.length + pendingActions.length;
+  updateApprovalBadgeCount();
+
   const { data: actions } = await dbGet('agent_actions', {});
   const queued = actions.filter(a => a.status === 'queued').length;
   const completed = actions.filter(a => a.status === 'sent').length;
-  const hoursSaved = Math.max(2, Math.floor(completed * 0.4 + queued * 0.15));
   const recent = actions.slice(0, 10);
   const liveAgents = [...deployedAgents.values()];
   const userName = authSession?.user?.name?.split(' ')[0] || 'there';
@@ -1764,9 +1919,43 @@ async function renderDashboard() {
       <div class="card metric-card ${usageClass(actionsPct)}"><div class="metric-label">Actions this month</div>
         <div class="metric-value">${actionsUsed}</div>
         <div class="metric-delta">${actionsLimit ? 'of ' + actionsLimit.toLocaleString() : 'Unlimited'}</div></div>
-      <div class="card metric-card${queued>0?' alert':''} ${usageClass(emailPct)}"><div class="metric-label">Needs your review</div>
-        <div class="metric-value">${queued}</div><div class="metric-delta">${queued>0?'Actions awaiting approval':'All clear'}</div></div>
+      <div class="card metric-card${pendingTotal>0?' alert':''} ${usageClass(emailPct)}"><div class="metric-label">Pending approvals</div>
+        <div class="metric-value">${pendingTotal}</div><div class="metric-delta">${pendingTotal>0?'Needs your decision':'All clear'}</div></div>
     </div>
+    ${pendingTotal > 0 ? `<div class="card" style="margin-bottom:20px" id="dash-approvals-section">
+      <div class="card-title" style="display:flex;justify-content:space-between;align-items:center">
+        <span>Approvals</span>
+        <span class="badge badge-warm">${pendingTotal} pending</span>
+      </div>
+      ${pendingWf.map(a => {
+        const agent = deployedAgents.get(a.agent_id);
+        const expires = a.expires_at ? new Date(a.expires_at).toLocaleString('en-GB', { day:'numeric', month:'short', hour:'2-digit', minute:'2-digit' }) : '';
+        return `<div class="approval-card pending">
+          <div class="approval-card-header">
+            <h4>${esc(agent?.emoji || '⚡')} ${esc(agent?.name || a.agent_id)} — ${esc(a.action_name || a.summary)}</h4>
+            <span class="badge badge-warm">Step ${a.step_number}</span>
+          </div>
+          <div style="font-size:12px;color:var(--text3);margin-bottom:8px">${esc(a.integration)} · ${esc(a.primitive_code)}${expires ? ' · Expires ' + esc(expires) : ''}</div>
+          <div class="approval-payload">${esc(formatApprovalPayload(a.payload, a.primitive_code))}</div>
+          <div class="approval-actions">
+            <button class="btn-primary" onclick="approveWorkflowApproval('${a.id}')">Approve</button>
+            <button class="btn-ghost" onclick="rejectWorkflowApproval('${a.id}')">Reject</button>
+          </div>
+        </div>`;
+      }).join('')}
+      ${pendingActions.map(a => `
+        <div class="approval-card pending">
+          <div class="approval-card-header">
+            <h4>${esc(a.agent)} — ${esc(a.action_type || 'Action')}</h4>
+            <span class="badge badge-warm">Agent queue</span>
+          </div>
+          <div class="approval-payload">${esc(typeof a.output === 'string' ? a.output : JSON.stringify(a.output || {}, null, 2))}</div>
+          <div class="approval-actions">
+            <button class="btn-primary" onclick="approveAction('${a.id}','${agentIdByName(a.agent)}')">Approve</button>
+            <button class="btn-ghost" onclick="rejectAgentAction('${a.id}')">Reject</button>
+          </div>
+        </div>`).join('')}
+    </div>` : ''}
     ${actionsPct >= 100 || apiPct >= 100 ? `<div class="card usage-alert" style="margin-bottom:16px;padding:14px;display:flex;align-items:center;justify-content:space-between">
       <span>Daily limit reached — upgrade your plan for more capacity</span>
       <button class="btn-primary" onclick="navigate('pricing')">Upgrade</button></div>` : ''}
@@ -2010,8 +2199,63 @@ function openAgentFromWorkforce(id) {
   navigate(id);
 }
 
-// ═══ 8. BUILD ═══
+// ═══ 8. BUILD (Blueprint AI) ═══
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+function getCurrentUserId() {
+  return authSession?.user?.id || null;
+}
+
+function agentIdByName(name) {
+  for (const [id, ag] of deployedAgents.entries()) {
+    if (ag.name === name) return id;
+  }
+  return '';
+}
+
+function parseBlueprintPlan(text) {
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const raw = fenced ? fenced[1].trim() : '';
+  const blob = raw || (() => {
+    const m = text.match(/\{[\s\S]*"supported"[\s\S]*\}/);
+    return m ? m[0] : '';
+  })();
+  if (!blob) return null;
+  try {
+    const plan = JSON.parse(blob);
+    if (!plan || plan.supported !== true || !Array.isArray(plan.steps)) return null;
+    return plan;
+  } catch (e) {
+    return null;
+  }
+}
+
+function enrichBlueprintSteps(steps) {
+  return steps.map((s, i) => {
+    const code = String(s.code || '').trim().toUpperCase();
+    const meta = ACTION_REGISTRY[code] || {};
+    const requiresApproval = IRREVERSIBLE_PRIMITIVES.has(code) || meta.requires_approval === true;
+    return {
+      step: s.step || i + 1,
+      code,
+      name: meta.name || code,
+      integration: meta.integration || 'Unknown',
+      description: s.description || '',
+      requires_approval: requiresApproval,
+      params: s.params || {},
+    };
+  });
+}
+
+function validateBlueprintPlan(plan) {
+  if (!plan?.steps?.length) return 'Workflow needs at least one step';
+  for (const step of plan.steps) {
+    if (!ACTION_REGISTRY[step.code]) return `Unknown action ${step.code} — not in the registry`;
+  }
+  const agent = (plan.agent || '').toLowerCase();
+  if (agent && !['aria', 'nova'].includes(agent)) return 'Agent must be aria or nova';
+  return null;
+}
 
 function renderBuild() {
   const el = document.getElementById('page-build');
@@ -2020,20 +2264,42 @@ function renderBuild() {
     el.innerHTML = `
       <div class="chat-page">
         <div class="chat-page-header">
-          <div><h2>Blueprint AI</h2><p>Describe your business — LogiQ asks the right questions and deploys your agent automatically.</p></div>
+          <div>
+            <h2>Blueprint</h2>
+            <p>Describe what you want to automate — I'll build a workflow plan using Gmail, Sheets, and Calendar.</p>
+          </div>
+          <div class="logo-mark" style="width:36px;height:36px;font-size:16px">Q</div>
         </div>
         <div class="chat-messages-full" id="build-messages"></div>
         <div class="chips" id="build-chips">
-          ${['I need a sales outreach agent','Help me chase overdue invoices','Handle customer support emails','Automate weekly reporting'].map(c=>
-            `<button class="chip" onclick="sendBuildChip('${c.replace(/'/g,"\\'")}')">${c}</button>`).join('')}
+          ${[
+            'Follow up with leads who open my email but don\'t reply within 3 days',
+            'When a new enquiry arrives, draft a reply and queue it for my approval',
+            'Sync new leads from a Google Sheet and send a personalised intro email',
+          ].map(c => `<button class="chip" onclick="sendBuildChip(${JSON.stringify(c)})">${esc(c)}</button>`).join('')}
         </div>
-        <div class="chat-compose">
-          <textarea id="build-input" rows="1" placeholder="Describe what you want to build…" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendBuild();}"></textarea>
-          <button class="btn-primary" onclick="sendBuild()">Send</button>
+        <div class="blueprint-agent-picker">
+          <span>Run on agent</span>
+          <button type="button" class="agent-pick active" data-agent="aria" onclick="setBlueprintAgent('aria')">📣 Aria</button>
+          <button type="button" class="agent-pick" data-agent="nova" onclick="setBlueprintAgent('nova')">💬 Nova</button>
+        </div>
+        <div class="blueprint-compose">
+          <textarea id="build-input" rows="3" placeholder="Describe what you want to automate in plain English…&#10;&#10;Example: I want to follow up with every lead who opens my email but doesn't reply within 3 days." onkeydown="if(event.key==='Enter'&&(event.metaKey||event.ctrlKey)){event.preventDefault();sendBuild();}"></textarea>
+          <div class="blueprint-send-row">
+            <span class="hint">Ctrl+Enter to send</span>
+            <button type="button" class="btn-blueprint-send" id="build-send-btn" onclick="sendBuild()">Send to Blueprint</button>
+          </div>
         </div>
       </div>`;
-    addBuildMsg('assistant', 'Welcome to LogiQ Blueprint. Tell me about the business or workflow you want to automate — I\'ll ask a few focused questions, confirm the plan, then deploy your agent.');
+    addBuildMsg('assistant', 'Hi — tell me what you\'d like to automate. I\'ll map it to a workflow using Gmail, Google Sheets, and Calendar, then show you the plan before anything runs.');
   }
+}
+
+function setBlueprintAgent(id) {
+  blueprintSelectedAgent = id;
+  document.querySelectorAll('.agent-pick').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.agent === id);
+  });
 }
 
 function addBuildMsg(role, text, cls) {
@@ -2041,60 +2307,309 @@ function addBuildMsg(role, text, cls) {
   if (!box) return;
   const div = document.createElement('div');
   div.className = 'chat-msg' + (role === 'user' ? ' user' : '');
-  div.innerHTML = `<div class="chat-avatar">${role==='user'?'HA':'Q'}</div>
-    <div class="chat-bubble${cls?' '+cls:''}">${role==='user'?esc(text):formatBold(esc(text))}</div>`;
+  div.innerHTML = `<div class="chat-avatar">${role === 'user' ? 'HA' : 'Q'}</div>
+    <div class="chat-bubble${cls ? ' ' + cls : ''}">${role === 'user' ? esc(text) : formatBold(esc(text))}</div>`;
   box.appendChild(div);
   box.scrollTop = box.scrollHeight;
+  return div;
 }
 
-function sendBuildChip(text) { document.getElementById('build-input').value = text; sendBuild(); }
+function sendBuildChip(text) {
+  document.getElementById('build-input').value = text;
+  sendBuild();
+}
 
 async function sendBuild() {
   const input = document.getElementById('build-input');
+  const btn = document.getElementById('build-send-btn');
   const text = input.value.trim();
   if (!text) return;
+  if (!(await requireAI())) return;
+
   input.value = '';
+  blueprintPlan = null;
   addBuildMsg('user', text);
-  blueprintHistory.push({ role:'user', content:text });
+  blueprintHistory.push({ role: 'user', content: text });
   blueprintUserTurns++;
+
   const typing = document.createElement('div');
-  typing.className = 'chat-msg'; typing.id = 'build-typing';
+  typing.className = 'chat-msg';
+  typing.id = 'build-typing';
   typing.innerHTML = '<div class="chat-avatar">Q</div><div class="chat-bubble"><span class="typing-dots"><span></span><span></span><span></span></span></div>';
   document.getElementById('build-messages').appendChild(typing);
   document.getElementById('build-messages').scrollTop = 99999;
+
+  if (btn) btn.disabled = true;
   try {
-    const reply = await callClaude(BLUEPRINT_PROMPT, blueprintHistory);
+    const agentHint = blueprintSelectedAgent === 'nova' ? 'nova' : 'aria';
+    const system = buildBlueprintSystemPrompt() + `\n\nUser selected agent preference: ${agentHint}`;
+    const reply = await callClaude(system, blueprintHistory, 2200);
     document.getElementById('build-typing')?.remove();
     await handleBlueprintReply(reply);
-  } catch(e) {
+  } catch (e) {
     document.getElementById('build-typing')?.remove();
     addBuildMsg('assistant', e.message || String(e));
+  } finally {
+    if (btn) btn.disabled = false;
   }
 }
 
 async function handleBlueprintReply(reply) {
-  const deployMatch = reply.match(/\[DEPLOY:(\w+)(?::([^:\]]+):([^:\]]+):([^\]]+))?\]/);
-  let display = reply.replace(/\[DEPLOY:[^\]]+\]/g, '').trim();
-  blueprintHistory.push({ role:'assistant', content: reply });
-  if (display) addBuildMsg('assistant', display);
-  if (deployMatch) {
-    const [, code, customName, emoji, desc] = deployMatch;
-    if (code === 'CUSTOM') await runDeployProgress(customName || 'Agent', () => deployCustomAgent(customName, emoji, desc, true));
-    else {
-      const agent = DEFAULT_AGENTS[code.toUpperCase()];
-      await runDeployProgress(agent?.name || code, () => deployAgent(code, true));
+  blueprintHistory.push({ role: 'assistant', content: reply });
+  const plan = parseBlueprintPlan(reply);
+  const prose = reply.replace(/```(?:json)?[\s\S]*?```/g, '').trim();
+
+  if (!plan) {
+    if (prose) addBuildMsg('assistant', prose);
+    return;
+  }
+
+  plan.agent = (plan.agent || blueprintSelectedAgent || 'aria').toLowerCase();
+  plan.steps = enrichBlueprintSteps(plan.steps);
+  const err = validateBlueprintPlan(plan);
+  if (err) {
+    addBuildMsg('assistant', 'I couldn\'t build that workflow yet — ' + err + '. Try rephrasing or ask for something Gmail, Sheets, or Calendar can do.');
+    return;
+  }
+
+  blueprintPlan = plan;
+  if (prose) addBuildMsg('assistant', prose);
+  renderBlueprintPlanReview(plan);
+}
+
+function renderBlueprintPlanReview(plan) {
+  const box = document.getElementById('build-messages');
+  if (!box) return;
+  const agent = deployedAgents.get(plan.agent);
+  const agentLabel = agent ? agent.name : (plan.agent === 'nova' ? 'Nova' : 'Aria');
+
+  const stepsHtml = plan.steps.map(s => `
+    <div class="blueprint-step${s.requires_approval ? ' approval-required' : ''}">
+      <div class="step-num">${s.step}</div>
+      <div>
+        <div class="step-title">${esc(s.name)}</div>
+        <div class="step-meta">${esc(s.code)} · ${esc(s.integration)}</div>
+        <div class="step-desc">${esc(s.description)}</div>
+      </div>
+      <span class="step-badge ${s.requires_approval ? 'approval' : 'auto'}">${s.requires_approval ? 'Needs approval' : 'Automatic'}</span>
+    </div>`).join('');
+
+  const wrap = document.createElement('div');
+  wrap.className = 'chat-msg';
+  wrap.id = 'blueprint-plan-review';
+  wrap.innerHTML = `
+    <div class="chat-avatar">Q</div>
+    <div class="chat-bubble wide">
+      <div class="blueprint-plan">
+        <div class="blueprint-plan-header">
+          <h3>${esc(plan.title || 'Workflow plan')}</h3>
+          <p>${esc(plan.summary || '')} · Assigned to <strong>${esc(agentLabel)}</strong></p>
+        </div>
+        <div class="blueprint-steps">${stepsHtml}</div>
+        <div class="blueprint-plan-actions">
+          <button class="btn-primary" onclick="deployBlueprintPlan()">Approve and deploy</button>
+          <button class="btn-ghost" onclick="editBlueprintPlan()">Edit</button>
+        </div>
+      </div>
+    </div>`;
+  box.appendChild(wrap);
+  box.scrollTop = box.scrollHeight;
+}
+
+function editBlueprintPlan() {
+  document.getElementById('blueprint-plan-review')?.remove();
+  blueprintPlan = null;
+  addBuildMsg('assistant', 'No problem — describe what you\'d like to change and I\'ll revise the plan.');
+  document.getElementById('build-input')?.focus();
+}
+
+async function deployBlueprintPlan() {
+  if (!blueprintPlan) return;
+  const plan = blueprintPlan;
+  const agentId = plan.agent;
+  if (!deployedAgents.has(agentId)) {
+    toast('Select Aria or Nova — that agent must be active');
+    return;
+  }
+  const agent = deployedAgents.get(agentId);
+  const userId = getCurrentUserId();
+  const record = {
+    user_id: userId,
+    agent_id: agentId,
+    name: plan.title || 'Custom workflow',
+    description: plan.summary || '',
+    trigger_description: blueprintHistory.find(m => m.role === 'user')?.content || '',
+    steps: plan.steps,
+    status: 'active',
+    updated_at: new Date().toISOString(),
+  };
+  const saved = await dbInsert('workflows', record);
+  logAuditEvent(agent.name, 'workflow_deploy', { workflow_id: saved.id, title: record.name, status: 'completed' });
+  addBuildMsg('assistant', '✓ **' + record.name + '** is live on **' + agent.name + '**. I\'ll pause for your approval before any irreversible action.', 'deployed');
+  document.getElementById('blueprint-plan-review')?.remove();
+  blueprintPlan = null;
+  toast('Workflow deployed', 'success');
+  await runWorkflow(saved.id);
+  updateApprovalBadgeCount();
+  if (currentPage === 'dashboard') renderDashboard();
+}
+
+async function runWorkflow(workflowId) {
+  const { data: workflows } = await dbGet('workflows', {});
+  const wf = workflows.find(w => w.id === workflowId);
+  if (!wf || wf.status !== 'active') return;
+  const agent = deployedAgents.get(wf.agent_id);
+  if (!agent) return;
+
+  for (const step of wf.steps || []) {
+    if (step.requires_approval) {
+      await createWorkflowApproval(wf, step);
+      logAuditEvent(agent.name, 'workflow_paused', { workflow_id: wf.id, step: step.step, code: step.code });
+      updateApprovalBadgeCount();
+      if (currentPage === 'dashboard') renderDashboard();
+      toast('Approval needed — check your dashboard');
+      return;
+    }
+    logAuditEvent(agent.name, 'workflow_step', { workflow_id: wf.id, step: step.step, code: step.code, status: 'completed' });
+  }
+  toast('Workflow completed');
+}
+
+async function createWorkflowApproval(workflow, step) {
+  const agent = deployedAgents.get(workflow.agent_id);
+  const expires = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+  const payload = step.params || {};
+  let summary = step.description || step.name;
+  if (step.code === 'GM-03' || step.code === 'GM-04') {
+    summary = `Send email${payload.subject ? ': ' + payload.subject : ''}`;
+  } else if (step.code === 'GC-06') {
+    summary = `Send calendar invite${payload.title ? ': ' + payload.title : ''}`;
+  } else if (step.code === 'GC-05') {
+    summary = `Cancel event${payload.title ? ': ' + payload.title : ''}`;
+  } else if (step.code === 'GS-06') {
+    summary = `Delete sheet row${payload.row ? ' #' + payload.row : ''}`;
+  }
+  await dbInsert('workflow_approvals', {
+    user_id: getCurrentUserId(),
+    workflow_id: workflow.id,
+    agent_id: workflow.agent_id,
+    step_number: step.step,
+    primitive_code: step.code,
+    action_name: step.name,
+    integration: step.integration,
+    summary,
+    payload,
+    status: 'pending',
+    expires_at: expires,
+  });
+}
+
+function formatApprovalPayload(payload, code) {
+  if (!payload || !Object.keys(payload).length) return 'No preview available';
+  if (code === 'GM-03' || code === 'GM-04') {
+    return `To: ${payload.to || '—'}\nSubject: ${payload.subject || '—'}\n\n${payload.body || ''}`;
+  }
+  if (code.startsWith('GC-')) {
+    return Object.entries(payload).map(([k, v]) => `${k}: ${v}`).join('\n');
+  }
+  return JSON.stringify(payload, null, 2);
+}
+
+async function expireStaleApprovals() {
+  const now = Date.now();
+  const { data: rows } = await dbGet('workflow_approvals', {});
+  for (const row of rows) {
+    if (row.status !== 'pending' || !row.expires_at) continue;
+    if (new Date(row.expires_at).getTime() <= now) {
+      await dbUpdate('workflow_approvals', row.id, { status: 'expired', resolved_at: new Date().toISOString() });
+      logAuditEvent(deployedAgents.get(row.agent_id)?.name || row.agent_id, 'approval_expired', { approval_id: row.id });
     }
   }
 }
 
-async function runDeployProgress(agentName, deployFn) {
-  addBuildMsg('assistant', 'Great — deploying **' + agentName + '** now…', 'deploy-step');
-  const steps = ['Creating agent…', 'Building data table…', 'Configuring settings…', 'Done.'];
-  for (const step of steps) {
-    await sleep(500);
-    addBuildMsg('assistant', step, 'deploy-step');
+async function loadPendingApprovals() {
+  await expireStaleApprovals();
+  const { data: wfApprovals } = await dbGet('workflow_approvals', {});
+  const { data: actions } = await dbGet('agent_actions', {});
+  const pendingWf = (wfApprovals || []).filter(a => a.status === 'pending');
+  const pendingActions = (actions || []).filter(a => a.status === 'queued');
+  return { pendingWf, pendingActions };
+}
+
+async function updateApprovalBadgeCount() {
+  const { pendingWf, pendingActions } = await loadPendingApprovals();
+  const count = pendingWf.length + pendingActions.length;
+  const badge = document.getElementById('nav-approval-badge');
+  if (!badge) return;
+  badge.textContent = count > 99 ? '99+' : String(count);
+  badge.classList.toggle('hidden', count === 0);
+}
+
+async function rejectAgentAction(actionId) {
+  await dbUpdate('agent_actions', actionId, { status: 'rejected' });
+  toast('Action rejected and skipped');
+  updateApprovalBadgeCount();
+  if (currentPage === 'dashboard') renderDashboard();
+}
+
+async function approveWorkflowApproval(approvalId) {
+  const { data: rows } = await dbGet('workflow_approvals', {});
+  const row = rows.find(r => r.id === approvalId);
+  if (!row || row.status !== 'pending') return;
+  const agent = deployedAgents.get(row.agent_id);
+  await dbUpdate('workflow_approvals', approvalId, { status: 'approved', resolved_at: new Date().toISOString() });
+
+  const code = row.primitive_code;
+  const payload = row.payload || {};
+  if ((code === 'GM-03' || code === 'GM-04') && backendAvailable && payload.to) {
+    try {
+      const res = await apiFetch('/api/send/gmail', {
+        method: 'POST',
+        body: { to: payload.to, subject: payload.subject || '(No subject)', body: payload.body || '', from_name: agent?.name || 'LogiQ' },
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        toast(err.detail || 'Failed to send email', 'error');
+      } else {
+        toast('Email sent', 'success');
+      }
+    } catch (e) {
+      toast('Failed to send email', 'error');
+    }
+  } else {
+    toast('Action approved', 'success');
   }
-  await deployFn();
+
+  logAuditEvent(agent?.name || row.agent_id, 'approval_granted', { approval_id: approvalId, code });
+  await continueWorkflowAfterApproval(row);
+  updateApprovalBadgeCount();
+  if (currentPage === 'dashboard') renderDashboard();
+}
+
+async function rejectWorkflowApproval(approvalId) {
+  const { data: rows } = await dbGet('workflow_approvals', {});
+  const row = rows.find(r => r.id === approvalId);
+  if (!row || row.status !== 'pending') return;
+  await dbUpdate('workflow_approvals', approvalId, { status: 'rejected', resolved_at: new Date().toISOString() });
+  logAuditEvent(deployedAgents.get(row.agent_id)?.name || row.agent_id, 'approval_rejected', { approval_id: approvalId, code: row.primitive_code });
+  toast('Action rejected and skipped');
+  updateApprovalBadgeCount();
+  if (currentPage === 'dashboard') renderDashboard();
+}
+
+async function continueWorkflowAfterApproval(approvalRow) {
+  const { data: workflows } = await dbGet('workflows', {});
+  const wf = workflows.find(w => w.id === approvalRow.workflow_id);
+  if (!wf) return;
+  const remaining = (wf.steps || []).filter(s => s.step > approvalRow.step_number);
+  for (const step of remaining) {
+    if (step.requires_approval) {
+      await createWorkflowApproval(wf, step);
+      updateApprovalBadgeCount();
+      return;
+    }
+    logAuditEvent(deployedAgents.get(wf.agent_id)?.name || wf.agent_id, 'workflow_step', { workflow_id: wf.id, step: step.step, code: step.code, status: 'completed' });
+  }
 }
 
 async function deployAgent(code, skipMsg) {
@@ -3480,6 +3995,7 @@ async function bootApp() {
   renderBuild();
   renderPricing();
   renderLandscape();
+  await updateApprovalBadgeCount();
   deployedAgents.forEach((a, id) => { ensureAgentPage(id); initAgentChatWelcome(id); });
   updateActiveCount();
   document.querySelectorAll('.modal-overlay').forEach(ov => {

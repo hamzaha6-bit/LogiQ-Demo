@@ -115,6 +115,40 @@ CREATE TABLE IF NOT EXISTS sheet_connections (
 
 CREATE INDEX IF NOT EXISTS idx_sheet_connections_user ON sheet_connections(user_id, agent_id);
 
+-- Blueprint workflows (user-scoped)
+CREATE TABLE IF NOT EXISTS workflows (
+  id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+  user_id uuid,
+  agent_id text NOT NULL,
+  name text NOT NULL,
+  description text,
+  trigger_description text,
+  steps jsonb NOT NULL DEFAULT '[]'::jsonb,
+  status text DEFAULT 'active',
+  created_at timestamptz DEFAULT now(),
+  updated_at timestamptz DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS workflow_approvals (
+  id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+  user_id uuid,
+  workflow_id uuid,
+  agent_id text,
+  step_number int,
+  primitive_code text,
+  action_name text,
+  integration text,
+  summary text,
+  payload jsonb DEFAULT '{}'::jsonb,
+  status text DEFAULT 'pending',
+  expires_at timestamptz,
+  resolved_at timestamptz,
+  created_at timestamptz DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_workflows_user ON workflows(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_workflow_approvals_user ON workflow_approvals(user_id, status, created_at DESC);
+
 -- ─── Welcome email (Supabase Auth Hook) ───────────────────────────────────────
 -- In Supabase Dashboard → Authentication → Hooks → Before User Created:
 --   Type: HTTP
