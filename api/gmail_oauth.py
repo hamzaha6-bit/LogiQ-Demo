@@ -81,9 +81,9 @@ def _build_flow() -> Flow:
 
 
 def _encode_oauth_state(user_id: Optional[str], access_token: Optional[str] = None) -> str:
+    # Keep state small — only user_id + nonce. Do NOT embed JWT (truncates in Google redirect).
     payload = {
         "user_id": user_id or "",
-        "access_token": access_token or "",
         "nonce": secrets.token_urlsafe(16),
     }
     return base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip("=")
@@ -91,14 +91,17 @@ def _encode_oauth_state(user_id: Optional[str], access_token: Optional[str] = No
 
 def _decode_oauth_state(state: str) -> Tuple[Optional[str], Optional[str]]:
     if not state:
+        print("[gmail_auth] state decode: empty state param")
         return None, None
     try:
         pad = "=" * (-len(state) % 4)
         data = json.loads(base64.urlsafe_b64decode(state + pad))
         uid = (data.get("user_id") or "").strip()
+        # Legacy payloads may include access_token — ignore for save, session restored via localStorage
         token = (data.get("access_token") or "").strip()
         return uid or None, token or None
-    except Exception:
+    except Exception as exc:
+        print(f"[gmail_auth] state decode FAILED: {type(exc).__name__}: {exc} state_len={len(state)}")
         return None, None
 
 
@@ -112,9 +115,17 @@ def handle_connect(handler) -> None:
         return
     access_token = resolve_access_token(handler)
     user_id = user_id_from_bearer(access_token) if access_token else None
+    print(f"[gmail_auth] connect — has_token={bool(access_token)} user_id={user_id or '(missing)'}")
+    if not user_id:
+        handler._json(
+            401,
+            {"detail": "Sign in required before connecting Gmail — session token missing or invalid"},
+        )
+        return
     try:
         flow = _build_flow()
-        state = _encode_oauth_state(user_id, access_token)
+        state = _encode_oauth_state(user_id)
+        print(f"[gmail_auth] connect — state_len={len(state)} user_id={user_id}")
         auth_url, _ = flow.authorization_url(
             access_type="offline",
             prompt="consent",
@@ -200,7 +211,18 @@ def handle_callback(handler) -> None:
     print(f"[gmail_auth] decoded state has access_token: {bool(access_token)}")
 
     if not user_id:
-        print("[gmail_auth] WARNING: no user_id in OAuth state — token will not be saved to Supabase")
+        print("[gmail_auth] ERROR: no user_id in OAuth state — cannot save token")
+        _redirect(
+            handler,
+            _gmail_redirect(
+                "error",
+                access_token=access_token,
+                reason="missing_user_id",
+                error_detail="OAuth state did not contain user_id — connect while signed in",
+                stage="missing_user_id",
+            ),
+        )
+        return
 
     auth_response = _callback_authorization_response(handler)
     try:
@@ -232,7 +254,7 @@ def handle_callback(handler) -> None:
 
     if user_id:
         saved, save_error = save_user_token(user_id, token_data)
-        print(f"[gmail_auth] Supabase save user_integrations: saved={saved} error={save_error or '(none)'}")
+        print(f"[gmail_auth] Supabase save user_integrations: user_id={user_id} saved={saved} error={save_error or '(none)'}")
         if not saved:
             _redirect(
                 handler,
@@ -245,9 +267,12 @@ def handle_callback(handler) -> None:
                 ),
             )
             return
+    else:
+        # Should not reach here — guarded above
+        return
 
-    print(f"[gmail_auth] === OAuth callback succeeded (user_id={user_id or 'none'}) ===")
-    _redirect(handler, _gmail_redirect("connected", access_token=access_token))
+    print(f"[gmail_auth] === OAuth callback succeeded (user_id={user_id}) ===")
+    _redirect(handler, _gmail_redirect("connected"))
 
 
 def handle_status(handler) -> None:

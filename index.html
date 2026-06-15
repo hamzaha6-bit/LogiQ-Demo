@@ -3146,14 +3146,18 @@ async function init() {
 
   if (gmailParam === 'connected') {
     if (!authSession) {
-      const oauthReturnToken = initParams.get('token');
-      if (oauthReturnToken) await restoreSessionFromToken(oauthReturnToken);
-      if (!authSession) await validateAndRestoreSession();
+      await validateAndRestoreSession();
       if (authSession) await bootAuthenticatedApp();
     }
     if (authSession) {
-      integrationConfig = { ...integrationConfig, gmail_authorised: true, google_authorised: true };
-      toast('✓ Google connected');
+      const health = await checkGmailHealth();
+      if (health.healthy) {
+        integrationConfig = { ...integrationConfig, gmail_authorised: true, google_authorised: true };
+        toast('✓ Google connected' + (health.email ? ' as ' + health.email : ''));
+      } else {
+        toast(health.error || 'Google connected but token not saved — try Connect again while signed in');
+        console.error('[Gmail OAuth] status after connect:', health);
+      }
       await loadIntegrationConfig();
     } else {
       toast('Gmail connected — please sign in to continue');
@@ -3179,6 +3183,7 @@ async function init() {
       missing_code: 'Gmail failed — no authorization code received',
       not_configured: 'Gmail not configured — check Vercel env vars',
       supabase_save_failed: 'Gmail token received but failed to save — check Supabase user_integrations table',
+      missing_user_id: 'Gmail connect failed — sign in first, then connect Google again',
       scope_mismatch: 'Gmail failed — scope mismatch during token exchange (re-authorise with all scopes)',
       invalid_grant: 'Gmail failed — authorization code expired or already used (try Connect again)',
       oauth_error: 'Gmail OAuth token exchange failed',
