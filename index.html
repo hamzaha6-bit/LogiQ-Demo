@@ -646,6 +646,17 @@ input[type=file].hidden-input { display: none; }
 .auth-link:hover { text-decoration: underline; }
 .app-root.hidden { display: none; }
 
+/* Billing result pages (Checkout success / cancel) */
+.billing-screen {
+  position: fixed; inset: 0; z-index: 500; background: var(--bg2);
+  display: flex; align-items: center; justify-content: center; padding: 24px;
+}
+.billing-screen.hidden { display: none; }
+.billing-confirm {
+  font-size: 11px; color: var(--text3); text-align: center; margin-top: 16px;
+  font-family: ui-monospace, monospace;
+}
+
 /* Onboarding */
 .onboarding-overlay {
   position: fixed; inset: 0; z-index: 450; background: rgba(255,255,255,.95);
@@ -706,6 +717,10 @@ input[type=file].hidden-input { display: none; }
     </div>
     <div class="error-msg hidden" id="auth-error"></div>
   </div>
+</div>
+
+<div class="billing-screen hidden" id="billing-screen">
+  <div class="auth-card" id="billing-card"></div>
 </div>
 
 <div class="onboarding-overlay hidden" id="onboarding-overlay">
@@ -1065,6 +1080,46 @@ function normalizedAppPath() {
 function isAuthEntryPath() {
   const path = normalizedAppPath();
   return path === '/login' || path === '/signup';
+}
+
+function isBillingPath() {
+  const path = normalizedAppPath();
+  return path === '/billing/success' || path === '/billing/cancel';
+}
+
+function billingPathKind() {
+  const path = normalizedAppPath();
+  if (path === '/billing/success') return 'success';
+  if (path === '/billing/cancel') return 'cancel';
+  return null;
+}
+
+function showBillingPage(kind) {
+  document.getElementById('auth-screen').classList.add('hidden');
+  document.getElementById('app-root').classList.add('hidden');
+  document.getElementById('onboarding-overlay').classList.add('hidden');
+  const card = document.getElementById('billing-card');
+  const params = new URLSearchParams(window.location.search);
+  const sessionId = (params.get('session_id') || '').trim();
+  const safeSessionId = sessionId.replace(/[^a-zA-Z0-9_]/g, '').slice(0, 24);
+  const confirmLine = safeSessionId
+    ? `<p class="billing-confirm">Confirmation: ${safeSessionId}…</p>`
+    : '';
+  if (kind === 'success') {
+    card.innerHTML = `
+      <div class="logo-row"><div class="logo-mark">Q</div><div class="logo-text"><div class="wordmark">LogiQ</div></div></div>
+      <h1>Welcome! Your subscription is active.</h1>
+      <p class="sub">We'll redirect you to your dashboard shortly.</p>
+      <a href="/" class="btn-primary" style="display:block;text-align:center;padding:10px;margin-top:8px;">Go to dashboard</a>
+      ${confirmLine}`;
+  } else {
+    card.innerHTML = `
+      <div class="logo-row"><div class="logo-mark">Q</div><div class="logo-text"><div class="wordmark">LogiQ</div></div></div>
+      <h1>Payment cancelled.</h1>
+      <p class="sub">No payment was taken.</p>
+      <a href="/" class="btn-primary" style="display:block;text-align:center;padding:10px;margin-top:8px;">View pricing</a>`;
+  }
+  document.getElementById('billing-screen').classList.remove('hidden');
 }
 
 function authTabForPath() {
@@ -4084,6 +4139,10 @@ async function init() {
   await loadAppConfig();
   await checkHealth();
   switchUserStore('_demo');
+  if (isBillingPath()) {
+    showBillingPage(billingPathKind());
+    return;
+  }
 // Handle email-confirmation / recovery redirects before any marketing-site redirect.
   if (await handleEmailConfirmation()) return;
   const initParams = new URLSearchParams(window.location.search);

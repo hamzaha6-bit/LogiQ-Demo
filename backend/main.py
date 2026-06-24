@@ -431,7 +431,7 @@ class LoginRequest(BaseModel):
 
 
 class CheckoutRequest(BaseModel):
-    plan: str
+    tier: str
 
 
 class AuditEventRequest(BaseModel):
@@ -602,24 +602,27 @@ async def auth_profile_update(req: ProfileUpdateRequest, request: Request):
 
 # ─── Billing ──────────────────────────────────────────────────────────────────
 
-@app.post("/api/billing/create-checkout")
+_API_LIB = Path(__file__).resolve().parent.parent / "api_lib"
+if str(_API_LIB) not in sys.path:
+    sys.path.insert(0, str(_API_LIB))
+
+try:
+    from billing_checkout import CheckoutError, process_checkout as billing_process_checkout
+except Exception as exc:
+    _import_failed("billing_checkout", exc)
+    billing_process_checkout = None  # type: ignore[assignment,misc]
+    CheckoutError = Exception  # type: ignore[assignment,misc]
+
+
+@app.post("/api/billing/checkout")
 async def billing_checkout(req: CheckoutRequest, request: Request):
-    user = getattr(request.state, "user", None)
-    if not user:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    if not billing.is_configured():
-        raise HTTPException(status_code=503, detail="Stripe not configured")
-    base = get_frontend_redirect()
+    user_id = get_request_user_id(request)
+    if billing_process_checkout is None:
+        raise HTTPException(status_code=503, detail="Billing checkout unavailable")
     try:
-        return await billing.create_checkout(
-            user["id"],
-            user.get("email", ""),
-            req.plan,
-            f"{base}/?payment=success",
-            f"{base}/?payment=cancelled",
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return billing_process_checkout(user_id, req.tier)
+    except CheckoutError as exc:
+        raise HTTPException(status_code=exc.status, detail=exc.detail) from exc
 
 
 @app.post("/api/billing/webhook")
