@@ -5,3 +5,4 @@ google-auth==2.37.0
 google-auth-oauthlib==1.2.1
 google-api-python-client==2.156.0
 standardwebhooks==1.0.1
+cryptography==44.0.0
