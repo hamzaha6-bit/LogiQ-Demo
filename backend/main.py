@@ -613,6 +613,13 @@ except Exception as exc:
     billing_process_checkout = None  # type: ignore[assignment,misc]
     CheckoutError = Exception  # type: ignore[assignment,misc]
 
+try:
+    from billing_webhook import WebhookError, process_event as billing_process_event
+except Exception as exc:
+    _import_failed("billing_webhook", exc)
+    billing_process_event = None  # type: ignore[assignment,misc]
+    WebhookError = Exception  # type: ignore[assignment,misc]
+
 
 @app.post("/api/billing/checkout")
 async def billing_checkout(req: CheckoutRequest, request: Request):
@@ -627,12 +634,14 @@ async def billing_checkout(req: CheckoutRequest, request: Request):
 
 @app.post("/api/billing/webhook")
 async def billing_webhook(request: Request):
+    if billing_process_event is None:
+        raise HTTPException(status_code=503, detail="Billing webhook unavailable")
     payload = await request.body()
     sig = request.headers.get("stripe-signature", "")
-    result = await billing.handle_webhook(payload, sig)
-    if not result.get("ok"):
-        raise HTTPException(status_code=400, detail=result.get("error", "Webhook failed"))
-    return result
+    try:
+        return billing_process_event(payload, sig)
+    except WebhookError as exc:
+        raise HTTPException(status_code=exc.status, detail=exc.detail) from exc
 
 
 @app.get("/api/billing/status")

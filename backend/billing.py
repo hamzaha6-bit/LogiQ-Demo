@@ -9,7 +9,7 @@ import os
 from typing import Any, Dict, Optional
 
 import auth_service
-from supabase_client import is_configured, rest_patch
+from supabase_client import is_configured
 
 logger = logging.getLogger("logiq.billing")
 
@@ -64,43 +64,6 @@ def get_price_id(plan: str) -> Optional[str]:
 
 def get_plan_limits(plan: str) -> Dict[str, Any]:
     return PLANS.get(plan.lower(), PLANS["starter"])
-
-
-async def handle_webhook(payload: bytes, sig_header: str) -> Dict[str, Any]:
-    if not is_configured():
-        return {"ok": False, "error": "Stripe not configured"}
-
-    webhook_secret = (os.getenv("STRIPE_WEBHOOK_SECRET") or "").strip()
-    stripe = _stripe()
-
-    try:
-        if webhook_secret:
-            event = stripe.Webhook.construct_event(payload, sig_header, webhook_secret)
-        else:
-            import json
-
-            event = stripe.Event.construct_from(json.loads(payload), stripe.api_key)
-    except Exception as exc:
-        logger.exception("Stripe webhook verification failed")
-        return {"ok": False, "error": str(exc)}
-
-    event_type = event["type"]
-    data = event["data"]["object"]
-
-    if event_type == "checkout.session.completed":
-        user_id = (data.get("metadata") or {}).get("user_id") or data.get("client_reference_id")
-        plan = (data.get("metadata") or {}).get("plan", "pro")
-        if user_id and is_configured():
-            await rest_patch("user_profiles", {"id": user_id}, {"plan": plan})
-            logger.info("Updated user %s to plan %s", user_id, plan)
-
-    elif event_type == "customer.subscription.deleted":
-        user_id = (data.get("metadata") or {}).get("user_id")
-        if user_id and is_configured():
-            await rest_patch("user_profiles", {"id": user_id}, {"plan": "starter"})
-            logger.info("Downgraded user %s to starter", user_id)
-
-    return {"ok": True, "type": event_type}
 
 
 async def get_billing_status(user_id: str) -> Dict[str, Any]:
