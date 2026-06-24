@@ -10,6 +10,7 @@ from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 
+from crypto import decrypt_token_data, encrypt_token_data
 from supabase_rest import env, rest_delete, rest_get, rest_patch, rest_post, rest_post_with_error
 
 GMAIL_REDIRECT_URI = env("GMAIL_REDIRECT_URI") or "https://app.logiqops.co.uk/api/auth/gmail/callback"
@@ -58,7 +59,7 @@ def load_user_token(user_id: str) -> Optional[dict]:
         },
     )
     if rows and rows[0].get("token_data"):
-        return rows[0]["token_data"]
+        return decrypt_token_data(rows[0]["token_data"])
     return None
 
 
@@ -68,7 +69,7 @@ def save_user_token(user_id: str, token_data: dict) -> Tuple[bool, str]:
         {
             "user_id": user_id,
             "integration": "gmail",
-            "token_data": token_data,
+            "token_data": encrypt_token_data(token_data),
             "connected_at": datetime.now(timezone.utc).isoformat(),
         },
         on_conflict="user_id,integration",

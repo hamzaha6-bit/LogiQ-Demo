@@ -1,5 +1,7 @@
 import bootstrap_path  # noqa: F401
 
+from crypto import decrypt_token_data, encrypt_token_data
+
 import base64
 import json
 import logging
@@ -285,7 +287,7 @@ def _load_user_token_data(user_id: str) -> Optional[Dict[str, Any]]:
             if resp.status_code == 200:
                 rows = resp.json()
                 if rows and rows[0].get("token_data"):
-                    return rows[0]["token_data"]
+                    return decrypt_token_data(rows[0]["token_data"])
     except Exception as exc:
         logger.warning("Could not load Gmail token for user %s: %s", user_id, exc)
     return None
@@ -306,7 +308,11 @@ def _save_user_token_data(user_id: str, token_data: Dict[str, Any]) -> bool:
                 url,
                 headers=headers,
                 params={"on_conflict": "user_id,integration"},
-                json={"user_id": user_id, "integration": "gmail", "token_data": token_data},
+                json={
+                    "user_id": user_id,
+                    "integration": "gmail",
+                    "token_data": encrypt_token_data(token_data),
+                },
             )
             return resp.status_code < 400
     except Exception as exc:
