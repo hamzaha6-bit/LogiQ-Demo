@@ -11,6 +11,7 @@ if _API_LIB not in sys.path:
     sys.path.insert(0, _API_LIB)
 
 from billing_checkout import CheckoutError, process_checkout
+from billing_webhook import WebhookError, process_event
 from http_auth import resolve_user_id
 from supabase_rest import pause_workflows_for_user
 
@@ -70,14 +71,21 @@ class handler(BaseHTTPRequestHandler):
             self._emergency_stop_workflows()
         elif path.endswith("/billing/checkout"):
             self._billing_checkout()
+        elif path.endswith("/billing/webhook"):
+            self._billing_webhook()
         else:
             self._json(404, {"detail": f"Unknown route: {path}"})
 
-    def _read_json_body(self) -> dict:
+    def _read_raw_body(self) -> bytes:
         length = int(self.headers.get("Content-Length", 0))
         if length <= 0:
+            return b""
+        return self.rfile.read(length)
+
+    def _read_json_body(self) -> dict:
+        raw = self._read_raw_body()
+        if not raw:
             return {}
-        raw = self.rfile.read(length)
         try:
             data = json.loads(raw.decode("utf-8"))
             return data if isinstance(data, dict) else {}
@@ -91,6 +99,15 @@ class handler(BaseHTTPRequestHandler):
             result = process_checkout(user_id, body.get("tier"))
             self._json(200, result)
         except CheckoutError as exc:
+            self._json(exc.status, {"detail": exc.detail})
+
+    def _billing_webhook(self):
+        payload = self._read_raw_body()
+        sig = self.headers.get("Stripe-Signature", "")
+        try:
+            result = process_event(payload, sig)
+            self._json(200, result)
+        except WebhookError as exc:
             self._json(exc.status, {"detail": exc.detail})
 
     def _emergency_stop_workflows(self):

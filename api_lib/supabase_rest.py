@@ -78,6 +78,16 @@ def rest_patch(table: str, match: Dict[str, str], payload: Dict[str, Any]) -> bo
         return resp.status_code < 400
 
 
+def rest_patch_filter(table: str, filters: Dict[str, str], payload: Dict[str, Any]) -> bool:
+    """PATCH rows matching PostgREST filter params (e.g. id=in.(uuid1,uuid2))."""
+    url = f"{env('SUPABASE_URL').rstrip('/')}/rest/v1/{table}"
+    if not env("SUPABASE_URL") or not env("SUPABASE_SERVICE_KEY"):
+        return False
+    with httpx.Client(timeout=20) as client:
+        resp = client.patch(url, headers=rest_headers("return=minimal"), params=filters, json=payload)
+        return resp.status_code < 400
+
+
 def rest_delete(table: str, match: Dict[str, str]) -> tuple[bool, str]:
     url = f"{env('SUPABASE_URL').rstrip('/')}/rest/v1/{table}"
     if not env("SUPABASE_URL") or not env("SUPABASE_SERVICE_KEY"):
