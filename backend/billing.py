@@ -66,27 +66,6 @@ def get_plan_limits(plan: str) -> Dict[str, Any]:
     return PLANS.get(plan.lower(), PLANS["starter"])
 
 
-async def create_checkout(user_id: str, email: str, plan: str, success_url: str, cancel_url: str) -> Dict[str, Any]:
-    if not is_configured():
-        raise ValueError("Stripe not configured — set STRIPE_SECRET_KEY and price IDs in .env")
-
-    price_id = get_price_id(plan)
-    if not price_id:
-        raise ValueError(f"Stripe price ID not configured for plan '{plan}'")
-
-    stripe = _stripe()
-    session = stripe.checkout.Session.create(
-        mode="subscription",
-        customer_email=email or None,
-        line_items=[{"price": price_id, "quantity": 1}],
-        success_url=success_url,
-        cancel_url=cancel_url,
-        metadata={"user_id": user_id, "plan": plan.lower()},
-        client_reference_id=user_id,
-    )
-    return {"checkout_url": session.url, "session_id": session.id}
-
-
 async def handle_webhook(payload: bytes, sig_header: str) -> Dict[str, Any]:
     if not is_configured():
         return {"ok": False, "error": "Stripe not configured"}

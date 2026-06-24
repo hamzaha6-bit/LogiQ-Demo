@@ -138,6 +138,34 @@ async def get_user_from_token(access_token: str) -> Optional[Dict[str, Any]]:
         return None
 
 
+async def client_id_from_user_id(user_id: str) -> str:
+    """Resolve tenant client_id for a user via service-role client_members lookup."""
+    import httpx
+    from supabase_client import get_url, rest_headers
+
+    uid = (user_id or "").strip()
+    if not uid:
+        raise ValueError("no client membership for user ")
+    url = f"{get_url()}/rest/v1/client_members"
+    async with httpx.AsyncClient(timeout=15) as client:
+        resp = await client.get(
+            url,
+            headers=rest_headers(),
+            params={
+                "user_id": f"eq.{uid}",
+                "select": "client_id,created_at",
+                "order": "created_at.asc",
+            },
+        )
+        if resp.status_code >= 400:
+            raise ValueError(f"no client membership for user {uid}")
+        rows = resp.json()
+    if not rows:
+        raise ValueError(f"no client membership for user {uid}")
+    # TODO: multi-workspace selector when users belong to multiple clients
+    return str(rows[0]["client_id"])
+
+
 async def get_profile(user_id: str) -> Dict[str, Any]:
     import httpx
     from supabase_client import rest_headers

@@ -92,6 +92,25 @@ def rest_delete(table: str, match: Dict[str, str]) -> tuple[bool, str]:
         return True, ""
 
 
+def client_id_from_user_id(user_id: str) -> str:
+    """Resolve tenant client_id for a user via service-role client_members lookup."""
+    uid = (user_id or "").strip()
+    if not uid:
+        raise ValueError("no client membership for user ")
+    rows = rest_get(
+        "client_members",
+        {
+            "user_id": f"eq.{uid}",
+            "select": "client_id,created_at",
+            "order": "created_at.asc",
+        },
+    )
+    if not rows:
+        raise ValueError(f"no client membership for user {uid}")
+    # TODO: multi-workspace selector when users belong to multiple clients
+    return str(rows[0]["client_id"])
+
+
 def user_id_from_bearer(token: str) -> Optional[str]:
     if not token:
         return None
