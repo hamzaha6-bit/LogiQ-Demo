@@ -11,6 +11,7 @@ if _API_LIB not in sys.path:
     sys.path.insert(0, _API_LIB)
 
 from billing_checkout import CheckoutError, process_checkout
+from billing_status import billing_status_for_request
 from billing_webhook import WebhookError, process_event
 from http_auth import resolve_user_id
 from supabase_rest import pause_workflows_for_user
@@ -43,23 +44,9 @@ class handler(BaseHTTPRequestHandler):
                 },
             )
         elif path.endswith("/billing/status"):
-            self._json(
-                200,
-                {
-                    "plan": "starter",
-                    "plan_name": "Starter",
-                    "usage": {
-                        "api_calls": 0,
-                        "emails_sent": 0,
-                        "api_calls_today": 0,
-                        "emails_sent_today": 0,
-                        "actions_this_month": 0,
-                    },
-                    "limits": {},
-                    "percentages": {"api_calls": 0, "emails": 0, "actions": 0},
-                    "stripe_configured": bool((os.environ.get("STRIPE_SECRET_KEY") or "").strip()),
-                },
-            )
+            user_id = resolve_user_id(self)
+            status, payload = billing_status_for_request(user_id)
+            self._json(status, payload)
         elif path.endswith("/audit/log"):
             self._json(200, {"logs": [], "entries": []})
         else:
