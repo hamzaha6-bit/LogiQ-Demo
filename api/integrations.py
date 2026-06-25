@@ -11,6 +11,7 @@ _API_LIB = os.path.normpath(os.path.join(_API_DIR, "..", "api_lib"))
 if _API_LIB not in sys.path:
     sys.path.insert(0, _API_LIB)
 
+from execution_gate import check_execution_gate, record_allowed_action
 from google_oauth import (
     CALENDAR_SCOPE,
     check_gmail_health,
@@ -154,11 +155,17 @@ class handler(BaseHTTPRequestHandler):
                     return
                 self._json(200, connect(url, agent, user_id))
             elif path.endswith("/write"):
+                gate = check_execution_gate(user_id, "integration")
+                if not gate.allowed:
+                    self._json(403, gate.as_error_payload())
+                    return
                 if not url:
                     self._json(400, {"detail": "Sheet URL is required"})
                     return
                 row = body.get("row") or body.get("row_data") or {}
-                self._json(200, write_row(url, agent, user_id, row))
+                result = write_row(url, agent, user_id, row)
+                record_allowed_action(gate.client_id, "integration")
+                self._json(200, result)
             else:
                 self._json(404, {"detail": f"Unknown sheets route: {path}"})
         except SchemaMismatchError as exc:
@@ -177,6 +184,12 @@ class handler(BaseHTTPRequestHandler):
         if not user_id:
             self._json(401, {"detail": "Sign in required"})
             return
+
+        gate = check_execution_gate(user_id, "integration")
+        if not gate.allowed:
+            self._json(403, gate.as_error_payload())
+            return
+
         if not is_oauth_configured():
             self._json(503, {"detail": "Gmail not configured"})
             return
@@ -213,6 +226,7 @@ class handler(BaseHTTPRequestHandler):
             if not ok:
                 self._json(502, {"detail": message_id})
                 return
+            record_allowed_action(gate.client_id, "integration")
             self._json(200, {"success": True, "message_id": message_id, "configured": True, "from": health.get("email")})
         except PermissionError as exc:
             self._json(401, {"detail": str(exc)})
@@ -262,6 +276,12 @@ class handler(BaseHTTPRequestHandler):
         if not user_id:
             self._json(401, {"detail": "Sign in required"})
             return
+
+        gate = check_execution_gate(user_id, "integration")
+        if not gate.allowed:
+            self._json(403, gate.as_error_payload())
+            return
+
         if not is_oauth_configured():
             self._json(503, {"detail": "Google OAuth not configured"})
             return
@@ -277,7 +297,9 @@ class handler(BaseHTTPRequestHandler):
             return
 
         try:
-            self._json(201, _create_event(user_id, body))
+            result = _create_event(user_id, body)
+            record_allowed_action(gate.client_id, "integration")
+            self._json(201, result)
         except PermissionError as exc:
             self._json(401, {"detail": str(exc)})
         except ValueError as exc:

@@ -1738,7 +1738,6 @@ function showBanner(focusId) {
 }
 async function requireAI() {
   if (await ensureBackendReachable()) return true;
-  if (KEYS.anthropic) return true;
   toast('Backend unavailable — start the server at http://localhost:8000');
   return false;
 }
@@ -1892,38 +1891,11 @@ async function parseApiError(res) {
   }
 }
 
-async function callClaudeDirect(system, messages, maxTokens = 1200) {
-  if (!KEYS.anthropic) throw new Error('Demo mode: no API key and backend is unreachable.');
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': KEYS.anthropic,
-      'anthropic-version': '2023-06-01',
-      'anthropic-dangerous-direct-browser-access': 'true'
-    },
-    body: JSON.stringify({ model: 'claude-sonnet-4-5', max_tokens: maxTokens, system, messages })
-  });
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error('Claude API error: ' + res.status + ' — ' + err.slice(0, 300));
-  }
-  const data = await res.json();
-  return data.content?.[0]?.text || '';
-}
-
 async function callClaude(system, messages, maxTokens = 1200) {
-  let res;
-  try {
-    res = await apiFetch('/api/chat', {
-      method: 'POST',
-      body: { system, messages, max_tokens: maxTokens }
-    });
-  } catch (networkErr) {
-    const healthy = await checkHealth();
-    if (!healthy) return callClaudeDirect(system, messages, maxTokens);
-    throw new Error('Could not reach chat API: ' + (networkErr.message || networkErr));
-  }
+  const res = await apiFetch('/api/chat', {
+    method: 'POST',
+    body: { system, messages, max_tokens: maxTokens }
+  });
   if (!res.ok) throw new Error(await parseApiError(res));
   backendReachable = true;
   backendAvailable = true;

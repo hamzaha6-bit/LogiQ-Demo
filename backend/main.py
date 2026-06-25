@@ -620,6 +620,19 @@ except Exception as exc:
     billing_process_event = None  # type: ignore[assignment,misc]
     WebhookError = Exception  # type: ignore[assignment,misc]
 
+try:
+    from agent_pipeline import stream_agent_run as api_stream_agent_run
+    from execution_gate import check_execution_gate, record_allowed_action
+except Exception as exc:
+    _import_failed("execution_gate", exc)
+    api_stream_agent_run = None  # type: ignore[assignment,misc]
+    check_execution_gate = None  # type: ignore[assignment,misc]
+    record_allowed_action = None  # type: ignore[assignment,misc]
+
+
+def _gate_http_exception(gate) -> HTTPException:
+    return HTTPException(status_code=403, detail=gate.as_error_payload())
+
 
 @app.post("/api/billing/checkout")
 async def billing_checkout(req: CheckoutRequest, request: Request):
@@ -689,10 +702,11 @@ async def audit_log_event(req: AuditEventRequest, request: Request):
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat(req: ChatRequest, request: Request):
     user_id = get_request_user_id(request)
-    if user_id:
-        ok, msg = await usage.check_api_limit(user_id)
-        if not ok:
-            raise HTTPException(status_code=429, detail=msg)
+    gate = None
+    if user_id and check_execution_gate is not None:
+        gate = check_execution_gate(user_id, "blueprint_chat")
+        if not gate.allowed:
+            raise _gate_http_exception(gate)
     client = get_anthropic_client()
     try:
         response = client.messages.create(
@@ -702,8 +716,8 @@ async def chat(req: ChatRequest, request: Request):
             messages=[{"role": m.role, "content": m.content} for m in req.messages],
         )
         content = response.content[0].text if response.content else ""
-        if user_id:
-            await usage.record_api_call(user_id)
+        if gate and gate.allowed and record_allowed_action is not None:
+            record_allowed_action(gate.client_id, "blueprint_chat")
         return ChatResponse(content=content)
     except anthropic.APIError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
@@ -712,63 +726,21 @@ async def chat(req: ChatRequest, request: Request):
 @app.post("/api/agent/run")
 async def agent_run(req: AgentRunRequest, request: Request):
     user_id = get_request_user_id(request)
-    if user_id:
-        ok, msg = await usage.check_api_limit(user_id)
-        if not ok:
-            raise HTTPException(status_code=429, detail=msg)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    if api_stream_agent_run is None:
+        raise HTTPException(status_code=503, detail="Agent pipeline unavailable")
+
     client = get_anthropic_client()
-    total = len(req.items)
-    system = build_system_prompt(req.agent.system_prompt, req.settings, req.agent.name)
+    body = {
+        "agent": req.agent.model_dump(),
+        "settings": req.settings.model_dump(),
+        "items": [item.model_dump() for item in req.items],
+    }
 
     async def stream():
-        queued = 0
-        yield sse_event("start", {"total": total, "agent": req.agent.name})
-
-        for i, item in enumerate(req.items):
-            yield sse_event("progress", {"current": i + 1, "total": total})
-
-            user_content = (
-                f"Item data:\n{json.dumps(item.data)}\n\nHistory:\n{item.history or 'No prior actions.'}"
-            )
-            try:
-                response = client.messages.create(
-                    model=MODEL,
-                    max_tokens=1200,
-                    system=system,
-                    messages=[{"role": "user", "content": user_content}],
-                )
-                text = response.content[0].text if response.content else ""
-                result = parse_agent_json(text)
-                action = result.get("action", "review")
-
-                if action not in ("wait", "none"):
-                    queued += 1
-                    if user_id:
-                        await usage.record_api_call(user_id)
-                        await usage.record_action(user_id)
-                        await audit.log_event(
-                            user_id,
-                            req.agent.name,
-                            "generate",
-                            item_id=item.item_id,
-                            subject=result.get("subject", ""),
-                            status="queued",
-                            metadata={"action": action},
-                        )
-                    yield sse_event(
-                        "result",
-                        {
-                            "item_id": item.item_id,
-                            "reasoning": result.get("reasoning", ""),
-                            "action": action,
-                            "subject": result.get("subject", ""),
-                            "body": result.get("body", ""),
-                        },
-                    )
-            except Exception as exc:
-                yield sse_event("error", {"index": i + 1, "message": str(exc)})
-
-        yield sse_event("done", {"total": total, "queued": queued})
+        for chunk in api_stream_agent_run(user_id, body, anthropic_client=client, model=MODEL):
+            yield chunk
 
     return StreamingResponse(
         stream(),
@@ -784,10 +756,11 @@ async def agent_run(req: AgentRunRequest, request: Request):
 @app.post("/api/send/gmail", response_model=GmailSendResponse)
 async def send_gmail(req: GmailSendRequest, request: Request):
     user_id = get_request_user_id(request)
-    if user_id:
-        ok, msg = await usage.check_email_limit(user_id)
-        if not ok:
-            raise HTTPException(status_code=429, detail=msg)
+    gate = None
+    if user_id and check_execution_gate is not None:
+        gate = check_execution_gate(user_id, "integration")
+        if not gate.allowed:
+            raise _gate_http_exception(gate)
     try:
         success, message_id = send_email(req.to, req.subject, req.body, req.from_name, user_id=user_id)
     except GmailNotAuthorised as exc:
@@ -797,8 +770,8 @@ async def send_gmail(req: GmailSendRequest, request: Request):
     if not success:
         logger.error("Gmail send failed: %s", message_id)
         raise HTTPException(status_code=502, detail=message_id)
-    if user_id:
-        await usage.record_email_sent(user_id)
+    if user_id and gate and record_allowed_action is not None:
+        record_allowed_action(gate.client_id, "integration")
         await audit.log_event(
             user_id,
             "Gmail",
@@ -1003,6 +976,11 @@ async def calendar_create_event(req: CalendarEventRequest, request: Request):
     from gmail_service import get_credentials
 
     user_id = get_request_user_id(request)
+    gate = None
+    if user_id and check_execution_gate is not None:
+        gate = check_execution_gate(user_id, "integration")
+        if not gate.allowed:
+            raise _gate_http_exception(gate)
     if not has_calendar_scope(user_id):
         raise HTTPException(status_code=401, detail="Re-authorise Google for Calendar write access")
     attendees = [{"email": e.strip()} for e in req.attendees if e.strip()]
@@ -1023,6 +1001,8 @@ async def calendar_create_event(req: CalendarEventRequest, request: Request):
             .insert(calendarId=req.calendar_id, body=event_body, sendUpdates=send_updates)
             .execute()
         )
+        if user_id and gate and record_allowed_action is not None:
+            record_allowed_action(gate.client_id, "integration")
         return {"success": True, "event_id": created.get("id"), "html_link": created.get("htmlLink")}
     except GmailNotAuthorised as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
