@@ -13,14 +13,14 @@
       "src": "api/integrations.py",
       "use": "@vercel/python",
       "config": {
-        "includeFiles": "api_lib/action_registry.py,api_lib/gmail_oauth.py,api_lib/gmail_send.py,api_lib/google_oauth.py,api_lib/hook_handler.py,api_lib/http_auth.py,api_lib/supabase_rest.py,api_lib/sheets_service.py"
+        "includeFiles": "api_lib/action_registry.py,api_lib/entitlements.py,api_lib/execution_gate.py,api_lib/gmail_oauth.py,api_lib/gmail_send.py,api_lib/google_oauth.py,api_lib/hook_handler.py,api_lib/http_auth.py,api_lib/supabase_rest.py,api_lib/sheets_service.py,api_lib/usage.py"
       }
     },
     {
       "src": "api/ai.py",
       "use": "@vercel/python",
       "config": {
-        "includeFiles": "api_lib/action_registry.py,api_lib/http_auth.py,api_lib/supabase_rest.py"
+        "includeFiles": "api_lib/action_registry.py,api_lib/agent_pipeline.py,api_lib/entitlements.py,api_lib/execution_gate.py,api_lib/http_auth.py,api_lib/supabase_rest.py,api_lib/usage.py"
       }
     },
     { "src": "index.html", "use": "@vercel/static" }
