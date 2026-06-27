@@ -1,7 +1,7 @@
 {
   "version": 2,
   "builds": [
-    { "src": "api/app.py", "use": "@vercel/python", "config": { "includeFiles": "api_lib/billing_checkout.py,api_lib/billing_status.py,api_lib/billing_webhook.py,api_lib/entitlements.py,api_lib/http_auth.py,api_lib/stripe_client.py,api_lib/supabase_rest.py,api_lib/tiers.py,api_lib/topup_checkout.py,api_lib/usage.py" } },
+    { "src": "api/app.py", "use": "@vercel/python", "config": { "includeFiles": "api_lib/billing_checkout.py,api_lib/billing_portal.py,api_lib/billing_status.py,api_lib/billing_webhook.py,api_lib/entitlements.py,api_lib/http_auth.py,api_lib/stripe_client.py,api_lib/supabase_rest.py,api_lib/tiers.py,api_lib/topup_checkout.py,api_lib/usage.py" } },
     {
       "src": "api/auth.py",
       "use": "@vercel/python",
@@ -34,6 +34,7 @@
     { "src": "/api/billing/status", "dest": "/api/app.py" },
     { "src": "/api/billing/checkout", "dest": "/api/app.py" },
     { "src": "/api/billing/topup", "dest": "/api/app.py" },
+    { "src": "/api/billing/portal", "dest": "/api/app.py" },
     { "src": "/api/billing/webhook", "dest": "/api/app.py" },
     { "src": "/api/audit/log", "dest": "/api/app.py" },
     { "src": "/api/workflows/emergency-stop", "dest": "/api/app.py" },
