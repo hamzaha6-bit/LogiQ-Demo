@@ -1443,6 +1443,24 @@ async function startCheckout(plan) {
   } catch(e) { toast(e.message); }
 }
 
+async function startTopup(packSize) {
+  if (!appConfig.stripe_configured) { toast('Stripe not configured'); return; }
+  if (!authSession) { toast('Sign in to top up'); showAuth('login'); return; }
+  try {
+    const res = await apiFetch('/api/billing/topup', { method: 'POST', body: { pack_size: packSize } });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Top-up failed');
+    if (data.url) window.location.href = data.url;
+  } catch(e) { toast(e.message); }
+}
+
+function showActionLimitToast(message) {
+  const t = document.getElementById('toast');
+  t.innerHTML = esc(message) + ' <button class="btn-sm brand" style="margin-left:8px" onclick="startTopup(\'100\')">Top up</button>';
+  t.className = 'toast show toast-err';
+  setTimeout(() => { t.className = 'toast'; t.textContent = ''; }, 6000);
+}
+
 async function canDeployMoreAgents() {
   await loadBillingStatus();
   const max = billingStatus?.limits?.max_agents;
@@ -1891,6 +1909,21 @@ async function parseApiError(res) {
   }
 }
 
+async function parseApiErrorPayload(res) {
+  const text = await res.text();
+  try {
+    const j = JSON.parse(text);
+    const message = typeof j.detail === 'string'
+      ? j.detail
+      : Array.isArray(j.detail)
+        ? j.detail.map(d => d.msg || JSON.stringify(d)).join('; ')
+        : (j.detail || j.message || text);
+    return { message, error: j.error || '' };
+  } catch {
+    return { message: text || `HTTP ${res.status} ${res.statusText}`, error: '' };
+  }
+}
+
 async function callClaude(system, messages, maxTokens = 1200) {
   const res = await apiFetch('/api/chat', {
     method: 'POST',
@@ -2032,9 +2065,13 @@ async function renderDashboard() {
           </div>
         </div>`).join('')}
     </div>` : ''}
-    ${actionsPct >= 100 || apiPct >= 100 ? `<div class="card usage-alert" style="margin-bottom:16px;padding:14px;display:flex;align-items:center;justify-content:space-between">
-      <span>Daily limit reached — upgrade your plan for more capacity</span>
-      <button class="btn-primary" onclick="navigate('pricing')">Upgrade</button></div>` : ''}
+    ${actionsPct >= 100 || apiPct >= 100 ? `<div class="card usage-alert" style="margin-bottom:16px;padding:14px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px">
+      <span>Action limit reached — top up or upgrade for more capacity</span>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <button class="btn-ghost" onclick="startTopup('100')">Buy 100 actions — £5</button>
+        <button class="btn-ghost" onclick="startTopup('500')">Buy 500 actions — £20</button>
+        <button class="btn-primary" onclick="navigate('pricing')">Upgrade</button>
+      </div></div>` : ''}
     <div class="card" style="margin-bottom:20px">
       <div class="card-title">Usage this month</div>
       <div class="progress-bar-wrap"><div class="progress-label"><span>Actions used</span><span>${actionsUsed.toLocaleString()} / ${actionsLimit ? actionsLimit.toLocaleString() : '∞'}</span></div>
@@ -3804,7 +3841,15 @@ async function runPipeline(id) {
     };
     try {
       const res = await apiFetch('/api/agent/run', { method: 'POST', body: payload });
-      if (!res.ok) throw new Error(await parseApiError(res));
+      if (!res.ok) {
+        const err = await parseApiErrorPayload(res);
+        if (err.error === 'action_limit_reached') {
+          showActionLimitToast(err.message);
+          if (btn) btn.disabled = false;
+          return;
+        }
+        throw new Error(err.message);
+      }
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
@@ -3829,7 +3874,11 @@ async function runPipeline(id) {
             });
             queued++;
           } else if (event === 'error') {
-            toast('Error on item ' + data.index + ': ' + data.message);
+            if (data.error === 'action_limit_reached') {
+              showActionLimitToast(data.message || 'Action limit reached');
+            } else {
+              toast('Error on item ' + data.index + ': ' + (data.message || 'Unknown error'));
+            }
           } else if (event === 'done') {
             queued = data.queued;
           }

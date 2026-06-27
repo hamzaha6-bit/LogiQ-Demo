@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from supabase_rest import rest_get, rest_patch_filter, rest_post
+
+logger = logging.getLogger("logiq.entitlements")
 
 
 def get_entitlement(client_id: str) -> Optional[Dict[str, Any]]:
@@ -49,4 +52,34 @@ def sync_user_profiles_plan(client_id: str, plan: Optional[str]) -> None:
         "user_profiles",
         {"id": f"in.({','.join(user_ids)})"},
         {"plan": plan},
+    )
+
+
+def apply_topup(client_id: str, actions_to_add: int) -> None:
+    cid = (client_id or "").strip()
+    add = int(actions_to_add)
+    if not cid or add <= 0:
+        logger.warning("Top-up skipped: invalid client_id or actions_to_add")
+        return
+
+    entitlement = get_entitlement(cid)
+    if not entitlement or (entitlement.get("status") or "").strip().lower() != "active":
+        logger.warning("Top-up skipped: client %s not active", cid)
+        return
+
+    current_limit = int(entitlement.get("actions_limit") or 0)
+    new_limit = current_limit + add
+    rest_patch_filter(
+        "entitlements",
+        {"client_id": f"eq.{cid}"},
+        {
+            "actions_limit": new_limit,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        },
+    )
+    logger.info(
+        "Top-up applied: +%s actions for client %s, new limit: %s",
+        add,
+        cid,
+        new_limit,
     )
