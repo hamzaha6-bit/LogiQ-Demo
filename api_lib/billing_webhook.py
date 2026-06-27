@@ -168,6 +168,16 @@ def _apply_active_subscription(client_id: str, subscription: Dict[str, Any]) -> 
         return
     upsert_entitlement(payload)
     sync_user_profiles_plan(client_id, payload["plan"])
+    try:
+        from hook_handler import send_subscription_confirmation
+
+        send_subscription_confirmation(client_id, str(payload["plan"]))
+    except Exception as exc:
+        logger.warning(
+            "Subscription confirmation email failed for client %s: %s",
+            client_id,
+            exc,
+        )
 
 
 def _fetch_subscription(subscription_id: str) -> Dict[str, Any]:

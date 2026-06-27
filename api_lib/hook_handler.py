@@ -7,12 +7,14 @@ import traceback
 from http.server import BaseHTTPRequestHandler
 from typing import Any, Dict
 
-from standardwebhooks.webhooks import Webhook, WebhookVerificationError
-
 from gmail_send import is_gmail_configured, send_platform_email
+from entitlements import member_user_ids
+from supabase_rest import email_from_user_id
+from tiers import limits_for
 
-WELCOME_SUBJECT = "Welcome to LogiQ — you're in."
+WELCOME_SUBJECT = "Welcome to LogiQ - you're in."
 WELCOME_FROM_NAME = "Hamza at LogiQ"
+SUBSCRIPTION_SUBJECT = "Your LogiQ subscription is active - here's what to do next"
 
 
 def _hook_secret() -> str:
@@ -41,9 +43,9 @@ def _welcome_body(first_name: str) -> str:
 Welcome to LogiQ. You're one of the first businesses to get access to the platform and we're glad you're here.
 
 Here's what to do next:
-1. Connect your Gmail — takes 30 seconds and unlocks Aria and Nova immediately
-2. Tell Blueprint AI what you want to automate — describe it in plain English and it builds the workflow
-3. Review and approve your first workflow — nothing runs until you say so
+1. Connect your Gmail - takes 30 seconds and unlocks Aria and Nova immediately
+2. Tell Blueprint AI what you want to automate - describe it in plain English and it builds the workflow
+3. Review and approve your first workflow - nothing runs until you say so
 
 If you get stuck or have any questions, reply to this email directly. I read every one.
 
@@ -53,6 +55,77 @@ logiqops.co.uk
 
 P.S. You're on early access pricing. That rate is locked in for as long as you stay a customer.
 """
+
+
+def _first_name_from_email(email: str) -> str:
+    addr = (email or "").strip()
+    if addr and "@" in addr:
+        return addr.split("@")[0]
+    return "there"
+
+
+def _subscription_body(first_name: str, tier_name: str, actions_limit: int) -> str:
+    return f"""Hi {first_name},
+
+Your {tier_name} subscription is now active. Welcome properly — you're live on Vision.
+
+Here's what to do right now:
+
+1. Connect your Gmail — go to Integrations in your dashboard and connect your Google account. Takes 30 seconds and unlocks Aria and Nova immediately.
+
+2. Tell Blueprint AI what you want to automate — go to Build, describe your workflow in plain English, and Vision will build it for you.
+
+3. Approve your first workflow — nothing runs until you say so. You're always in control.
+
+Your plan: {tier_name} — {actions_limit} actions per month.
+
+If you get stuck, reply to this email directly. I read every one.
+
+Hamza
+Founder, LogiQ
+logiqops.co.uk
+
+P.S. You're on founding client pricing. That rate is locked in as long as you stay subscribed.
+"""
+
+
+def send_subscription_confirmation(client_id: str, tier: str) -> None:
+    cid = (client_id or "").strip()
+    tier_slug = (tier or "").strip().lower()
+    if not cid or not tier_slug:
+        print(f"[subscription_email] Missing client_id or tier — skipping")
+        return
+
+    if not is_gmail_configured():
+        print("[subscription_email] Gmail not configured — skipping confirmation email")
+        return
+
+    tier_name = tier_slug.title()
+    actions_limit = int(limits_for(tier_slug).get("actions") or 0)
+    user_ids = member_user_ids(cid)
+    if not user_ids:
+        print(f"[subscription_email] No members for client {cid} — skipping")
+        return
+
+    for user_id in user_ids:
+        email = email_from_user_id(user_id)
+        if not email:
+            print(f"[subscription_email] No email for user {user_id} — skipping")
+            continue
+        first_name = _first_name_from_email(email)
+        try:
+            ok, detail = send_platform_email(
+                to=email,
+                subject=SUBSCRIPTION_SUBJECT,
+                body=_subscription_body(first_name, tier_name, actions_limit),
+                from_name=WELCOME_FROM_NAME,
+            )
+            if ok:
+                print(f"[subscription_email] Sent to {email} (id={detail})")
+            else:
+                print(f"[subscription_email] Failed for {email}: {detail}")
+        except Exception as exc:
+            print(f"[subscription_email] Error for {email}: {exc}")
 
 
 def json_response(handler: BaseHTTPRequestHandler, status: int, payload: Dict[str, Any]) -> None:
@@ -68,6 +141,8 @@ def is_user_created_hook_path(path: str) -> bool:
 
 
 def handle_user_created_hook(handler: BaseHTTPRequestHandler) -> None:
+    from standardwebhooks.webhooks import Webhook, WebhookVerificationError
+
     try:
         length = int(handler.headers.get("Content-Length", 0))
         raw = handler.rfile.read(length) if length else b""
