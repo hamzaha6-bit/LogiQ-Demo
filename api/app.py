@@ -11,6 +11,7 @@ if _API_LIB not in sys.path:
     sys.path.insert(0, _API_LIB)
 
 from billing_checkout import CheckoutError, process_checkout
+from billing_portal import PortalError, process_portal
 from billing_status import billing_status_for_request
 from billing_webhook import WebhookError, process_event
 from http_auth import resolve_user_id
@@ -61,6 +62,8 @@ class handler(BaseHTTPRequestHandler):
             self._billing_checkout()
         elif path.endswith("/billing/topup"):
             self._billing_topup()
+        elif path.endswith("/billing/portal"):
+            self._billing_portal()
         elif path.endswith("/billing/webhook"):
             self._billing_webhook()
         else:
@@ -99,6 +102,14 @@ class handler(BaseHTTPRequestHandler):
             self._json(200, result)
         except TopupError as exc:
             self._json(exc.status, {"detail": exc.detail})
+
+    def _billing_portal(self):
+        user_id = resolve_user_id(self)
+        try:
+            result = process_portal(user_id)
+            self._json(200, result)
+        except PortalError as exc:
+            self._json(exc.status, exc.payload)
 
     def _billing_webhook(self):
         payload = self._read_raw_body()

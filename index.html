@@ -769,6 +769,7 @@ input[type=file].hidden-input { display: none; }
       <div class="user-info">
         <div class="name" id="user-name">Guest</div>
         <div class="plan" id="user-plan">Starter</div>
+        <a href="#" id="manage-sub-link" class="portal-link hidden" onclick="startPortal(); return false;" style="font-size:10px;color:var(--brand);margin-top:2px">Manage subscription</a>
       </div>
       <button class="logout-btn" onclick="doLogout()">Logout</button>
     </div>
@@ -1192,6 +1193,11 @@ function updateUserProfile() {
   document.getElementById('user-name').textContent = name;
   document.getElementById('user-plan').textContent = plan + ' Plan';
   document.getElementById('user-avatar').textContent = name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase() || '?';
+  const portalLink = document.getElementById('manage-sub-link');
+  if (portalLink) {
+    const showPortal = authSession && billingStatus?.status === 'active';
+    portalLink.classList.toggle('hidden', !showPortal);
+  }
 }
 
 async function refreshUserProfile() {
@@ -1450,6 +1456,16 @@ async function startTopup(packSize) {
     const res = await apiFetch('/api/billing/topup', { method: 'POST', body: { pack_size: packSize } });
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || 'Top-up failed');
+    if (data.url) window.location.href = data.url;
+  } catch(e) { toast(e.message); }
+}
+
+async function startPortal() {
+  if (!authSession) { toast('Sign in to manage your subscription'); showAuth('login'); return; }
+  try {
+    const res = await apiFetch('/api/billing/portal', { method: 'POST', body: {} });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.message || data.detail || 'Portal failed');
     if (data.url) window.location.href = data.url;
   } catch(e) { toast(e.message); }
 }
@@ -2808,12 +2824,17 @@ Return JSON only: { "tableName": string, "fields": [{"name", "label", "type" (te
 }
 
 // ═══ 9. PRICING & LANDSCAPE ═══
-function renderPricing() {
+async function renderPricing() {
+  await loadBillingStatus();
   const stripeOk = appConfig.stripe_configured;
+  const hasActiveSub = authSession && billingStatus?.status === 'active';
+  const manageBtn = hasActiveSub
+    ? `<div style="margin-bottom:20px"><button class="btn-ghost" onclick="startPortal()">Manage subscription</button></div>`
+    : '';
   const btn = (plan) => stripeOk
     ? `<button class="btn-primary" style="width:100%;margin-top:14px" onclick="startCheckout('${plan}')">Get started</button>`
     : `<button class="btn-ghost" style="width:100%;margin-top:14px" disabled>Coming soon</button>`;
-  document.getElementById('page-pricing').innerHTML = `
+  document.getElementById('page-pricing').innerHTML = manageBtn + `
     <div class="grid-4" style="margin-bottom:28px">
       <div class="card price-card"><div class="price-tier">Starter</div><div class="price-amount">£49<span>/mo</span></div>
         <div class="price-features">Up to 3 agents<br>5,000 actions/month<br>100 API calls/day<br>50 emails/day</div>${btn('starter')}</div>
