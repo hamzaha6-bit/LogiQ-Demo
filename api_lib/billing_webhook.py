@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Optional
 
 from entitlements import (
+    apply_topup,
     get_entitlement_by_subscription_id,
     sync_user_profiles_plan,
     upsert_entitlement,
@@ -182,12 +183,27 @@ def handle_checkout_session_completed(event: Any) -> None:
         return
 
     subscription_id = session.get("subscription")
-    if not subscription_id:
-        logger.warning("checkout.session.completed missing subscription for client %s", client_id)
+    if subscription_id:
+        subscription = _fetch_subscription(str(subscription_id))
+        _apply_active_subscription(client_id, subscription)
         return
 
-    subscription = _fetch_subscription(str(subscription_id))
-    _apply_active_subscription(client_id, subscription)
+    metadata = session.get("metadata") or {}
+    mode = (session.get("mode") or "").strip().lower()
+    topup_actions = metadata.get("topup_actions")
+    if mode == "payment" and topup_actions:
+        try:
+            actions_to_add = int(topup_actions)
+        except (TypeError, ValueError):
+            logger.warning(
+                "checkout.session.completed invalid topup_actions for client %s",
+                client_id,
+            )
+            return
+        apply_topup(client_id, actions_to_add)
+        return
+
+    logger.warning("checkout.session.completed unhandled session for client %s", client_id)
 
 
 def handle_subscription_created(event: Any) -> None:

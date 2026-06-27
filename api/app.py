@@ -15,6 +15,7 @@ from billing_status import billing_status_for_request
 from billing_webhook import WebhookError, process_event
 from http_auth import resolve_user_id
 from supabase_rest import pause_workflows_for_user
+from topup_checkout import TopupError, process_topup
 
 
 class handler(BaseHTTPRequestHandler):
@@ -58,6 +59,8 @@ class handler(BaseHTTPRequestHandler):
             self._emergency_stop_workflows()
         elif path.endswith("/billing/checkout"):
             self._billing_checkout()
+        elif path.endswith("/billing/topup"):
+            self._billing_topup()
         elif path.endswith("/billing/webhook"):
             self._billing_webhook()
         else:
@@ -86,6 +89,15 @@ class handler(BaseHTTPRequestHandler):
             result = process_checkout(user_id, body.get("tier"))
             self._json(200, result)
         except CheckoutError as exc:
+            self._json(exc.status, {"detail": exc.detail})
+
+    def _billing_topup(self):
+        user_id = resolve_user_id(self)
+        body = self._read_json_body()
+        try:
+            result = process_topup(user_id, body.get("pack_size"))
+            self._json(200, result)
+        except TopupError as exc:
             self._json(exc.status, {"detail": exc.detail})
 
     def _billing_webhook(self):
