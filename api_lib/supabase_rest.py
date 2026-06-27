@@ -167,6 +167,28 @@ def user_id_from_email(email: str) -> Optional[str]:
     return None
 
 
+def email_from_user_id(user_id: str) -> Optional[str]:
+    uid = (user_id or "").strip()
+    if not uid:
+        return None
+    url = env("SUPABASE_URL").rstrip("/")
+    key = env("SUPABASE_SERVICE_KEY")
+    if not url or not key:
+        return None
+    headers = {"apikey": key, "Authorization": f"Bearer {key}"}
+    with httpx.Client(timeout=30) as client:
+        resp = client.get(f"{url}/auth/v1/admin/users/{uid}", headers=headers)
+        if resp.status_code == 404:
+            return None
+        if resp.status_code >= 400:
+            return None
+        body = resp.json()
+        if isinstance(body, dict):
+            email = (body.get("email") or "").strip()
+            return email or None
+    return None
+
+
 def pause_workflows_for_user(user_id: str, *, active_only: bool = False) -> Tuple[int, str]:
     if not user_id:
         return 0, "user_id is required"
