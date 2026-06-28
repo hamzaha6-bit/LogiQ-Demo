@@ -998,7 +998,7 @@ async function fetchIntegrationStatuses() {
     const res = await fetch(API_BASE + '/api/auth/gmail/status', {
       headers: { Authorization: 'Bearer ' + token },
     });
-    if (res.ok) gmail = normalizeGmailStatus(await res.json().catch(() => ({})));
+    if (res.ok) gmail = normalizeGmailStatus(await safeJson(res, {}));
   } catch (e) {
     console.warn('[integrations] gmail/status failed:', e);
   }
@@ -1008,7 +1008,7 @@ async function fetchIntegrationStatuses() {
       headers: { Authorization: 'Bearer ' + token },
     });
     if (res.ok) {
-      const d = await res.json().catch(() => ({}));
+      const d = await safeJson(res, {});
       calendar = {
         healthy: d.healthy === true,
         calendar_scope: d.calendar_scope === true,
@@ -1038,7 +1038,7 @@ async function validateToken(accessToken) {
     headers: { Authorization: 'Bearer ' + accessToken }
   });
   if (!me.ok) return null;
-  return me.json();
+  return safeJson(me, null);
 }
 
 async function validateAndRestoreSession() {
@@ -1294,6 +1294,19 @@ async function apiFetch(path, options = {}) {
   return res;
 }
 
+/** Parse JSON from a fetch Response; returns fallback on empty body or parse errors (204, etc.). */
+async function safeJson(res, fallback = null) {
+  try {
+    const len = res.headers.get('content-length');
+    if (len === '0') return fallback;
+    const text = await res.text();
+    if (!text || !text.trim()) return fallback;
+    return JSON.parse(text);
+  } catch (e) {
+    return fallback;
+  }
+}
+
 function showAuthTab(tab, syncUrl = true) {
   document.getElementById('auth-tab-login').classList.toggle('active', tab === 'login');
   document.getElementById('auth-tab-signup').classList.toggle('active', tab === 'signup');
@@ -1339,7 +1352,8 @@ async function refreshUserProfile() {
   try {
     const res = await apiFetch('/api/auth/me');
     if (!res.ok) return null;
-    const profile = await res.json();
+    const profile = await safeJson(res, null);
+    if (!profile) return null;
     if (authSession) {
       authSession.user = { ...authSession.user, ...profile };
       saveSessionToStorage();
@@ -1374,10 +1388,10 @@ async function doLogin() {
   if (!email || !password) { showAuthError('Enter email and password'); return; }
   try {
     const res = await apiFetch('/api/auth/login', { method: 'POST', body: { email, password } });
-    const data = await res.json();
+    const data = await safeJson(res, {});
     if (!res.ok) throw new Error(data.detail || 'Login failed');
     const me = await apiFetch('/api/auth/me');
-    const profile = await me.json();
+    const profile = await safeJson(me, {});
     data.user = { ...data.user, ...profile };
     await applySession(data);
     toast('Welcome back, ' + (data.user.name || ''));
@@ -1392,7 +1406,7 @@ async function doSignup() {
   if (!name || !email || !password) { showAuthError('Fill in all fields'); return; }
   try {
     const res = await apiFetch('/api/auth/signup', { method: 'POST', body: { name, email, password } });
-    const data = await res.json();
+    const data = await safeJson(res, {});
     if (!res.ok) throw new Error(data.detail || 'Signup failed');
     if (!data.access_token) {
       document.getElementById('signup-name').value = '';
@@ -1439,7 +1453,8 @@ async function loadAppConfig() {
     const res = await fetch(API_BASE + '/api/config');
     const ct = res.headers.get('content-type') || '';
     if (res.ok && ct.includes('application/json')) {
-      appConfig = await res.json();
+      const data = await safeJson(res, null);
+      if (data) appConfig = data;
     } else if (res.ok) {
       console.warn('/api/config returned non-JSON (got', ct, ') — API may be serving static HTML');
     }
@@ -1452,9 +1467,12 @@ async function loadBillingStatus() {
   try {
     const res = await apiFetch('/api/billing/status');
     if (res.ok) {
-      billingStatus = await res.json();
-      if (billingStatus.plan && authSession?.user) authSession.user.plan = billingStatus.plan;
-      updateUserProfile();
+      const data = await safeJson(res, null);
+      if (data) {
+        billingStatus = data;
+        if (billingStatus.plan && authSession?.user) authSession.user.plan = billingStatus.plan;
+        updateUserProfile();
+      }
     }
   } catch(e) {}
   return billingStatus;
@@ -1504,7 +1522,7 @@ async function disconnectGmail() {
   if (!confirm('Disconnect Gmail? Agents will not be able to send emails until you reconnect.')) return;
   try {
     const res = await apiFetch('/api/auth/gmail/disconnect', { method: 'POST' });
-    const data = await res.json().catch(() => ({}));
+    const data = await safeJson(res, {});
     if (!res.ok) {
       toast(data.detail || 'Failed to disconnect Gmail');
       return;
@@ -1536,7 +1554,7 @@ async function checkGmailHealth() {
       headers: { Authorization: 'Bearer ' + token },
     });
     if (!res.ok) return normalizeGmailStatus(null);
-    return normalizeGmailStatus(await res.json().catch(() => ({})));
+    return normalizeGmailStatus(await safeJson(res, {}));
   } catch (e) {
     return normalizeGmailStatus(null);
   }
@@ -1582,7 +1600,7 @@ async function startCheckout(plan) {
   if (!authSession) { toast('Sign in to subscribe'); showAuth('login'); return; }
   try {
     const res = await apiFetch('/api/billing/create-checkout', { method: 'POST', body: { plan } });
-    const data = await res.json();
+    const data = await safeJson(res, {});
     if (!res.ok) throw new Error(data.detail || 'Checkout failed');
     if (data.checkout_url) window.location.href = data.checkout_url;
   } catch(e) { toast(e.message); }
@@ -1593,7 +1611,7 @@ async function startTopup(packSize) {
   if (!authSession) { toast('Sign in to top up'); showAuth('login'); return; }
   try {
     const res = await apiFetch('/api/billing/topup', { method: 'POST', body: { pack_size: packSize } });
-    const data = await res.json();
+    const data = await safeJson(res, {});
     if (!res.ok) throw new Error(data.detail || 'Top-up failed');
     if (data.url) window.location.href = data.url;
   } catch(e) { toast(e.message); }
@@ -1603,7 +1621,7 @@ async function startPortal() {
   if (!authSession) { toast('Sign in to manage your subscription'); showAuth('login'); return; }
   try {
     const res = await apiFetch('/api/billing/portal', { method: 'POST', body: {} });
-    const data = await res.json();
+    const data = await safeJson(res, {});
     if (!res.ok) throw new Error(data.message || data.detail || 'Portal failed');
     if (data.url) window.location.href = data.url;
   } catch(e) { toast(e.message); }
@@ -1669,11 +1687,12 @@ async function completeOnboarding() {
   try {
     const res = await apiFetch('/api/auth/profile', { method: 'PATCH', body: { onboarding_complete: true } });
     if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
+      const err = await safeJson(res, {});
       console.error('[onboarding] profile PATCH failed:', err.detail || res.status);
       return;
     }
-    const profile = await res.json();
+    const profile = await safeJson(res, {});
+    if (!profile) return;
     authSession.user = { ...authSession.user, ...profile, onboarding_complete: true };
     saveSessionToStorage();
   } catch (e) {
@@ -1878,7 +1897,7 @@ async function checkHealth() {
     const res = await fetch(API_BASE + '/api/health', { signal: AbortSignal.timeout(4000) });
     const ct = res.headers.get('content-type') || '';
     if (res.ok && ct.includes('application/json')) {
-      const data = await res.json();
+      const data = await safeJson(res, {});
       backendReachable = true;
       backendAvailable = true;
       document.getElementById('backend-dot').style.opacity = '1';
@@ -2106,7 +2125,7 @@ async function callClaude(system, messages, maxTokens = 1200) {
   backendAvailable = true;
   document.getElementById('backend-dot').style.opacity = '1';
   document.getElementById('backend-dot').style.background = 'var(--ok)';
-  const data = await res.json();
+  const data = await safeJson(res, {});
   return data.content || '';
 }
 
@@ -2176,7 +2195,7 @@ async function renderDashboard() {
   try {
     const q = auditFilterAgent ? '?limit=20&agent=' + encodeURIComponent(auditFilterAgent) : '?limit=20';
     const res = await apiFetch('/api/audit/log' + q);
-    if (res.ok) auditEntries = (await res.json()).entries || [];
+    if (res.ok) auditEntries = (await safeJson(res, {})).entries || [];
   } catch(e) {}
 
   const agentNames = [...new Set([...deployedAgents.values()].map(a => a.name))];
@@ -2748,7 +2767,7 @@ async function emergencyStopWorkflows() {
   try {
     const res = await apiFetch('/api/workflows/emergency-stop', { method: 'POST' });
     if (!res.ok) throw new Error(await parseApiError(res));
-    const data = await res.json();
+    const data = await safeJson(res, {});
     const userId = getCurrentUserId();
     (memStore.workflows || []).forEach(wf => {
       if (userId && wf.user_id === userId && wf.status === 'active') {
@@ -2879,7 +2898,7 @@ async function approveWorkflowApproval(approvalId) {
         body: { to: payload.to, subject: payload.subject || '(No subject)', body: payload.body || '', from_name: agent?.name || 'LogiQ' },
       });
       if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
+        const err = await safeJson(res, {});
         toast(err.detail || 'Failed to send email', 'error');
       } else {
         toast('Email sent', 'success');
@@ -2993,12 +3012,12 @@ async function renderPricing() {
       <div class="card price-card"><div class="price-tier">Spark</div><div class="price-amount">£20<span>/mo</span></div>
         <div class="price-features">50 actions/month<br>1 agent<br>1 workflow<br>Excludes Blueprint AI</div>${btn('spark')}</div>
       <div class="card price-card popular"><div class="popular-tag">Most popular</div><div class="price-tier">Starter</div><div class="price-amount">£49<span>/mo</span></div>
-        <div class="price-features">Up to 3 agents<br>5,000 actions/month<br>100 API calls/day<br>50 emails/day</div>${btn('starter')}</div>
+        <div class="price-features">500 actions/month<br>1 agent<br>2 workflows<br>All integrations</div>${btn('starter')}</div>
       <div class="card price-card"><div class="price-tier">Pro</div>
         <div class="price-amount">£149<span>/mo</span></div>
-        <div class="price-features">Unlimited agents<br>25,000 actions/month<br>500 API calls/day<br>500 emails/day</div>${btn('pro')}</div>
+        <div class="price-features">2,500 actions/month<br>3 agents<br>10 workflows<br>All integrations<br>Priority support</div>${btn('pro')}</div>
       <div class="card price-card"><div class="price-tier">Business</div><div class="price-amount">£399<span>/mo</span></div>
-        <div class="price-features">Unlimited everything<br>Priority support<br>Multi-user<br>Custom blueprints</div>${btn('business')}</div>
+        <div class="price-features">10,000 actions/month<br>Unlimited agents<br>Unlimited workflows<br>All integrations<br>Priority support<br>Multi-user</div>${btn('business')}</div>
       <div class="card price-card"><div class="price-tier">Enterprise</div><div class="price-amount">Custom</div>
         <div class="price-features">White-glove onboarding<br>Dedicated account manager<br>SLA guarantees<br>Custom contracts</div>
         <button class="btn-ghost" style="width:100%;margin-top:14px">Contact sales</button></div>
@@ -3025,7 +3044,7 @@ async function saveSettingsProfile() {
   if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
   try {
     const res = await apiFetch('/api/auth/profile', { method: 'PATCH', body: { name } });
-    const data = await res.json().catch(() => ({}));
+    const data = await safeJson(res, {});
     if (!res.ok) {
       toast(data.detail || 'Failed to save profile');
       return;
@@ -3968,7 +3987,8 @@ async function loadIntegrationConfig() {
   try {
     const res = await apiFetch('/api/integrations/config');
     if (!res.ok) return;
-    const data = await res.json();
+    const data = await safeJson(res, null);
+    if (!data) return;
     integrationConfig = { ...integrationConfig, ...data };
     if (integrationConfig.calendly_link && !getAgentSettings('nova').calendlyLink) {
       getAgentSettings('nova').calendlyLink = integrationConfig.calendly_link;
@@ -3987,7 +4007,7 @@ async function connectGoogleSheet(agentId) {
     const res = await apiFetch('/api/integrations/sheets/connect', {
       method:'POST', body: { url, agent: agentId }
     });
-    const data = await res.json().catch(() => ({}));
+    const data = await safeJson(res, {});
     if (res.status === 401) { showSheetsReauthPrompt(); toast(data.detail || 'Re-authorise Google for Sheets'); return; }
     if (!res.ok) { toast(data.detail || 'Sheets connect failed'); return; }
     const s = getAgentSettings(agentId);
@@ -4022,7 +4042,7 @@ async function pollSheetRows(agentId) {
   if (!s.sheetConnected || !s.sheetUrl || !backendAvailable || !agent || s.sheetPaused) return;
   try {
     const res = await apiFetch('/api/integrations/sheets/poll?url=' + encodeURIComponent(s.sheetUrl) + '&agent=' + encodeURIComponent(agentId));
-    const data = await res.json().catch(() => ({}));
+    const data = await safeJson(res, {});
     if (res.status === 401) { showSheetsReauthPrompt(); return; }
     if (res.status === 409 || data.paused) {
       showSchemaPausePrompt(agentId, data.schema_mismatch);
@@ -4050,7 +4070,7 @@ async function syncXero() {
   if (!backendAvailable) { toast('Backend not connected'); return; }
   try {
     const res = await fetch(API_BASE + '/api/integrations/xero/invoices');
-    const data = await res.json().catch(() => ({}));
+    const data = await safeJson(res, {});
     if (!res.ok) { toast(data.detail || 'Xero sync failed'); return; }
     const invoices = data.invoices || [];
     if (!invoices.length) { toast('No overdue invoices in Xero'); return; }
@@ -4075,7 +4095,7 @@ async function syncHubSpot(lead) {
       method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({ name: lead.name||'', email: lead.email||'', company: lead.company||'', status: lead.status||'' })
     });
-    const data = await res.json().catch(() => ({}));
+    const data = await safeJson(res, {});
     if (res.ok) toast('✓ Synced to HubSpot');
     else toast('HubSpot: ' + (data.detail || 'sync failed'));
   } catch(e) { toast('HubSpot sync failed'); }
@@ -4415,7 +4435,7 @@ async function sendAction(actionId, agentId) {
         return;
       }
       if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
+        const err = await safeJson(res, {});
         throw new Error(err.detail || 'Gmail send failed');
       }
       await markActionSent(actionId, agentId);
