@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from typing import Any, Dict
 
 from entitlements import get_entitlement
-from supabase_rest import client_id_from_user_id
+from supabase_rest import client_id_from_user_id, email_from_user_id
 from usage import get_monthly_usage, record_action as _record_client_action
 
 # Provisional per-action cost estimates (pence). Tune when real usage data is available.
@@ -33,6 +34,13 @@ def action_cost_pence(action_type: str) -> int:
     return ACTION_COST_PENCE.get(action_type, ACTION_COST_PENCE["action"])
 
 
+def _owner_emails() -> set[str]:
+    raw = (os.environ.get("OWNER_EMAILS") or "").strip()
+    if not raw:
+        return set()
+    return {e.strip().lower() for e in raw.split(",") if e.strip()}
+
+
 def check_execution_gate(user_id: str, action_type: str = "action") -> GateResult:
     uid = (user_id or "").strip()
     if not uid:
@@ -41,6 +49,16 @@ def check_execution_gate(user_id: str, action_type: str = "action") -> GateResul
             reason="Authentication required",
             error="unauthenticated",
         )
+
+    owners = _owner_emails()
+    if owners:
+        try:
+            email = email_from_user_id(uid)
+            if email and email.strip().lower() in owners:
+                print(f"[gate] Owner bypass applied for {email}")
+                return GateResult(allowed=True, client_id="owner-bypass")
+        except Exception as exc:
+            print(f"[gate] Owner bypass email lookup failed for user {uid}: {exc}")
 
     try:
         client_id = client_id_from_user_id(uid)
