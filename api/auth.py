@@ -11,7 +11,7 @@ if _API_LIB not in sys.path:
 
 from supabase import create_client
 
-from supabase_rest import rest_get, rest_patch, rest_post_with_error, user_id_from_bearer
+from supabase_rest import rest_get, rest_patch_with_error, rest_post_with_error, user_id_from_bearer
 
 try:
     from hook_handler import handle_user_created_hook, json_response as hook_json_response
@@ -227,9 +227,10 @@ class handler(BaseHTTPRequestHandler):
             return
 
         _ensure_profile(user_id)
-        ok = rest_patch("user_profiles", {"id": user_id}, updates)
+        ok, patch_err = rest_patch_with_error("user_profiles", {"id": user_id}, updates)
         if not ok:
-            self._json(502, {"detail": "Failed to update profile — check SUPABASE_SERVICE_KEY and user_profiles table"})
+            detail = patch_err or "Failed to update profile — check SUPABASE_SERVICE_KEY and user_profiles table"
+            self._json(502, {"detail": detail})
             return
 
         profile = _profile_row(user_id) or {}
