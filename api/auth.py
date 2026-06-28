@@ -32,7 +32,13 @@ def _is_user_created_hook_path(path: str) -> bool:
 
 
 def _profile_row(user_id: str):
-    rows = rest_get("user_profiles", {"id": f"eq.{user_id}", "select": "name,plan,onboarding_complete"})
+    rows = rest_get(
+        "user_profiles",
+        {
+            "id": f"eq.{user_id}",
+            "select": "name,plan,onboarding_complete,tos_accepted_at,tos_version_accepted",
+        },
+    )
     return rows[0] if rows else None
 
 
@@ -56,15 +62,24 @@ def _ensure_profile(user_id: str, name: str = "", email: str = ""):
     return {"name": name, "plan": "starter", "onboarding_complete": False}
 
 
-def _profile_payload(user_id: str, email: str, fallback_name: str):
-    profile = _ensure_profile(user_id, fallback_name, email)
+def _profile_response(user_id: str, profile: dict) -> dict:
     return {
         "id": user_id,
-        "email": email,
-        "name": profile.get("name") or fallback_name,
+        "name": profile.get("name") or "",
         "plan": profile.get("plan") or "starter",
         "onboarding_complete": bool(profile.get("onboarding_complete")),
+        "tos_accepted_at": profile.get("tos_accepted_at"),
+        "tos_version_accepted": profile.get("tos_version_accepted"),
     }
+
+
+def _profile_payload(user_id: str, email: str, fallback_name: str):
+    profile = _ensure_profile(user_id, fallback_name, email)
+    payload = _profile_response(user_id, profile)
+    payload["email"] = email
+    if not payload["name"]:
+        payload["name"] = fallback_name
+    return payload
 
 
 class handler(BaseHTTPRequestHandler):
@@ -202,6 +217,10 @@ class handler(BaseHTTPRequestHandler):
             updates["name"] = str(body.get("name")).strip()
         if "plan" in body and body.get("plan"):
             updates["plan"] = str(body.get("plan")).strip()
+        if "tos_accepted_at" in body and body.get("tos_accepted_at"):
+            updates["tos_accepted_at"] = str(body.get("tos_accepted_at")).strip()
+        if "tos_version_accepted" in body and body.get("tos_version_accepted"):
+            updates["tos_version_accepted"] = str(body.get("tos_version_accepted")).strip()
 
         if not updates:
             self._json(400, {"detail": "No valid profile fields to update"})
@@ -214,15 +233,7 @@ class handler(BaseHTTPRequestHandler):
             return
 
         profile = _profile_row(user_id) or {}
-        self._json(
-            200,
-            {
-                "id": user_id,
-                "name": profile.get("name") or "",
-                "plan": profile.get("plan") or "starter",
-                "onboarding_complete": bool(profile.get("onboarding_complete")),
-            },
-        )
+        self._json(200, _profile_response(user_id, profile))
 
     def _signup(self, body, url, anon_key):
         name = (body.get("name") or "").strip()
@@ -276,6 +287,8 @@ class handler(BaseHTTPRequestHandler):
                     "name": profile.get("name") or name,
                     "plan": profile.get("plan") or "starter",
                     "onboarding_complete": bool(profile.get("onboarding_complete")),
+                    "tos_accepted_at": profile.get("tos_accepted_at"),
+                    "tos_version_accepted": profile.get("tos_version_accepted"),
                 },
             },
         )
@@ -315,6 +328,8 @@ class handler(BaseHTTPRequestHandler):
                     "name": profile.get("name") or name,
                     "plan": profile.get("plan") or "starter",
                     "onboarding_complete": bool(profile.get("onboarding_complete")),
+                    "tos_accepted_at": profile.get("tos_accepted_at"),
+                    "tos_version_accepted": profile.get("tos_version_accepted"),
                 },
             },
         )
