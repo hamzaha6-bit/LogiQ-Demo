@@ -734,6 +734,33 @@ input[type=file].hidden-input { display: none; }
 }
 .onboarding-step.done .step-num { background: var(--ok); color: #fff; }
 .onboarding-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px; }
+
+/* Terms of Service gate */
+.tos-overlay {
+  position: fixed; inset: 0; z-index: 500; background: rgba(255,255,255,.97);
+  display: flex; align-items: center; justify-content: center; padding: 24px;
+}
+.tos-overlay.hidden { display: none; }
+.tos-card {
+  max-width: 560px; width: 100%; max-height: 90vh; background: var(--bg);
+  border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 8px 32px rgba(0,0,0,.08);
+  display: flex; flex-direction: column;
+}
+.tos-header { padding: 24px 24px 16px; border-bottom: 1px solid var(--border); }
+.tos-header h2 { font-size: 18px; font-weight: 700; line-height: 1.4; color: var(--text); }
+.tos-body {
+  flex: 1; overflow-y: auto; padding: 20px 24px; font-size: 13px; color: var(--text2); line-height: 1.6;
+}
+.tos-body h3 { font-size: 14px; font-weight: 600; color: var(--text); margin: 16px 0 6px; }
+.tos-body h3:first-child { margin-top: 0; }
+.tos-body a { color: var(--brand); font-weight: 500; }
+.tos-actions {
+  padding: 16px 24px; border-top: 1px solid var(--border);
+  display: flex; gap: 10px; justify-content: flex-end; flex-wrap: wrap; align-items: center;
+}
+.tos-actions .btn-primary:disabled { opacity: .45; cursor: not-allowed; background: var(--text3); border-color: var(--text3); }
+.tos-error { color: var(--err); font-size: 12px; flex: 1 1 100%; margin: 0 0 4px; }
+
 .user-profile { cursor: pointer; }
 .user-profile .logout-btn {
   margin-left: auto; font-size: 11px; color: var(--text3); padding: 4px 8px;
@@ -783,6 +810,32 @@ input[type=file].hidden-input { display: none; }
     <div class="onboarding-steps" id="onboarding-steps"></div>
     <div class="onboarding-actions">
       <button class="btn-ghost" onclick="dismissOnboarding()">Skip for now</button>
+    </div>
+  </div>
+</div>
+
+<div class="tos-overlay hidden" id="tos-overlay">
+  <div class="tos-card">
+    <div class="tos-header">
+      <h2>Before you continue — please review and accept our Terms of Service</h2>
+    </div>
+    <div class="tos-body" id="tos-body">
+      <h3>What the service is</h3>
+      <p>LogiQ Vision is an AI workforce platform that helps you automate business workflows using agents, integrations, and Blueprint AI. By using the service, you agree to these terms governing your access and use of the platform.</p>
+      <h3>Subscription and payment terms</h3>
+      <p>Access to paid features requires an active subscription billed monthly through Stripe. Fees are charged in advance and are non-refundable except where required by law. We may change pricing with reasonable notice; continued use after a price change constitutes acceptance.</p>
+      <h3>Acceptable use</h3>
+      <p>You must use LogiQ Vision lawfully and responsibly. You may not use the platform to send spam, distribute malware, harass others, violate third-party rights, or attempt to bypass usage limits or security controls. You are responsible for content sent through connected integrations such as Gmail.</p>
+      <h3>Limitation of liability</h3>
+      <p>LogiQ Vision is provided &ldquo;as is&rdquo; to the fullest extent permitted by law. We are not liable for indirect, incidental, or consequential damages arising from your use of the service. Our total liability is limited to the amount you paid us in the twelve months before the claim.</p>
+      <h3>How to cancel</h3>
+      <p>You may cancel your subscription at any time from Settings &rarr; Manage subscription. Cancellation takes effect at the end of the current billing period. You may export your data before cancelling; we may delete account data after a reasonable retention period.</p>
+      <p style="margin-top:16px"><a href="https://logiqops.co.uk/terms" target="_blank" rel="noopener noreferrer">Read full Terms of Service</a></p>
+    </div>
+    <div class="tos-actions">
+      <p class="tos-error hidden" id="tos-error"></p>
+      <button type="button" class="btn-ghost" onclick="declineTos()">Decline</button>
+      <button type="button" class="btn-primary" id="tos-agree-btn" disabled onclick="acceptTos()">I Agree</button>
     </div>
   </div>
 </div>
@@ -1117,16 +1170,88 @@ async function handleEmailConfirmation() {
   return false;
 }
 async function bootAuthenticatedApp() {
+  await refreshUserProfile();
+  if (needsTosAcceptance()) {
+    showTosModal();
+    return;
+  }
+  await finishAuthenticatedBoot();
+}
+
+const TOS_VERSION = '1.0';
+
+function needsTosAcceptance() {
+  return authSession && !authSession.user?.tos_accepted_at;
+}
+
+function showTosModal() {
+  document.getElementById('auth-screen').classList.add('hidden');
+  document.getElementById('app-root').classList.add('hidden');
+  document.getElementById('billing-screen').classList.add('hidden');
+  const overlay = document.getElementById('tos-overlay');
+  overlay.classList.remove('hidden');
+  const body = document.getElementById('tos-body');
+  const agreeBtn = document.getElementById('tos-agree-btn');
+  const errEl = document.getElementById('tos-error');
+  agreeBtn.disabled = true;
+  errEl.classList.add('hidden');
+  errEl.textContent = '';
+  const checkScroll = () => {
+    if (body.scrollTop + body.clientHeight >= body.scrollHeight - 10) {
+      agreeBtn.disabled = false;
+    }
+  };
+  body.onscroll = checkScroll;
+  requestAnimationFrame(checkScroll);
+}
+
+async function acceptTos() {
+  const agreeBtn = document.getElementById('tos-agree-btn');
+  const errEl = document.getElementById('tos-error');
+  agreeBtn.disabled = true;
+  errEl.classList.add('hidden');
+  try {
+    const res = await apiFetch('/api/auth/profile', {
+      method: 'PATCH',
+      body: {
+        tos_accepted_at: new Date().toISOString(),
+        tos_version_accepted: TOS_VERSION,
+      },
+    });
+    const profile = await safeJson(res, null);
+    if (!res.ok || !profile) {
+      errEl.textContent = 'Something went wrong. Please try again.';
+      errEl.classList.remove('hidden');
+      agreeBtn.disabled = false;
+      return;
+    }
+    authSession.user = { ...authSession.user, ...profile };
+    saveSessionToStorage();
+    document.getElementById('tos-overlay').classList.add('hidden');
+    await finishAuthenticatedBoot();
+  } catch (e) {
+    errEl.textContent = 'Something went wrong. Please try again.';
+    errEl.classList.remove('hidden');
+    agreeBtn.disabled = false;
+  }
+}
+
+function declineTos() {
+  doLogout('You must accept the Terms of Service to use Vision.');
+}
+
+async function finishAuthenticatedBoot() {
   showApp();
   updateUserProfile();
   await loadBillingStatus();
   await loadIntegrationConfig();
-  await refreshUserProfile();
   await bootApp();
   await maybeShowOnboarding();
   const initialPage = pageFromPath();
   if (initialPage !== 'dashboard') {
     navigate(initialPage, { syncUrl: false });
+  } else {
+    navigate('dashboard', { syncUrl: false });
   }
 }
 
@@ -1374,12 +1499,12 @@ async function applySession(data) {
   saveSessionToStorage();
   switchUserStore(data.user?.id);
   goToAppHome();
-  showApp();
-  updateUserProfile();
-  await loadBillingStatus();
-  await loadIntegrationConfig();
   await refreshUserProfile();
-  await maybeShowOnboarding();
+  if (needsTosAcceptance()) {
+    showTosModal();
+    return;
+  }
+  await finishAuthenticatedBoot();
 }
 
 async function doLogin() {
@@ -1394,8 +1519,8 @@ async function doLogin() {
     const profile = await safeJson(me, {});
     data.user = { ...data.user, ...profile };
     await applySession(data);
+    if (needsTosAcceptance()) return;
     toast('Welcome back, ' + (data.user.name || ''));
-    bootApp();
   } catch(e) { showAuthError(e.message); }
 }
 
@@ -1417,16 +1542,17 @@ async function doSignup() {
       return;
     }
     await applySession(data);
+    if (needsTosAcceptance()) return;
     toast('Account created — welcome to LogiQ');
-    bootApp();
   } catch(e) { showAuthError(e.message); }
 }
 
-async function doLogout() {
+async function doLogout(message) {
+  document.getElementById('tos-overlay')?.classList.add('hidden');
   try { await apiFetch('/api/auth/logout', { method: 'POST' }); } catch(e) {}
   authSession = null;
   clearSessionStorage();
-  toast('Signed out');
+  toast(message || 'Signed out');
   if (isProductionAppHost()) {
     window.location.replace('/login');
     return;
@@ -4598,13 +4724,7 @@ async function init() {
     const sessionValid = await validateAndRestoreSession();
     if (sessionValid) {
       if (isAuthEntryPath()) goToAppHome();
-      showApp();
-      updateUserProfile();
-      await bootApp();
-      const initialPage = pageFromPath();
-      if (initialPage !== 'dashboard') {
-        navigate(initialPage, { syncUrl: false });
-      }
+      await bootAuthenticatedApp();
     } else if (!isAuthEntryPath() && !hasAuthFlowCallbackParams() && !isProtectedAppPath()) {
       redirectToMarketingSite();
       return;
