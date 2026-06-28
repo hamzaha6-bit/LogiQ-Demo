@@ -71,11 +71,22 @@ def rest_post_with_error(
 
 
 def rest_patch(table: str, match: Dict[str, str], payload: Dict[str, Any]) -> bool:
+    ok, _ = rest_patch_with_error(table, match, payload)
+    return ok
+
+
+def rest_patch_with_error(table: str, match: Dict[str, str], payload: Dict[str, Any]) -> Tuple[bool, str]:
     url = f"{env('SUPABASE_URL').rstrip('/')}/rest/v1/{table}"
+    if not env("SUPABASE_URL") or not env("SUPABASE_SERVICE_KEY"):
+        return False, "SUPABASE_URL or SUPABASE_SERVICE_KEY not configured"
     params = {k: f"eq.{v}" for k, v in match.items()}
     with httpx.Client(timeout=20) as client:
         resp = client.patch(url, headers=rest_headers("return=minimal"), params=params, json=payload)
-        return resp.status_code < 400
+        if resp.status_code >= 400:
+            err = f"HTTP {resp.status_code}: {resp.text[:500]}"
+            print(f"[supabase] PATCH {table} failed: {err}")
+            return False, err
+        return True, ""
 
 
 def rest_patch_filter(table: str, filters: Dict[str, str], payload: Dict[str, Any]) -> bool:

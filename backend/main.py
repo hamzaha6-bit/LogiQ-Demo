@@ -446,6 +446,9 @@ class AuditEventRequest(BaseModel):
 
 class ProfileUpdateRequest(BaseModel):
     onboarding_complete: Optional[bool] = None
+    name: Optional[str] = None
+    tos_accepted_at: Optional[str] = None
+    tos_version_accepted: Optional[str] = None
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────

@@ -5,6 +5,8 @@ CREATE TABLE IF NOT EXISTS user_profiles (
   name text,
   plan text DEFAULT 'starter',
   onboarding_complete boolean DEFAULT false,
+  tos_accepted_at timestamptz DEFAULT NULL,
+  tos_version_accepted text DEFAULT NULL,
   created_at timestamptz DEFAULT now()
 );
 
