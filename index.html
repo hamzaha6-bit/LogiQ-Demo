@@ -824,7 +824,6 @@ input[type=file].hidden-input { display: none; }
       <div class="user-info">
         <div class="name" id="user-name">Guest</div>
         <div class="plan" id="user-plan">Starter</div>
-        <a href="#" id="manage-sub-link" class="portal-link hidden" onclick="startPortal(); return false;" style="font-size:10px;color:var(--brand);margin-top:2px;display:block">Manage subscription</a>
       </div>
       <button class="logout-btn" onclick="doLogout()">Logout</button>
     </div>
@@ -1333,11 +1332,6 @@ function updateUserProfile() {
   document.getElementById('user-name').textContent = name;
   document.getElementById('user-plan').textContent = plan + ' Plan';
   document.getElementById('user-avatar').textContent = name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase() || '?';
-  const portalLink = document.getElementById('manage-sub-link');
-  if (portalLink) {
-    const showPortal = authSession && billingStatus?.status === 'active';
-    portalLink.classList.toggle('hidden', !showPortal);
-  }
 }
 
 async function refreshUserProfile() {
@@ -2559,9 +2553,13 @@ function validateBlueprintPlan(plan) {
 
 function renderBuild() {
   const el = document.getElementById('page-build');
-  if (!el.dataset.init) {
-    el.dataset.init = '1';
-    el.innerHTML = `
+  if (el.dataset.init) {
+    document.getElementById('build-chips')?.remove();
+    el.querySelector('.blueprint-agent-picker')?.remove();
+    return;
+  }
+  el.dataset.init = '1';
+  el.innerHTML = `
       <div class="chat-page">
         <div class="chat-page-header">
           <div>
@@ -2571,28 +2569,15 @@ function renderBuild() {
           <div class="logo-mark" style="width:36px;height:36px;font-size:16px">Q</div>
         </div>
         <div class="chat-messages-full" id="build-messages"></div>
-        <div class="chips" id="build-chips">
-          ${[
-            'Follow up with leads who open my email but don\'t reply within 3 days',
-            'When a new enquiry arrives, draft a reply and queue it for my approval',
-            'Sync new leads from a Google Sheet and send a personalised intro email',
-          ].map(c => `<button class="chip" onclick="sendBuildChip(${JSON.stringify(c)})">${esc(c)}</button>`).join('')}
-        </div>
-        <div class="blueprint-agent-picker">
-          <span>Run on agent</span>
-          <button type="button" class="agent-pick active" data-agent="aria" onclick="setBlueprintAgent('aria')">📣 Aria</button>
-          <button type="button" class="agent-pick" data-agent="nova" onclick="setBlueprintAgent('nova')">💬 Nova</button>
-        </div>
         <div class="blueprint-compose">
-          <textarea id="build-input" rows="3" placeholder="Describe what you want to automate in plain English…&#10;&#10;Example: I want to follow up with every lead who opens my email but doesn't reply within 3 days." onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendBuild();}"></textarea>
+          <textarea id="build-input" rows="3" placeholder="Describe what you want to automate in plain English…" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendBuild();}"></textarea>
           <div class="blueprint-send-row">
             <span class="hint">Ctrl+Enter to send</span>
             <button type="button" class="btn-blueprint-send" id="build-send-btn" onclick="sendBuild()">Send to Blueprint</button>
           </div>
         </div>
       </div>`;
-    addBuildMsg('assistant', 'Hi — tell me what you\'d like to automate. I\'ll map it to a workflow using Gmail, Google Sheets, and Calendar, then show you the plan before anything runs.');
-  }
+  addBuildMsg('assistant', 'Hi — tell me what you\'d like to automate. I\'ll map it to a workflow using Gmail, Google Sheets, and Calendar, then show you the plan before anything runs.');
 }
 
 function setBlueprintAgent(id) {
@@ -2641,9 +2626,7 @@ async function sendBuild() {
 
   if (btn) btn.disabled = true;
   try {
-    const agentHint = blueprintSelectedAgent === 'nova' ? 'nova' : 'aria';
-    const system = buildBlueprintSystemPrompt() + `\n\nUser selected agent preference: ${agentHint}`;
-    const reply = await callClaude(system, blueprintHistory, 2200);
+    const reply = await callClaude(buildBlueprintSystemPrompt(), blueprintHistory, 2200);
     document.getElementById('build-typing')?.remove();
     await handleBlueprintReply(reply);
   } catch (e) {
@@ -3174,6 +3157,7 @@ async function renderSettings() {
   const user = authSession?.user || {};
   const email = user.email || '';
   const displayName = user.name || '';
+  const showPortal = authSession && billingStatus?.status === 'active';
 
   el.innerHTML = `
     <div class="settings-page">
@@ -3202,6 +3186,14 @@ async function renderSettings() {
           </div>
           <button class="btn-ghost" onclick="settingsChangePassword()">Change password</button>
         </div>
+        ${showPortal ? `
+        <div class="settings-row">
+          <div class="settings-row-info">
+            <div class="settings-row-title">Manage subscription</div>
+            <div class="settings-row-desc">Update billing, payment method, or cancel via Stripe.</div>
+          </div>
+          <button class="btn-ghost" onclick="startPortal()">Manage subscription</button>
+        </div>` : ''}
         <div class="settings-row">
           <div class="settings-row-info">
             <div class="settings-row-title">Sign out of all devices</div>
@@ -3828,6 +3820,10 @@ async function renderAgentPage(id) {
   if (!agent) return;
   ensureAgentPage(id);
   const el = document.getElementById('page-agent-' + id);
+  if (el.dataset.shell && id === 'aria' && el.querySelector('.chat-toolbar')) {
+    el.dataset.shell = '';
+    el.innerHTML = '';
+  }
   if (el.dataset.shell && !document.getElementById('agent-dashboard-' + id)) {
     el.dataset.shell = '';
     el.innerHTML = '';
@@ -3842,6 +3838,7 @@ async function renderAgentPage(id) {
               <div><h2>${agent.name}</h2><p>${agent.role} · ● Live</p></div></div>
           </div>
           <div class="chat-messages-full" id="agent-messages-${id}"></div>
+          ${id !== 'aria' ? `
           <div class="chat-toolbar">
             <span class="csv-btn" onclick="document.getElementById('csv-chat-${id}').click()">↑ Upload CSV</span>
             <input type="file" class="hidden-input" id="csv-chat-${id}" accept=".csv" onchange="agentUploadCSV('${id}',this)">
@@ -3851,7 +3848,7 @@ async function renderAgentPage(id) {
             <input type="url" id="sheet-url-${id}" placeholder="https://docs.google.com/spreadsheets/d/…" style="flex:1;min-width:200px;padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px">
             <button class="btn-sm brand" onclick="connectGoogleSheet('${id}')">Connect sheet</button>
             <span id="sheet-status-${id}" style="font-size:12px;color:var(--text2)"></span>
-          </div>
+          </div>` : ''}
           <div class="chat-compose">
             <textarea id="agent-input-${id}" rows="1" placeholder="Message ${agent.name}…" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendAgentMessage('${id}');}"></textarea>
             <button class="btn-primary" onclick="sendAgentMessage('${id}')">Send</button>
