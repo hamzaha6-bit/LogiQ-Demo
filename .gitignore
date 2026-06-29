@@ -1,4 +1,4 @@
-# Secrets — never commit
+# Secrets - never commit
 backend/.env
 backend/token.json
 backend/oauth_state.json
@@ -6,3 +6,8 @@ backend/.env
 __pycache__/
 *.pyc
 .env
+client_secret_*.json
+token.json
+*token*.json
+mint_gmail_token.py
+oauth_state.json

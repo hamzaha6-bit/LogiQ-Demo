@@ -11,7 +11,15 @@ if _API_LIB not in sys.path:
 
 from supabase import create_client
 
-from supabase_rest import rest_get, rest_patch_with_error, rest_post_with_error, user_id_from_bearer
+from supabase_rest import (
+    postgrest_error_code,
+    rest_get,
+    rest_get_with_error,
+    rest_patch_with_error,
+    rest_post_with_error,
+    sanitize_postgrest_error,
+    user_id_from_bearer,
+)
 
 try:
     from hook_handler import handle_user_created_hook, json_response as hook_json_response
@@ -32,14 +40,32 @@ def _is_user_created_hook_path(path: str) -> bool:
 
 
 def _profile_row(user_id: str):
-    rows = rest_get(
+    rows, status, body = rest_get_with_error(
         "user_profiles",
         {
             "id": f"eq.{user_id}",
             "select": "name,plan,onboarding_complete,tos_accepted_at,tos_version_accepted",
         },
     )
+    if status >= 400:
+        print(
+            f"[auth] profile read failed user_id={user_id} "
+            f"status={status} body={sanitize_postgrest_error(body)}"
+        )
+        return None
     return rows[0] if rows else None
+
+
+def _postgrest_failure(step: str, status: int, body: str) -> dict:
+    safe = sanitize_postgrest_error(body)
+    code = postgrest_error_code(safe)
+    print(f"[auth] profile {step} postgrest error status={status} code={code} body={safe}")
+    return {
+        "detail": f"Profile update failed during {step}",
+        "postgrest_status": status,
+        "postgrest_error": safe,
+        "postgrest_code": code,
+    }
 
 
 def _ensure_profile(user_id: str, name: str = "", email: str = ""):
@@ -227,14 +253,19 @@ class handler(BaseHTTPRequestHandler):
             return
 
         _ensure_profile(user_id)
-        ok, patch_err = rest_patch_with_error("user_profiles", {"id": user_id}, updates)
+        ok, pg_status, pg_body = rest_patch_with_error("user_profiles", {"id": user_id}, updates)
         if not ok:
-            detail = patch_err or "Failed to update profile — check SUPABASE_SERVICE_KEY and user_profiles table"
-            self._json(502, {"detail": detail})
+            payload = _postgrest_failure("patch", pg_status, pg_body)
+            api_status = 502 if pg_status == 0 else min(max(pg_status, 400), 599)
+            self._json(api_status, payload)
             return
 
         profile = _profile_row(user_id) or {}
-        self._json(200, _profile_response(user_id, profile))
+        response = _profile_response(user_id, profile)
+        # If PostgREST read lags (schema cache) but PATCH succeeded, return what we wrote.
+        for key, value in updates.items():
+            response[key] = value
+        self._json(200, response)
 
     def _signup(self, body, url, anon_key):
         name = (body.get("name") or "").strip()

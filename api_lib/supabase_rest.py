@@ -2,10 +2,39 @@
 from __future__ import annotations
 
 import os
+import re
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
+
+
+def sanitize_postgrest_error(text: str, max_len: int = 800) -> str:
+    """Redact tokens/secrets before logging or returning PostgREST bodies."""
+    s = (text or "")[:max_len]
+    s = re.sub(
+        r"eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+",
+        "[redacted-jwt]",
+        s,
+    )
+    s = re.sub(
+        r"(?i)(service_role|apikey|password|secret|token)([\"':=\s]+)[^\s,\"'}\]]+",
+        r"\1\2[redacted]",
+        s,
+    )
+    return s
+
+
+def postgrest_error_code(text: str) -> Optional[str]:
+    m = re.search(r"PGRST\d+", text or "")
+    if m:
+        return m.group(0)
+    lower = (text or "").lower()
+    if "42501" in lower or "permission denied" in lower:
+        return "42501"
+    if "42703" in lower or "does not exist" in lower:
+        return "42703"
+    return None
 
 
 def env(key: str) -> str:
@@ -25,15 +54,24 @@ def rest_headers(prefer: str = "return=representation") -> Dict[str, str]:
 
 
 def rest_get(table: str, params: Optional[Dict[str, str]] = None) -> List[Dict[str, Any]]:
+    rows, _status, _body = rest_get_with_error(table, params)
+    return rows
+
+
+def rest_get_with_error(
+    table: str, params: Optional[Dict[str, str]] = None
+) -> Tuple[List[Dict[str, Any]], int, str]:
     url = f"{env('SUPABASE_URL').rstrip('/')}/rest/v1/{table}"
     if not env("SUPABASE_URL") or not env("SUPABASE_SERVICE_KEY"):
-        return []
+        return [], 0, "SUPABASE_URL or SUPABASE_SERVICE_KEY not configured"
     with httpx.Client(timeout=20) as client:
         resp = client.get(url, headers=rest_headers("return=representation"), params=params or {})
         if resp.status_code >= 400:
-            return []
+            body = sanitize_postgrest_error(resp.text)
+            print(f"[supabase] GET {table} failed: HTTP {resp.status_code}: {body}")
+            return [], resp.status_code, body
         data = resp.json()
-        return data if isinstance(data, list) else []
+        return (data if isinstance(data, list) else []), resp.status_code, ""
 
 
 def rest_post(
@@ -71,22 +109,26 @@ def rest_post_with_error(
 
 
 def rest_patch(table: str, match: Dict[str, str], payload: Dict[str, Any]) -> bool:
-    ok, _ = rest_patch_with_error(table, match, payload)
+    ok, _status, _body = rest_patch_with_error(table, match, payload)
     return ok
 
 
-def rest_patch_with_error(table: str, match: Dict[str, str], payload: Dict[str, Any]) -> Tuple[bool, str]:
+def rest_patch_with_error(
+    table: str, match: Dict[str, str], payload: Dict[str, Any]
+) -> Tuple[bool, int, str]:
+    """Returns (ok, postgrest_status_code, raw_response_body)."""
     url = f"{env('SUPABASE_URL').rstrip('/')}/rest/v1/{table}"
     if not env("SUPABASE_URL") or not env("SUPABASE_SERVICE_KEY"):
-        return False, "SUPABASE_URL or SUPABASE_SERVICE_KEY not configured"
+        return False, 0, "SUPABASE_URL or SUPABASE_SERVICE_KEY not configured"
     params = {k: f"eq.{v}" for k, v in match.items()}
     with httpx.Client(timeout=20) as client:
         resp = client.patch(url, headers=rest_headers("return=minimal"), params=params, json=payload)
         if resp.status_code >= 400:
-            err = f"HTTP {resp.status_code}: {resp.text[:500]}"
-            print(f"[supabase] PATCH {table} failed: {err}")
-            return False, err
-        return True, ""
+            body = resp.text or ""
+            safe = sanitize_postgrest_error(body)
+            print(f"[supabase] PATCH {table} failed: HTTP {resp.status_code}: {safe}")
+            return False, resp.status_code, body
+        return True, resp.status_code, resp.text or ""
 
 
 def rest_patch_filter(table: str, filters: Dict[str, str], payload: Dict[str, Any]) -> bool:
