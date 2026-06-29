@@ -1226,8 +1226,28 @@ async function acceptTos() {
         console.error('ToS accept failed: invalid JSON', res.status, bodyText, parseErr);
       }
     }
-    if (!res.ok || !profile) {
+    if (!res.ok) {
       console.error('ToS accept failed:', res.status, bodyText);
+      const pgStatus = profile?.postgrest_status;
+      const pgError = profile?.postgrest_error;
+      const pgCode = profile?.postgrest_code;
+      if (pgStatus != null) {
+        console.error('ToS PostgREST error:', { postgrest_status: pgStatus, postgrest_code: pgCode, postgrest_error: pgError });
+      }
+      errEl.textContent = 'Something went wrong. Please try again.';
+      errEl.classList.remove('hidden');
+      agreeBtn.disabled = false;
+      return;
+    }
+    if (!profile) {
+      console.error('ToS accept failed: empty response body', res.status);
+      errEl.textContent = 'Something went wrong. Please try again.';
+      errEl.classList.remove('hidden');
+      agreeBtn.disabled = false;
+      return;
+    }
+    if (!profile.tos_accepted_at) {
+      console.error('ToS accept failed: profile missing tos_accepted_at', profile);
       errEl.textContent = 'Something went wrong. Please try again.';
       errEl.classList.remove('hidden');
       agreeBtn.disabled = false;
