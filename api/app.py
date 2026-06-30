@@ -150,7 +150,15 @@ class handler(BaseHTTPRequestHandler):
             self._json(400, {"detail": "workflow_id is required"})
             return
 
-        status, payload = run_workflow_for_user(user_id, workflow_id)
+        workflow_run_id = (body.get("workflow_run_id") or "").strip() or None
+        approval_id = (body.get("approval_id") or "").strip() or None
+
+        status, payload = run_workflow_for_user(
+            user_id,
+            workflow_id,
+            workflow_run_id=workflow_run_id,
+            approval_id=approval_id,
+        )
         self._json(status, payload)
 
     def _cron_run_workflows(self):
