@@ -2880,7 +2880,6 @@ function renderBlueprintPlanReview(plan) {
           <div class="blueprint-schedule-row">
             <select id="blueprint-schedule-freq" onchange="onBlueprintScheduleChange()">
               <option value="once">Once (on deploy only)</option>
-              <option value="hourly">Every hour</option>
               <option value="daily">Daily</option>
               <option value="weekly">Weekly</option>
             </select>
@@ -2937,7 +2936,6 @@ function scheduleSummaryLabel(scheduleJson) {
   if (!scheduleJson) return '';
   try {
     const s = JSON.parse(scheduleJson);
-    if (s.freq === 'hourly') return ' Runs every hour.';
     if (s.freq === 'daily') return ` Runs daily at ${s.time_utc || '09:00'} UTC.`;
     if (s.freq === 'weekly') {
       const days = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
