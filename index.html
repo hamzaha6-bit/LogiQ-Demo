@@ -1915,7 +1915,8 @@ CREATE TABLE IF NOT EXISTS reports (id uuid DEFAULT gen_random_uuid() PRIMARY KE
 CREATE TABLE IF NOT EXISTS tasks (id uuid DEFAULT gen_random_uuid() PRIMARY KEY, title text, supplier text, due_date date, status text DEFAULT 'open', notes text, created_at timestamptz DEFAULT now());
 CREATE TABLE IF NOT EXISTS agent_actions (id uuid DEFAULT gen_random_uuid() PRIMARY KEY, agent text, item_id text, reasoning text, action_type text, output text, status text DEFAULT 'queued', created_at timestamptz DEFAULT now());
 CREATE TABLE IF NOT EXISTS workflows (id uuid DEFAULT gen_random_uuid() PRIMARY KEY, user_id uuid, agent_id text, name text, description text, trigger_description text, steps jsonb DEFAULT '[]', status text DEFAULT 'active', schedule text, next_run_at timestamptz, last_run_at timestamptz, created_at timestamptz DEFAULT now(), updated_at timestamptz DEFAULT now());
-CREATE TABLE IF NOT EXISTS workflow_approvals (id uuid DEFAULT gen_random_uuid() PRIMARY KEY, user_id uuid, workflow_id uuid, agent_id text, step_number int, primitive_code text, action_name text, integration text, summary text, payload jsonb DEFAULT '{}', status text DEFAULT 'pending', expires_at timestamptz, resolved_at timestamptz, created_at timestamptz DEFAULT now());`;
+CREATE TABLE IF NOT EXISTS workflow_approvals (id uuid DEFAULT gen_random_uuid() PRIMARY KEY, user_id uuid, workflow_id uuid, agent_id text, step_number int, primitive_code text, action_name text, integration text, summary text, payload jsonb DEFAULT '{}', status text DEFAULT 'pending', expires_at timestamptz, resolved_at timestamptz, workflow_run_id uuid, created_at timestamptz DEFAULT now());
+CREATE TABLE IF NOT EXISTS workflow_runs (id uuid DEFAULT gen_random_uuid() PRIMARY KEY, workflow_id uuid, started_at timestamptz DEFAULT now(), completed_at timestamptz, status text DEFAULT 'running', context_json jsonb DEFAULT '{}', error text);`;
 
 const ACTION_REGISTRY = {
   'GM-01': { integration:'Gmail', name:'List messages', requires_approval:false },
@@ -3129,6 +3130,38 @@ async function approveWorkflowApproval(approvalId) {
   if (!row || row.status !== 'pending') return;
   const agent = deployedAgents.get(row.agent_id);
   await dbUpdate('workflow_approvals', approvalId, { status: 'approved', resolved_at: new Date().toISOString() });
+
+  if (row.workflow_run_id) {
+    try {
+      const res = await apiFetch('/api/workflows/run', {
+        method: 'POST',
+        body: {
+          workflow_id: row.workflow_id,
+          workflow_run_id: row.workflow_run_id,
+          approval_id: approvalId,
+        },
+      });
+      const data = await safeJson(res, {});
+      if (!res.ok) {
+        toast(data.detail || data.message || 'Failed to resume workflow', 'err');
+      } else if (data.status === 'pending_approval') {
+        toast('Approval needed — check your dashboard');
+        await loadPendingApprovals();
+      } else if (data.status === 'completed') {
+        toast('Workflow completed', 'success');
+      } else if (data.status === 'failed') {
+        toast(data.detail || 'Workflow step failed', 'err');
+      } else {
+        toast('Action approved', 'success');
+      }
+    } catch (e) {
+      toast('Failed to resume workflow', 'err');
+    }
+    logAuditEvent(agent?.name || row.agent_id, 'approval_granted', { approval_id: approvalId, code: row.primitive_code, workflow_run_id: row.workflow_run_id });
+    updateApprovalBadgeCount();
+    if (currentPage === 'dashboard') renderDashboard();
+    return;
+  }
 
   const code = row.primitive_code;
   const payload = row.payload || {};
