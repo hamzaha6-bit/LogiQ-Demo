@@ -15,6 +15,7 @@ ACTION_COST_PENCE: Dict[str, int] = {
     "blueprint_chat": 20,
     "agent_action": 10,
     "integration": 2,
+    "workflow_run": 10,
     "action": 10,
 }
 
@@ -74,7 +75,7 @@ def check_execution_gate(user_id: str, action_type: str = "action") -> GateResul
     if not entitlement:
         return GateResult(
             allowed=False,
-            reason="Please subscribe to continue using Vision.",
+            reason="Please subscribe to continue using LogiQ.",
             error="no_active_subscription",
             client_id=client_id,
         )
@@ -83,7 +84,7 @@ def check_execution_gate(user_id: str, action_type: str = "action") -> GateResul
     if status != "active":
         return GateResult(
             allowed=False,
-            reason="Please subscribe to continue using Vision.",
+            reason="Please subscribe to continue using LogiQ.",
             error="no_active_subscription",
             client_id=client_id,
         )

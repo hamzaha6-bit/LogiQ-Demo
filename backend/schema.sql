@@ -127,6 +127,9 @@ CREATE TABLE IF NOT EXISTS workflows (
   trigger_description text,
   steps jsonb NOT NULL DEFAULT '[]'::jsonb,
   status text DEFAULT 'active',
+  schedule text DEFAULT NULL,
+  next_run_at timestamptz DEFAULT NULL,
+  last_run_at timestamptz DEFAULT NULL,
   created_at timestamptz DEFAULT now(),
   updated_at timestamptz DEFAULT now()
 );
