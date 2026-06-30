@@ -75,7 +75,7 @@ def check_execution_gate(user_id: str, action_type: str = "action") -> GateResul
     if not entitlement:
         return GateResult(
             allowed=False,
-            reason="Please subscribe to continue using Vision.",
+            reason="Please subscribe to continue using LogiQ.",
             error="no_active_subscription",
             client_id=client_id,
         )
@@ -84,7 +84,7 @@ def check_execution_gate(user_id: str, action_type: str = "action") -> GateResul
     if status != "active":
         return GateResult(
             allowed=False,
-            reason="Please subscribe to continue using Vision.",
+            reason="Please subscribe to continue using LogiQ.",
             error="no_active_subscription",
             client_id=client_id,
         )
