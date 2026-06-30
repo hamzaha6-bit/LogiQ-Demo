@@ -1,7 +1,10 @@
 {
   "version": 2,
+  "crons": [
+    { "path": "/api/cron/workflows", "schedule": "0 * * * *" }
+  ],
   "builds": [
-    { "src": "api/app.py", "use": "@vercel/python", "config": { "includeFiles": "api_lib/billing_checkout.py,api_lib/billing_portal.py,api_lib/billing_status.py,api_lib/billing_webhook.py,api_lib/entitlements.py,api_lib/gmail_send.py,api_lib/hook_handler.py,api_lib/http_auth.py,api_lib/stripe_client.py,api_lib/supabase_rest.py,api_lib/tiers.py,api_lib/topup_checkout.py,api_lib/usage.py" } },
+    { "src": "api/app.py", "use": "@vercel/python", "config": { "includeFiles": "api_lib/billing_checkout.py,api_lib/billing_portal.py,api_lib/billing_status.py,api_lib/billing_webhook.py,api_lib/entitlements.py,api_lib/execution_gate.py,api_lib/gmail_send.py,api_lib/hook_handler.py,api_lib/http_auth.py,api_lib/stripe_client.py,api_lib/supabase_rest.py,api_lib/tiers.py,api_lib/topup_checkout.py,api_lib/usage.py,api_lib/workflow_runner.py,api_lib/workflow_scheduler.py" } },
     {
       "src": "api/auth.py",
       "use": "@vercel/python",
@@ -38,6 +41,8 @@
     { "src": "/api/billing/webhook", "dest": "/api/app.py" },
     { "src": "/api/audit/log", "dest": "/api/app.py" },
     { "src": "/api/workflows/emergency-stop", "dest": "/api/app.py" },
+    { "src": "/api/workflows/run", "dest": "/api/app.py" },
+    { "src": "/api/cron/workflows", "dest": "/api/app.py" },
     { "src": "/api/auth/profile", "dest": "/api/auth.py" },
     { "src": "/api/chat/test", "dest": "/api/ai.py" },
     { "src": "/api/chat", "dest": "/api/ai.py" },

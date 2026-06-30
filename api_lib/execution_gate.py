@@ -15,6 +15,7 @@ ACTION_COST_PENCE: Dict[str, int] = {
     "blueprint_chat": 20,
     "agent_action": 10,
     "integration": 2,
+    "workflow_run": 10,
     "action": 10,
 }
 

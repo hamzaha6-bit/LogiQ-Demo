@@ -17,6 +17,7 @@ from billing_webhook import WebhookError, process_event
 from http_auth import resolve_user_id
 from supabase_rest import pause_workflows_for_user
 from topup_checkout import TopupError, process_topup
+from workflow_runner import run_due_scheduled_workflows, run_workflow_for_user
 
 
 class handler(BaseHTTPRequestHandler):
@@ -51,6 +52,8 @@ class handler(BaseHTTPRequestHandler):
             self._json(status, payload)
         elif path.endswith("/audit/log"):
             self._json(200, {"logs": [], "entries": []})
+        elif path.endswith("/cron/workflows"):
+            self._cron_run_workflows()
         else:
             self._json(404, {"detail": f"Unknown route: {path}"})
 
@@ -58,6 +61,8 @@ class handler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path.rstrip("/")
         if path.endswith("/workflows/emergency-stop"):
             self._emergency_stop_workflows()
+        elif path.endswith("/workflows/run"):
+            self._run_workflow()
         elif path.endswith("/billing/checkout"):
             self._billing_checkout()
         elif path.endswith("/billing/topup"):
@@ -132,6 +137,38 @@ class handler(BaseHTTPRequestHandler):
             return
 
         self._json(200, {"status": "ok", "paused_count": paused_count})
+
+    def _run_workflow(self):
+        user_id = resolve_user_id(self)
+        if not user_id:
+            self._json(401, {"detail": "Valid Bearer token required"})
+            return
+
+        body = self._read_json_body()
+        workflow_id = (body.get("workflow_id") or "").strip()
+        if not workflow_id:
+            self._json(400, {"detail": "workflow_id is required"})
+            return
+
+        status, payload = run_workflow_for_user(user_id, workflow_id)
+        self._json(status, payload)
+
+    def _cron_run_workflows(self):
+        secret = (os.environ.get("CRON_SECRET") or "").strip()
+        if not secret:
+            self._json(503, {"detail": "CRON_SECRET not configured"})
+            return
+        auth = (self.headers.get("Authorization") or "").strip()
+        if auth != f"Bearer {secret}":
+            self._json(401, {"detail": "Unauthorized"})
+            return
+
+        try:
+            result = run_due_scheduled_workflows()
+            self._json(200, result)
+        except Exception as exc:
+            print(f"[cron/workflows] failed: {exc}")
+            self._json(500, {"detail": "Scheduled workflow run failed"})
 
     def _json(self, status: int, payload: dict):
         self.send_response(status)

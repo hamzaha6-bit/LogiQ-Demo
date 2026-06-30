@@ -356,6 +356,18 @@ a { color: var(--brand); text-decoration: none; }
 .step-badge.auto { background: var(--ok-bg); color: var(--ok); }
 .step-badge.approval { background: #FEF3C7; color: #B45309; }
 .blueprint-plan-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+.blueprint-schedule {
+  margin-bottom: 16px; padding: 14px 16px; border: 1px solid var(--border);
+  border-radius: 10px; background: var(--surface2);
+}
+.blueprint-schedule label { display: block; font-size: 12px; font-weight: 600; color: var(--text2); margin-bottom: 8px; }
+.blueprint-schedule-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.blueprint-schedule-row select,
+.blueprint-schedule-row input[type="time"] {
+  font-size: 13px; padding: 8px 10px; border: 1px solid var(--border);
+  border-radius: 8px; background: var(--surface); color: var(--text);
+}
+.blueprint-schedule-hint { font-size: 11px; color: var(--text3); margin-top: 8px; }
 .approval-card {
   padding: 16px; border: 1px solid var(--border); border-radius: 14px;
   background: var(--bg2); margin-bottom: 12px;
@@ -1902,7 +1914,7 @@ CREATE TABLE IF NOT EXISTS enquiries (id uuid DEFAULT gen_random_uuid() PRIMARY 
 CREATE TABLE IF NOT EXISTS reports (id uuid DEFAULT gen_random_uuid() PRIMARY KEY, title text, period text, raw_data text, content text, created_at timestamptz DEFAULT now());
 CREATE TABLE IF NOT EXISTS tasks (id uuid DEFAULT gen_random_uuid() PRIMARY KEY, title text, supplier text, due_date date, status text DEFAULT 'open', notes text, created_at timestamptz DEFAULT now());
 CREATE TABLE IF NOT EXISTS agent_actions (id uuid DEFAULT gen_random_uuid() PRIMARY KEY, agent text, item_id text, reasoning text, action_type text, output text, status text DEFAULT 'queued', created_at timestamptz DEFAULT now());
-CREATE TABLE IF NOT EXISTS workflows (id uuid DEFAULT gen_random_uuid() PRIMARY KEY, user_id uuid, agent_id text, name text, description text, trigger_description text, steps jsonb DEFAULT '[]', status text DEFAULT 'active', created_at timestamptz DEFAULT now());
+CREATE TABLE IF NOT EXISTS workflows (id uuid DEFAULT gen_random_uuid() PRIMARY KEY, user_id uuid, agent_id text, name text, description text, trigger_description text, steps jsonb DEFAULT '[]', status text DEFAULT 'active', schedule text, next_run_at timestamptz, last_run_at timestamptz, created_at timestamptz DEFAULT now(), updated_at timestamptz DEFAULT now());
 CREATE TABLE IF NOT EXISTS workflow_approvals (id uuid DEFAULT gen_random_uuid() PRIMARY KEY, user_id uuid, workflow_id uuid, agent_id text, step_number int, primitive_code text, action_name text, integration text, summary text, payload jsonb DEFAULT '{}', status text DEFAULT 'pending', expires_at timestamptz, resolved_at timestamptz, created_at timestamptz DEFAULT now());`;
 
 const ACTION_REGISTRY = {
@@ -2863,6 +2875,32 @@ function renderBlueprintPlanReview(plan) {
           <p>${esc(plan.summary || '')} · Assigned to <strong>${esc(agentLabel)}</strong></p>
         </div>
         <div class="blueprint-steps">${stepsHtml}</div>
+        <div class="blueprint-schedule">
+          <label for="blueprint-schedule-freq">Run schedule</label>
+          <div class="blueprint-schedule-row">
+            <select id="blueprint-schedule-freq" onchange="onBlueprintScheduleChange()">
+              <option value="once">Once (on deploy only)</option>
+              <option value="hourly">Every hour</option>
+              <option value="daily">Daily</option>
+              <option value="weekly">Weekly</option>
+            </select>
+            <span id="blueprint-schedule-time-wrap" style="display:none">
+              <input type="time" id="blueprint-schedule-time" value="09:00">
+            </span>
+            <span id="blueprint-schedule-weekday-wrap" style="display:none">
+              <select id="blueprint-schedule-weekday">
+                <option value="0">Monday</option>
+                <option value="1">Tuesday</option>
+                <option value="2">Wednesday</option>
+                <option value="3">Thursday</option>
+                <option value="4">Friday</option>
+                <option value="5">Saturday</option>
+                <option value="6">Sunday</option>
+              </select>
+            </span>
+          </div>
+          <p class="blueprint-schedule-hint">Times are UTC. Recurring workflows run automatically via the scheduler.</p>
+        </div>
         <div class="blueprint-plan-actions">
           <button class="btn-primary" onclick="deployBlueprintPlan()">Approve and deploy</button>
           <button class="btn-ghost" onclick="editBlueprintPlan()">Edit</button>
@@ -2871,6 +2909,42 @@ function renderBlueprintPlanReview(plan) {
     </div>`;
   box.appendChild(wrap);
   box.scrollTop = box.scrollHeight;
+  onBlueprintScheduleChange();
+}
+
+function onBlueprintScheduleChange() {
+  const freq = document.getElementById('blueprint-schedule-freq')?.value || 'once';
+  const timeWrap = document.getElementById('blueprint-schedule-time-wrap');
+  const dayWrap = document.getElementById('blueprint-schedule-weekday-wrap');
+  if (timeWrap) timeWrap.style.display = (freq === 'daily' || freq === 'weekly') ? '' : 'none';
+  if (dayWrap) dayWrap.style.display = freq === 'weekly' ? '' : 'none';
+}
+
+function readBlueprintSchedule() {
+  const freq = document.getElementById('blueprint-schedule-freq')?.value || 'once';
+  if (freq === 'once') return null;
+  const schedule = { freq };
+  if (freq === 'daily' || freq === 'weekly') {
+    schedule.time_utc = document.getElementById('blueprint-schedule-time')?.value || '09:00';
+  }
+  if (freq === 'weekly') {
+    schedule.weekday = parseInt(document.getElementById('blueprint-schedule-weekday')?.value || '0', 10);
+  }
+  return JSON.stringify(schedule);
+}
+
+function scheduleSummaryLabel(scheduleJson) {
+  if (!scheduleJson) return '';
+  try {
+    const s = JSON.parse(scheduleJson);
+    if (s.freq === 'hourly') return ' Runs every hour.';
+    if (s.freq === 'daily') return ` Runs daily at ${s.time_utc || '09:00'} UTC.`;
+    if (s.freq === 'weekly') {
+      const days = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
+      return ` Runs weekly on ${days[s.weekday || 0]} at ${s.time_utc || '09:00'} UTC.`;
+    }
+  } catch (e) {}
+  return '';
 }
 
 function editBlueprintPlan() {
@@ -2890,6 +2964,7 @@ async function deployBlueprintPlan() {
   }
   const agent = deployedAgents.get(agentId);
   const userId = getCurrentUserId();
+  const scheduleJson = readBlueprintSchedule();
   const record = {
     user_id: userId,
     agent_id: agentId,
@@ -2898,11 +2973,12 @@ async function deployBlueprintPlan() {
     trigger_description: blueprintHistory.find(m => m.role === 'user')?.content || '',
     steps: plan.steps,
     status: 'active',
+    schedule: scheduleJson,
     updated_at: new Date().toISOString(),
   };
   const saved = await dbInsert('workflows', record);
   logAuditEvent(agent.name, 'workflow_deploy', { workflow_id: saved.id, title: record.name, status: 'completed' });
-  addBuildMsg('assistant', '✓ **' + record.name + '** is live on **' + agent.name + '**. I\'ll pause for your approval before any irreversible action.', 'deployed');
+  addBuildMsg('assistant', '✓ **' + record.name + '** is live on **' + agent.name + '**.' + scheduleSummaryLabel(scheduleJson) + ' I\'ll pause for your approval before any irreversible action.', 'deployed');
   document.getElementById('blueprint-plan-review')?.remove();
   blueprintPlan = null;
   toast('Workflow deployed', 'success');
@@ -2940,24 +3016,36 @@ async function emergencyStopWorkflows() {
 }
 
 async function runWorkflow(workflowId) {
-  const { data: workflows } = await dbGet('workflows', {});
-  const wf = workflows.find(w => w.id === workflowId);
-  if (!wf || wf.status !== 'active') return;
-  const agent = deployedAgents.get(wf.agent_id);
-  if (!agent) return;
-
-  for (const step of wf.steps || []) {
-    if (step.requires_approval) {
-      await createWorkflowApproval(wf, step);
-      logAuditEvent(agent.name, 'workflow_paused', { workflow_id: wf.id, step: step.step, code: step.code });
+  if (!getAuthBearerToken()) {
+    toast('Sign in to run workflows', 'err');
+    return;
+  }
+  try {
+    const res = await apiFetch('/api/workflows/run', { method: 'POST', body: { workflow_id: workflowId } });
+    const data = await safeJson(res, {});
+    if (!res.ok) {
+      if (data.error === 'action_limit_reached' || data.error === 'spend_cap_reached') {
+        showActionLimitToast(data.message || 'Action limit reached');
+      } else if (data.error === 'no_active_subscription') {
+        toast(data.message || 'Subscription required', 'err');
+      } else {
+        toast(data.message || data.detail || 'Workflow run failed', 'err');
+      }
+      return;
+    }
+    if (data.status === 'pending_approval') {
+      await loadPendingApprovals();
       updateApprovalBadgeCount();
       if (currentPage === 'dashboard') renderDashboard();
       toast('Approval needed — check your dashboard');
       return;
     }
-    logAuditEvent(agent.name, 'workflow_step', { workflow_id: wf.id, step: step.step, code: step.code, status: 'completed' });
+    if (data.status === 'completed') {
+      toast('Workflow completed', 'success');
+    }
+  } catch (err) {
+    toast(err.message || 'Workflow run failed', 'err');
   }
-  toast('Workflow completed');
 }
 
 async function createWorkflowApproval(workflow, step) {
