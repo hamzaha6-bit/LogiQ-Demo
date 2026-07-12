@@ -721,6 +721,8 @@ async def chat(req: ChatRequest, request: Request):
         content = response.content[0].text if response.content else ""
         if gate and gate.allowed and record_allowed_action is not None:
             record_allowed_action(gate.client_id, "blueprint_chat")
+        if user_id:
+            await usage.record_api_call(user_id)
         return ChatResponse(content=content)
     except anthropic.APIError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
@@ -740,6 +742,7 @@ async def agent_run(req: AgentRunRequest, request: Request):
         "settings": req.settings.model_dump(),
         "items": [item.model_dump() for item in req.items],
     }
+    await usage.record_api_call(user_id)
 
     async def stream():
         for chunk in api_stream_agent_run(user_id, body, anthropic_client=client, model=MODEL):
@@ -775,6 +778,7 @@ async def send_gmail(req: GmailSendRequest, request: Request):
         raise HTTPException(status_code=502, detail=message_id)
     if user_id and gate and record_allowed_action is not None:
         record_allowed_action(gate.client_id, "integration")
+        await usage.record_email_sent(user_id)
         await audit.log_event(
             user_id,
             "Gmail",

@@ -22,6 +22,7 @@ from google_oauth import (
 )
 from http_auth import resolve_user_id
 from sheets_service import SchemaMismatchError, SheetsError, connect, connection_status, poll, read_sheet, write_row
+from usage import record_email_sent
 
 
 def _parse_iso(value: str) -> str:
@@ -227,6 +228,7 @@ class handler(BaseHTTPRequestHandler):
                 self._json(502, {"detail": message_id})
                 return
             record_allowed_action(gate.client_id, "integration")
+            record_email_sent(user_id)
             self._json(200, {"success": True, "message_id": message_id, "configured": True, "from": health.get("email")})
         except PermissionError as exc:
             self._json(401, {"detail": str(exc)})
