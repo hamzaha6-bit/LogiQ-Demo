@@ -1,0 +1,906 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&amp;family=IBM+Plex+Mono:wght@400;500;600&amp;family=Instrument+Sans:wght@400;500;600&amp;display=swap">
+<style>
+  html { background:#EFEDFB; }
+  body { margin:0; background:#EFEDFB; color:#16151A; font-family:'Instrument Sans',system-ui,sans-serif; -webkit-font-smoothing:antialiased; }
+  a { color:#4A3FE0; text-decoration:none; }
+  a:hover { color:#16151A; }
+  ::selection { background:#5B4BF5; color:#fff; }
+  input { font-family:inherit; }
+  input:focus { outline:none; }
+  @keyframes lqBlink { 0%,100% { opacity:1; } 50% { opacity:0; } }
+  @keyframes lqIn { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:none; } }
+</style>
+</helmet>
+
+<!-- ═══════════ ONBOARDING (full-screen, no shell) ═══════════ -->
+<sc-if value="{{ isOnboarding }}" hint-placeholder-val="{{ false }}">
+<div data-screen-label="Onboarding" style="min-height:100vh; background:#EFEDFB; display:flex; flex-direction:column; align-items:center; padding:32px 24px 64px; box-sizing:border-box;">
+  <div style="width:100%; max-width:640px; display:flex; justify-content:space-between; align-items:center;">
+    <span style="font-family:'Archivo',sans-serif; font-weight:700; font-size:20px; letter-spacing:-.5px;">Logi<span style="color:#5B4BF5;">Q</span></span>
+    <span onClick="{{ obSkip }}" style="font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:.12em; text-transform:uppercase; color:rgba(22,21,26,.45); cursor:pointer;" style-hover="color:#5B4BF5;">Skip setup →</span>
+  </div>
+
+  <div style="width:100%; max-width:640px; margin-top:96px; animation:lqIn .4s ease;">
+    <div style="font-family:'IBM Plex Mono',monospace; font-size:11.5px; letter-spacing:.14em; text-transform:uppercase; color:#5B4BF5;">{{ obStepLabel }}</div>
+
+    <sc-if value="{{ obIsStep1 }}" hint-placeholder-val="{{ true }}">
+      <h1 style="margin:22px 0 0; font-family:'Archivo',sans-serif; font-weight:500; font-size:44px; letter-spacing:-.04em; line-height:1.05;">Name your workspace.</h1>
+      <p style="margin:16px 0 0; font-size:17px; line-height:1.65; color:rgba(22,21,26,.62);">This is where your agents live and where you approve their work.</p>
+      <div style="display:flex; gap:12px; margin-top:36px;">
+        <input value="{{ obName }}" onChange="{{ obNameChange }}" onKeyDown="{{ obNameKey }}" placeholder="e.g. Northfield Ops" style="flex:1; background:#fff; border:1px solid rgba(22,21,26,.14); border-radius:10px; padding:17px 20px; font-size:16px; color:#16151A;">
+        <button onClick="{{ obNameSubmit }}" style="background:#16151A; color:#fff; border:none; border-radius:10px; padding:0 34px; font-family:'Instrument Sans',sans-serif; font-weight:500; font-size:15.5px; cursor:pointer;" style-hover="background:#5B4BF5;">Continue</button>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ obIsStep2 }}" hint-placeholder-val="{{ false }}">
+      <h1 style="margin:22px 0 0; font-family:'Archivo',sans-serif; font-weight:500; font-size:44px; letter-spacing:-.04em; line-height:1.05;">Connect your inbox.</h1>
+      <p style="margin:16px 0 0; font-size:17px; line-height:1.65; color:rgba(22,21,26,.62);">Agents draft in your voice, from your account. You approve every send.</p>
+      <div style="display:flex; align-items:center; justify-content:space-between; background:#fff; border:1px solid rgba(22,21,26,.12); border-radius:12px; padding:26px 28px; margin-top:36px;">
+        <div>
+          <div style="font-family:'Archivo',sans-serif; font-weight:600; font-size:19px;">Gmail</div>
+          <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:.12em; text-transform:uppercase; color:rgba(22,21,26,.45); margin-top:6px;">{{ obGmailStatus }}</div>
+        </div>
+        <button onClick="{{ obConnectGmail }}" style="background:#16151A; color:#fff; border:none; border-radius:10px; padding:14px 28px; font-family:'Instrument Sans',sans-serif; font-weight:500; font-size:15px; cursor:pointer;" style-hover="background:#5B4BF5;">Connect</button>
+      </div>
+      <div onClick="{{ obSkipStep2 }}" style="margin-top:18px; font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:.12em; text-transform:uppercase; color:rgba(22,21,26,.4); cursor:pointer;" style-hover="color:#5B4BF5;">Connect later →</div>
+    </sc-if>
+
+    <sc-if value="{{ obIsStep3 }}" hint-placeholder-val="{{ false }}">
+      <h1 style="margin:22px 0 0; font-family:'Archivo',sans-serif; font-weight:500; font-size:44px; letter-spacing:-.04em; line-height:1.05;">Turn on your first agent.</h1>
+      <p style="margin:16px 0 0; font-size:17px; line-height:1.65; color:rgba(22,21,26,.62);">Both run in draft mode until you approve their first action.</p>
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-top:36px;">
+        <div onClick="{{ obPickAria }}" style="background:#16151A; color:#F5F4EF; border-radius:12px; padding:30px 28px 34px; cursor:pointer; border:2px solid {{ obAriaRing }}; transition:border-color .15s ease;">
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <span style="font-family:'Archivo',sans-serif; font-weight:600; font-size:23px; letter-spacing:-.02em;">Aria</span>
+            <span style="font-family:'IBM Plex Mono',monospace; font-size:10.5px; letter-spacing:.12em; text-transform:uppercase; color:#8B7DFF;">{{ obAriaTag }}</span>
+          </div>
+          <p style="margin:12px 0 0; font-size:14.5px; line-height:1.6; color:rgba(245,244,239,.7);">Handles outreach and lead follow-up. Spots interest, flags it for you.</p>
+        </div>
+        <div onClick="{{ obPickNova }}" style="background:#16151A; color:#F5F4EF; border-radius:12px; padding:30px 28px 34px; cursor:pointer; border:2px solid {{ obNovaRing }}; transition:border-color .15s ease;">
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <span style="font-family:'Archivo',sans-serif; font-weight:600; font-size:23px; letter-spacing:-.02em;">Nova</span>
+            <span style="font-family:'IBM Plex Mono',monospace; font-size:10.5px; letter-spacing:.12em; text-transform:uppercase; color:#8B7DFF;">{{ obNovaTag }}</span>
+          </div>
+          <p style="margin:12px 0 0; font-size:14.5px; line-height:1.6; color:rgba(245,244,239,.7);">Runs comms and scheduling. Reminders, bookings, inbound replies.</p>
+        </div>
+      </div>
+      <button onClick="{{ obFinish }}" style="margin-top:28px; background:#5B4BF5; color:#fff; border:none; border-radius:10px; padding:16px 38px; font-family:'Instrument Sans',sans-serif; font-weight:600; font-size:15.5px; cursor:pointer;" style-hover="background:#4A3FE0;">Finish setup</button>
+    </sc-if>
+
+    <sc-if value="{{ obIsDone }}" hint-placeholder-val="{{ false }}">
+      <h1 style="margin:22px 0 0; font-family:'Archivo',sans-serif; font-weight:500; font-size:44px; letter-spacing:-.04em; line-height:1.05;">You're live.</h1>
+      <p style="margin:16px 0 0; font-size:17px; line-height:1.65; color:rgba(22,21,26,.62);">Your agents are watching. When something needs to go out, it lands in your approval queue first.</p>
+      <button onClick="{{ obOpenApp }}" style="margin-top:32px; background:#16151A; color:#fff; border:none; border-radius:10px; padding:17px 40px; font-family:'Instrument Sans',sans-serif; font-weight:500; font-size:16px; cursor:pointer;" style-hover="background:#5B4BF5;">Open Mission Control</button>
+    </sc-if>
+
+    <!-- terminal feedback -->
+    <div style="background:#16151A; color:#F5F4EF; border-radius:12px; overflow:hidden; margin-top:56px;">
+      <div style="display:flex; justify-content:space-between; padding:16px 26px; border-bottom:1px solid rgba(245,244,239,.16); font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:.12em; text-transform:uppercase;">
+        <span>Setup</span><span style="color:#8B7DFF;">● listening…</span>
+      </div>
+      <div style="padding:22px 26px; font-family:'IBM Plex Mono',monospace; font-size:12.5px; line-height:2.1; min-height:84px;">
+        <sc-for list="{{ obLog }}" as="l" hint-placeholder-count="1">
+          <div style="color:{{ l.color }};">{{ l.text }}</div>
+        </sc-for>
+        <div><span style="color:#8B7DFF; animation:lqBlink 1s step-end infinite;">▌</span></div>
+      </div>
+      <div style="padding:14px 26px; border-top:1px solid rgba(245,244,239,.16); font-family:'IBM Plex Mono',monospace; font-size:10.5px; letter-spacing:.12em; text-transform:uppercase; color:rgba(245,244,239,.45);">nothing sends without you</div>
+    </div>
+  </div>
+</div>
+</sc-if>
+
+<!-- ═══════════ APP SHELL ═══════════ -->
+<sc-if value="{{ isApp }}" hint-placeholder-val="{{ true }}">
+<div style="display:flex; min-height:100vh; background:#EFEDFB; align-items:stretch;">
+
+  <!-- ─── SIDEBAR ─── -->
+  <sc-if value="{{ navSidebar }}" hint-placeholder-val="{{ true }}">
+  <aside style="width:248px; flex:none; background:#16151A; color:#F5F4EF; display:flex; flex-direction:column; position:sticky; top:0; height:100vh; box-sizing:border-box; padding:26px 16px 20px;">
+    <div style="display:flex; align-items:baseline; gap:10px; padding:0 12px 26px;">
+      <span style="font-family:'Archivo',sans-serif; font-weight:700; font-size:21px; letter-spacing:-.5px;">Logi<span style="color:#8B7DFF;">Q</span></span>
+      <span style="font-family:'IBM Plex Mono',monospace; font-size:10px; letter-spacing:.14em; text-transform:uppercase; color:rgba(245,244,239,.4);">/ app</span>
+    </div>
+    <div style="font-family:'IBM Plex Mono',monospace; font-size:10px; letter-spacing:.14em; text-transform:uppercase; color:rgba(245,244,239,.35); padding:10px 12px 8px;">Workspace</div>
+    <nav style="display:flex; flex-direction:column; gap:2px;">
+      <sc-for list="{{ navMain }}" as="ni" hint-placeholder-count="4">
+        <div onClick="{{ ni.go }}" style="display:flex; align-items:center; justify-content:space-between; padding:10px 12px; border-radius:8px; cursor:pointer; font-size:14.5px; font-weight:500; color:{{ ni.color }}; background:{{ ni.bg }};" style-hover="color:#fff;">
+          <span>{{ ni.label }}</span>
+          <span style="font-family:'IBM Plex Mono',monospace; font-size:10.5px; color:#8B7DFF;">{{ ni.badge }}</span>
+        </div>
+      </sc-for>
+    </nav>
+    <div style="font-family:'IBM Plex Mono',monospace; font-size:10px; letter-spacing:.14em; text-transform:uppercase; color:rgba(245,244,239,.35); padding:22px 12px 8px;">Agents</div>
+    <nav style="display:flex; flex-direction:column; gap:2px;">
+      <sc-for list="{{ navAgents }}" as="na" hint-placeholder-count="5">
+        <div onClick="{{ na.go }}" style="display:flex; align-items:center; justify-content:space-between; padding:9px 12px; border-radius:8px; cursor:pointer; font-size:14.5px; font-weight:500; color:{{ na.color }}; background:{{ na.bg }};" style-hover="color:#fff;">
+          <span>{{ na.label }}</span>
+          <span style="font-family:'IBM Plex Mono',monospace; font-size:9.5px; letter-spacing:.1em; text-transform:uppercase; color:{{ na.dotColor }};">{{ na.dot }}</span>
+        </div>
+      </sc-for>
+    </nav>
+    <div style="flex:1;"></div>
+    <div onClick="{{ settingsToggle }}" style="display:flex; align-items:center; justify-content:space-between; padding:10px 12px; border-radius:8px; cursor:pointer; font-size:14.5px; font-weight:500; color:rgba(245,244,239,.6);" style-hover="color:#fff; background:rgba(245,244,239,.06);"><span>Settings</span><span style="font-family:'IBM Plex Mono',monospace; font-size:10px; color:rgba(245,244,239,.3);">⌘,</span></div>
+    <div onClick="{{ goOnboarding }}" style="padding:10px 12px; border-radius:8px; cursor:pointer; font-family:'IBM Plex Mono',monospace; font-size:10.5px; letter-spacing:.12em; text-transform:uppercase; color:rgba(245,244,239,.4);" style-hover="color:#8B7DFF;">Replay setup →</div>
+    <div style="display:flex; align-items:center; gap:11px; padding:14px 12px 0; border-top:1px solid rgba(245,244,239,.14); margin-top:6px;">
+      <div style="width:30px; height:30px; border-radius:8px; background:#5B4BF5; display:flex; align-items:center; justify-content:center; font-family:'Archivo',sans-serif; font-weight:600; font-size:13px; color:#fff;">H</div>
+      <div>
+        <div style="font-size:13.5px; font-weight:500;">Hamza</div>
+        <div style="font-family:'IBM Plex Mono',monospace; font-size:9.5px; letter-spacing:.1em; text-transform:uppercase; color:rgba(245,244,239,.4);">{{ workspaceName }}</div>
+      </div>
+    </div>
+  </aside>
+  </sc-if>
+
+  <div style="flex:1; min-width:0; display:flex; flex-direction:column;">
+
+    <!-- ─── TOPBAR (alternative nav) ─── -->
+    <sc-if value="{{ navTopbar }}" hint-placeholder-val="{{ false }}">
+    <header style="position:sticky; top:16px; z-index:50; margin:16px 24px 0; display:flex; align-items:center; background:#16151A; color:#F5F4EF; border-radius:14px; padding:0 10px 0 28px; height:64px;">
+      <div style="display:flex; align-items:baseline; gap:10px; margin-right:32px;">
+        <span style="font-family:'Archivo',sans-serif; font-weight:700; font-size:20px; letter-spacing:-.5px;">Logi<span style="color:#8B7DFF;">Q</span></span>
+        <span style="font-family:'IBM Plex Mono',monospace; font-size:10px; letter-spacing:.14em; text-transform:uppercase; color:rgba(245,244,239,.4);">/ app</span>
+      </div>
+      <nav style="display:flex; align-items:center; gap:4px; flex:1;">
+        <sc-for list="{{ navTop }}" as="nt" hint-placeholder-count="5">
+          <div onClick="{{ nt.go }}" style="display:flex; align-items:center; gap:8px; padding:9px 15px; border-radius:8px; cursor:pointer; font-size:14px; font-weight:500; color:{{ nt.color }}; background:{{ nt.bg }};" style-hover="color:#fff;">
+            <span>{{ nt.label }}</span>
+            <span style="font-family:'IBM Plex Mono',monospace; font-size:10px; color:#8B7DFF;">{{ nt.badge }}</span>
+          </div>
+        </sc-for>
+      </nav>
+      <div style="width:32px; height:32px; border-radius:8px; background:#5B4BF5; display:flex; align-items:center; justify-content:center; font-family:'Archivo',sans-serif; font-weight:600; font-size:13px; color:#fff; margin-right:8px;">H</div>
+    </header>
+    </sc-if>
+
+    <!-- ═══════════ MISSION CONTROL ═══════════ -->
+    <sc-if value="{{ isMission }}" hint-placeholder-val="{{ true }}">
+    <main data-screen-label="Mission Control" style="padding:40px 44px 72px; max-width:1060px; width:100%; margin:0 auto; box-sizing:border-box;">
+      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:14px;">
+        <h1 style="margin:0; font-family:'Archivo',sans-serif; font-weight:500; font-size:36px; letter-spacing:-.04em;">Mission Control</h1>
+        <div style="display:flex; align-items:center; gap:18px;">
+          <span style="font-family:'IBM Plex Mono',monospace; font-size:11.5px; letter-spacing:.12em; text-transform:uppercase; color:rgba(22,21,26,.45);">Fri 11 Jul 2026 · 09:41</span>
+          <sc-if value="{{ notStopped }}" hint-placeholder-val="{{ true }}">
+            <button onClick="{{ stopAll }}" style="background:#C43D3D; color:#fff; border:1px solid #C43D3D; border-radius:9px; padding:11px 20px; font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:.12em; text-transform:uppercase; cursor:pointer;" style-hover="background:#A83232; border-color:#A83232;">■ Stop all workflows</button>
+          </sc-if>
+        </div>
+      </div>
+      <div style="margin-top:14px; font-family:'IBM Plex Mono',monospace; font-size:12px; letter-spacing:.08em; text-transform:uppercase; color:rgba(22,21,26,.5);">
+        <span style="color:#5B4BF5;">{{ pendingCount }} awaiting approval</span> · {{ agentsLine }} · nothing sends without you
+      </div>
+
+      <sc-if value="{{ stopped }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:20px; background:#16151A; color:#F5F4EF; border-radius:12px; padding:22px 28px; margin-top:24px; animation:lqIn .3s ease;">
+          <div style="font-family:'IBM Plex Mono',monospace; font-size:12.5px; letter-spacing:.06em;">
+            <span style="color:#C4736B;">[--] emergency stop engaged</span><span style="color:rgba(245,244,239,.55);"> — all agents paused, queue frozen, nothing will send</span>
+          </div>
+          <button onClick="{{ resumeAll }}" style="background:#5B4BF5; color:#fff; border:none; border-radius:9px; padding:12px 24px; font-family:'Instrument Sans',sans-serif; font-weight:600; font-size:14px; cursor:pointer; flex:none;" style-hover="background:#4A3FE0;">Resume workflows</button>
+        </div>
+      </sc-if>
+
+      <div style="display:grid; grid-template-columns:repeat(4,1fr); gap:24px; margin-top:40px;">
+        <div style="border-top:2px solid #16151A; padding-top:16px;">
+          <div style="font-family:'IBM Plex Mono',monospace; font-size:10.5px; letter-spacing:.14em; text-transform:uppercase; color:rgba(22,21,26,.45);">API calls today</div>
+          <div style="margin-top:10px; font-family:'Archivo',sans-serif; font-weight:500; font-size:34px; letter-spacing:-.03em;">1,284</div>
+          <div style="margin-top:6px; font-family:'IBM Plex Mono',monospace; font-size:10.5px; color:rgba(22,21,26,.4);">resets 00:00 UTC</div>
+        </div>
+        <div style="border-top:2px solid #16151A; padding-top:16px;">
+          <div style="font-family:'IBM Plex Mono',monospace; font-size:10.5px; letter-spacing:.14em; text-transform:uppercase; color:rgba(22,21,26,.45);">Actions this month</div>
+          <div style="margin-top:10px; font-family:'Archivo',sans-serif; font-weight:500; font-size:34px; letter-spacing:-.03em;">312</div>
+          <div style="margin-top:6px; font-family:'IBM Plex Mono',monospace; font-size:10.5px; color:rgba(22,21,26,.4);">29 denied · 283 sent</div>
+        </div>
+        <div style="border-top:2px solid #16151A; padding-top:16px;">
+          <div style="font-family:'IBM Plex Mono',monospace; font-size:10.5px; letter-spacing:.14em; text-transform:uppercase; color:rgba(22,21,26,.45);">Pending approvals</div>
+          <div style="margin-top:10px; font-family:'Archivo',sans-serif; font-weight:500; font-size:34px; letter-spacing:-.03em; color:#5B4BF5;">{{ pendingCount }}</div>
+          <div style="margin-top:6px; font-family:'IBM Plex Mono',monospace; font-size:10.5px; color:rgba(22,21,26,.4);">oldest — 6 hrs</div>
+        </div>
+        <div style="border-top:2px solid #16151A; padding-top:16px;">
+          <div style="font-family:'IBM Plex Mono',monospace; font-size:10.5px; letter-spacing:.14em; text-transform:uppercase; color:rgba(22,21,26,.45);">Usage this month</div>
+          <div style="margin-top:10px; font-family:'Archivo',sans-serif; font-weight:500; font-size:34px; letter-spacing:-.03em;">312<span style="font-size:15px; color:rgba(22,21,26,.4);"> / 500</span></div>
+          <div style="margin-top:12px; height:3px; background:rgba(22,21,26,.1); border-radius:2px;"><div style="width:62%; height:100%; background:#5B4BF5; border-radius:2px;"></div></div>
+          <div style="margin-top:6px; font-family:'IBM Plex Mono',monospace; font-size:10.5px; color:rgba(22,21,26,.4);">62% of Starter allowance</div>
+        </div>
+      </div>
+
+      <div style="margin-top:44px; font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:.14em; text-transform:uppercase; color:rgba(22,21,26,.45); border-top:2px solid #16151A; padding-top:16px;">Approval queue</div>
+
+      <sc-if value="{{ queueEmpty }}" hint-placeholder-val="{{ false }}">
+        <div style="background:#fff; border-radius:12px; padding:44px 40px; margin-top:16px; text-align:center;">
+          <div style="font-family:'Archivo',sans-serif; font-weight:600; font-size:20px;">Queue clear.</div>
+          <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:.12em; text-transform:uppercase; color:rgba(22,21,26,.4); margin-top:10px;">Agents are watching — new actions land here first</div>
+        </div>
+      </sc-if>
+
+      <div style="display:flex; flex-direction:column; gap:14px; margin-top:16px;">
+        <sc-for list="{{ pending }}" as="q" hint-placeholder-count="3">
+          <div style="background:#16151A; color:#F5F4EF; border-radius:12px; padding:26px 30px 24px; animation:lqIn .3s ease;">
+            <div style="display:flex; justify-content:space-between; align-items:center; font-family:'IBM Plex Mono',monospace; font-size:10.5px; letter-spacing:.12em; text-transform:uppercase;">
+              <span style="color:#8B7DFF;">{{ q.agentTag }}</span>
+              <span style="color:rgba(245,244,239,.4);">{{ q.time }}</span>
+            </div>
+            <div style="margin-top:14px; font-family:'Archivo',sans-serif; font-weight:600; font-size:21px; letter-spacing:-.02em; line-height:1.25; max-width:720px;">{{ q.title }}</div>
+            <sc-if value="{{ q.isExpanded }}" hint-placeholder-val="{{ false }}">
+              <div style="margin-top:20px; border-top:1px solid rgba(245,244,239,.14); padding-top:18px; display:grid; grid-template-columns:110px 1fr; row-gap:10px; font-family:'IBM Plex Mono',monospace; font-size:12px;">
+                <span style="color:rgba(245,244,239,.4); letter-spacing:.1em; text-transform:uppercase;">To</span><span style="color:rgba(245,244,239,.85);">{{ q.to }}</span>
+                <span style="color:rgba(245,244,239,.4); letter-spacing:.1em; text-transform:uppercase;">Channel</span><span style="color:rgba(245,244,239,.85);">{{ q.channel }}</span>
+                <span style="color:rgba(245,244,239,.4); letter-spacing:.1em; text-transform:uppercase;">Trigger</span><span style="color:rgba(245,244,239,.85);">{{ q.trigger }}</span>
+              </div>
+              <div style="margin-top:16px; background:#0F0F12; border-radius:8px; padding:18px 20px; font-family:'IBM Plex Mono',monospace; font-size:12.5px; line-height:1.8; color:rgba(245,244,239,.75);">
+                <div style="letter-spacing:.12em; text-transform:uppercase; font-size:10px; color:rgba(245,244,239,.35); margin-bottom:8px;">Draft</div>
+                {{ q.draft }}
+              </div>
+            </sc-if>
+            <div style="display:flex; align-items:center; gap:12px; margin-top:22px;">
+              <button onClick="{{ q.approve }}" style="background:#5B4BF5; color:#fff; border:none; border-radius:9px; padding:12px 26px; font-family:'Instrument Sans',sans-serif; font-weight:600; font-size:14.5px; cursor:pointer;" style-hover="background:#4A3FE0;">Approve</button>
+              <button onClick="{{ q.deny }}" style="background:transparent; color:rgba(245,244,239,.8); border:1px solid rgba(245,244,239,.25); border-radius:9px; padding:12px 24px; font-family:'Instrument Sans',sans-serif; font-weight:500; font-size:14.5px; cursor:pointer;" style-hover="border-color:#fff; color:#fff;">Deny</button>
+              <div style="flex:1;"></div>
+              <span onClick="{{ q.toggle }}" style="font-family:'IBM Plex Mono',monospace; font-size:10.5px; letter-spacing:.12em; text-transform:uppercase; color:rgba(245,244,239,.45); cursor:pointer;" style-hover="color:#8B7DFF;">{{ q.toggleLabel }}</span>
+            </div>
+          </div>
+        </sc-for>
+      </div>
+
+      <div style="margin-top:48px; font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:.14em; text-transform:uppercase; color:rgba(22,21,26,.45); border-top:1px solid rgba(22,21,26,.14); padding-top:16px;">Resolved today</div>
+      <div style="display:flex; flex-direction:column; gap:10px; margin-top:14px;">
+        <sc-for list="{{ resolved }}" as="r" hint-placeholder-count="3">
+          <div style="display:flex; align-items:center; gap:20px; background:rgba(255,255,255,.55); border:1px solid rgba(22,21,26,.08); border-radius:10px; padding:16px 24px;">
+            <span style="font-family:'IBM Plex Mono',monospace; font-size:10.5px; letter-spacing:.12em; text-transform:uppercase; color:{{ r.verdictColor }}; width:120px; flex:none;">{{ r.verdict }}</span>
+            <span style="flex:1; font-size:15px; color:rgba(22,21,26,.65);">{{ r.title }}</span>
+            <span style="font-family:'IBM Plex Mono',monospace; font-size:10.5px; letter-spacing:.1em; color:rgba(22,21,26,.35);">{{ r.agent }} · {{ r.time }}</span>
+          </div>
+        </sc-for>
+      </div>
+    </main>
+    </sc-if>
+
+    <!-- ═══════════ AGENT DETAIL ═══════════ -->
+    <sc-if value="{{ isAgent }}" hint-placeholder-val="{{ false }}">
+    <main data-screen-label="Agent detail" style="padding:40px 44px 72px; max-width:1060px; width:100%; margin:0 auto; box-sizing:border-box;">
+
+      <sc-if value="{{ agentLive }}" hint-placeholder-val="{{ true }}">
+        <div style="background:#16151A; color:#F5F4EF; border-radius:14px; padding:52px 48px 48px;">
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <h1 style="margin:0; font-family:'Archivo',sans-serif; font-weight:600; font-size:44px; letter-spacing:-.03em;">{{ agentName }}</h1>
+            <span style="font-family:'IBM Plex Mono',monospace; font-size:11.5px; letter-spacing:.12em; text-transform:uppercase; color:{{ agentLiveColor }};">{{ agentLiveLabel }}</span>
+          </div>
+          <p style="margin:18px 0 0; font-size:17px; line-height:1.65; color:rgba(245,244,239,.7); max-width:520px;">{{ agentDesc }}</p>
+          <div style="margin-top:30px; padding-top:22px; border-top:1px solid rgba(245,244,239,.14); font-family:'IBM Plex Mono',monospace; font-size:11.5px; letter-spacing:.1em; text-transform:uppercase; color:rgba(245,244,239,.5);">{{ agentStats }}</div>
+        </div>
+
+        <div style="display:grid; grid-template-columns:1fr 1.2fr; gap:20px; margin-top:20px; align-items:start;">
+          <div style="background:#fff; border-radius:12px; padding:32px 32px 36px;">
+            <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:.14em; text-transform:uppercase; color:rgba(22,21,26,.45);">Configuration</div>
+            <div style="display:flex; flex-direction:column; margin-top:18px;">
+              <sc-for list="{{ agentConfig }}" as="c" hint-placeholder-count="4">
+                <div style="display:grid; grid-template-columns:120px 1fr; gap:14px; padding:13px 0; border-bottom:1px solid rgba(22,21,26,.08);">
+                  <span style="font-family:'IBM Plex Mono',monospace; font-size:10.5px; letter-spacing:.1em; text-transform:uppercase; color:rgba(22,21,26,.4); padding-top:2px;">{{ c.k }}</span>
+                  <span style="font-size:14.5px; color:#16151A;">{{ c.v }}</span>
+                </div>
+              </sc-for>
+            </div>
+            <button onClick="{{ goBlueprint }}" style="margin-top:22px; background:transparent; color:#16151A; border:1px solid rgba(22,21,26,.2); border-radius:9px; padding:12px 22px; font-family:'Instrument Sans',sans-serif; font-weight:500; font-size:14px; cursor:pointer;" style-hover="border-color:#5B4BF5; color:#5B4BF5;">Edit in Blueprint →</button>
+          </div>
+          <div style="background:#16151A; color:#F5F4EF; border-radius:12px; overflow:hidden;">
+            <div style="display:flex; justify-content:space-between; padding:16px 28px; border-bottom:1px solid rgba(245,244,239,.16); font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:.12em; text-transform:uppercase;">
+              <span>Activity</span><span style="color:#8B7DFF;">● live</span>
+            </div>
+            <div style="padding:22px 28px 26px; font-family:'IBM Plex Mono',monospace; font-size:12.5px; line-height:2.15;">
+              <sc-for list="{{ agentFeed }}" as="f" hint-placeholder-count="6">
+                <div><span style="color:rgba(245,244,239,.35);">{{ f.t }}</span>  <span style="color:{{ f.color }};">{{ f.line }}</span></div>
+              </sc-for>
+              <div><span style="color:#8B7DFF; animation:lqBlink 1s step-end infinite;">▌</span></div>
+            </div>
+          </div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ agentSoon }}" hint-placeholder-val="{{ false }}">
+        <div style="background:#E4E1F6; border-radius:14px; padding:52px 48px 48px;">
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <h1 style="margin:0; font-family:'Archivo',sans-serif; font-weight:600; font-size:44px; letter-spacing:-.03em; color:rgba(22,21,26,.75);">{{ agentName }}</h1>
+            <span style="font-family:'IBM Plex Mono',monospace; font-size:11.5px; letter-spacing:.12em; text-transform:uppercase; color:rgba(22,21,26,.45);">Coming soon</span>
+          </div>
+          <p style="margin:18px 0 0; font-size:17px; line-height:1.65; color:rgba(22,21,26,.55); max-width:520px;">{{ agentDesc }}</p>
+          <div style="display:flex; align-items:center; gap:16px; margin-top:32px;">
+            <button onClick="{{ agentNotify }}" style="background:#16151A; color:#fff; border:none; border-radius:9px; padding:13px 28px; font-family:'Instrument Sans',sans-serif; font-weight:500; font-size:14.5px; cursor:pointer;" style-hover="background:#5B4BF5;">Notify me at launch</button>
+            <span style="font-family:'IBM Plex Mono',monospace; font-size:10.5px; letter-spacing:.12em; text-transform:uppercase; color:#5B4BF5;">{{ agentNotifyState }}</span>
+          </div>
+        </div>
+        <div style="background:rgba(255,255,255,.55); border:1px solid rgba(22,21,26,.08); border-radius:12px; padding:32px 32px 36px; margin-top:20px;">
+          <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:.14em; text-transform:uppercase; color:rgba(22,21,26,.45);">Planned capabilities</div>
+          <div style="display:flex; flex-direction:column; margin-top:14px;">
+            <sc-for list="{{ agentPlanned }}" as="p" hint-placeholder-count="3">
+              <div style="display:flex; align-items:baseline; gap:14px; padding:12px 0; border-bottom:1px solid rgba(22,21,26,.07);">
+                <span style="font-family:'IBM Plex Mono',monospace; font-size:11px; color:rgba(22,21,26,.35);">{{ p.n }}</span>
+                <span style="font-size:15px; color:rgba(22,21,26,.6);">{{ p.text }}</span>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+      </sc-if>
+    </main>
+    </sc-if>
+
+    <!-- ═══════════ BLUEPRINT ═══════════ -->
+    <sc-if value="{{ isBlueprint }}" hint-placeholder-val="{{ false }}">
+    <main data-screen-label="Blueprint" style="padding:32px 44px 40px; width:100%; margin:0 auto; box-sizing:border-box; display:flex; flex-direction:column; min-height:100vh;">
+      <div style="display:flex; justify-content:space-between; align-items:baseline; flex-wrap:wrap; gap:12px;">
+        <div style="display:flex; align-items:baseline; gap:18px;">
+          <div style="font-family:'IBM Plex Mono',monospace; font-size:11.5px; letter-spacing:.18em; text-transform:uppercase; color:#5B4BF5;">Blueprint AI</div>
+          <h1 style="margin:0; font-family:'Archivo',sans-serif; font-weight:500; font-size:28px; letter-spacing:-.03em;">Describe it. Vision <span style="color:#5B4BF5;">builds it.</span></h1>
+        </div>
+        <span style="font-family:'IBM Plex Mono',monospace; font-size:10.5px; letter-spacing:.12em; text-transform:uppercase; color:rgba(22,21,26,.4);">Assembled only from safe, pre-approved actions</span>
+      </div>
+      <div style="display:flex; gap:28px; margin-top:22px; flex-wrap:wrap;">
+        <div style="display:flex; align-items:baseline; gap:10px;">
+          <span style="font-family:'IBM Plex Mono',monospace; font-size:11px; color:#5B4BF5;">01</span>
+          <span style="font-size:13.5px; color:rgba(22,21,26,.6);">Describe the outcome in plain English</span>
+        </div>
+        <div style="display:flex; align-items:baseline; gap:10px;">
+          <span style="font-family:'IBM Plex Mono',monospace; font-size:11px; color:#5B4BF5;">02</span>
+          <span style="font-size:13.5px; color:rgba(22,21,26,.6);">Blueprint matches it to pre-approved actions</span>
+        </div>
+        <div style="display:flex; align-items:baseline; gap:10px;">
+          <span style="font-family:'IBM Plex Mono',monospace; font-size:11px; color:#5B4BF5;">03</span>
+          <span style="font-size:13.5px; color:rgba(22,21,26,.6);">You review the draft agent and approve</span>
+        </div>
+      </div>
+      <div style="display:flex; flex-wrap:wrap; gap:8px; margin-top:16px;">
+        <sc-for list="{{ bpPresets }}" as="pr" hint-placeholder-count="4">
+          <div onClick="{{ pr.run }}" style="background:#fff; border:1px solid rgba(22,21,26,.1); border-radius:8px; padding:10px 16px; font-size:13.5px; color:rgba(22,21,26,.75); cursor:pointer;" style-hover="border-color:#5B4BF5; color:#16151A;">{{ pr.text }}</div>
+        </sc-for>
+      </div>
+
+      <div style="display:flex; flex-direction:column; background:#16151A; color:#F5F4EF; border-radius:14px; overflow:hidden; flex:1; margin-top:20px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; padding:22px 34px; border-bottom:1px solid rgba(245,244,239,.16); font-family:'IBM Plex Mono',monospace; font-size:12px; letter-spacing:.12em; text-transform:uppercase;">
+            <span>Blueprint</span>
+            <span style="color:#8B7DFF;">{{ bpStatus }}</span>
+          </div>
+          <div style="flex:1; padding:34px 34px 20px; font-family:'IBM Plex Mono',monospace; font-size:13.5px; line-height:2.3;">
+            <sc-if value="{{ bpIdle }}" hint-placeholder-val="{{ true }}">
+              <div style="color:rgba(245,244,239,.4); font-size:12.5px; margin-bottom:22px;">Type a request below, or watch an example run automatically…</div>
+            </sc-if>
+            <div style="display:flex; align-items:baseline; gap:10px;">
+              <span style="color:#8B7DFF;">›</span>
+              <input value="{{ bpInput }}" onChange="{{ bpChange }}" onKeyDown="{{ bpKey }}" placeholder="Describe what you need…" style="flex:1; background:transparent; border:none; color:#F5F4EF; font-family:'IBM Plex Mono',monospace; font-size:13.5px; padding:0;">
+            </div>
+            <div style="margin-top:26px;">
+              <sc-for list="{{ bpLines }}" as="bl" hint-placeholder-count="0">
+                <div style="color:{{ bl.color }}; animation:lqIn .25s ease;">{{ bl.text }}</div>
+              </sc-for>
+            </div>
+            <sc-if value="{{ bpReady }}" hint-placeholder-val="{{ false }}">
+              <div style="margin-top:26px; border-top:1px solid rgba(245,244,239,.14); padding-top:24px;">
+                <div style="display:flex; justify-content:space-between; align-items:center; font-family:'IBM Plex Mono',monospace; font-size:10.5px; letter-spacing:.12em; text-transform:uppercase;">
+                  <span style="color:rgba(245,244,239,.45);">Draft agent</span>
+                  <span style="color:#8B7DFF;">● ready</span>
+                </div>
+                <div style="margin-top:14px; font-family:'Archivo',sans-serif; font-weight:600; font-size:24px; letter-spacing:-.02em; line-height:1.3;">{{ bpAgent }} — {{ bpSummary }}</div>
+                <div style="display:flex; align-items:center; gap:14px; margin-top:22px;">
+                  <button onClick="{{ bpQueue }}" style="background:transparent; color:#8B7DFF; border:1px solid rgba(139,125,255,.45); border-radius:9px; padding:13px 26px; font-family:'Instrument Sans',sans-serif; font-weight:600; font-size:14.5px; cursor:pointer;" style-hover="background:#5B4BF5; color:#fff; border-color:#5B4BF5;">Send to approval queue</button>
+                  <span onClick="{{ bpReset }}" style="font-family:'IBM Plex Mono',monospace; font-size:10.5px; letter-spacing:.12em; text-transform:uppercase; color:rgba(245,244,239,.45); cursor:pointer;" style-hover="color:#8B7DFF;">Discard</span>
+                </div>
+              </div>
+            </sc-if>
+            <sc-if value="{{ bpQueued }}" hint-placeholder-val="{{ false }}">
+              <div style="margin-top:26px; color:#8B7DFF;">[ok] queued — <span onClick="{{ goMission }}" style="text-decoration:underline; cursor:pointer; color:#F5F4EF;">review in Mission Control</span></div>
+            </sc-if>
+          </div>
+          <div style="padding:18px 34px; border-top:1px solid rgba(245,244,239,.16); font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:.12em; text-transform:uppercase; color:rgba(245,244,239,.45);">nothing deploys without you</div>
+      </div>
+    </main>
+    </sc-if>
+
+    <!-- ═══════════ INTEGRATIONS ═══════════ -->
+    <sc-if value="{{ isIntegrations }}" hint-placeholder-val="{{ false }}">
+    <main data-screen-label="Integrations" style="padding:40px 44px 72px; max-width:1060px; width:100%; margin:0 auto; box-sizing:border-box;">
+      <div style="display:flex; justify-content:space-between; align-items:baseline; flex-wrap:wrap; gap:10px;">
+        <h1 style="margin:0; font-family:'Archivo',sans-serif; font-weight:500; font-size:36px; letter-spacing:-.04em;">Integrations</h1>
+        <span style="font-family:'IBM Plex Mono',monospace; font-size:11.5px; letter-spacing:.12em; text-transform:uppercase; color:rgba(22,21,26,.45);">All plans include every integration</span>
+      </div>
+      <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:16px; margin-top:36px;">
+        <sc-for list="{{ integrations }}" as="ig" hint-placeholder-count="8">
+          <div style="background:{{ ig.bg }}; color:{{ ig.fg }}; border:1px solid {{ ig.border }}; border-radius:12px; padding:26px 26px 24px; transition:transform .15s ease;" style-hover="transform:translateY(-2px);">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <span style="font-family:'Archivo',sans-serif; font-weight:600; font-size:19px; letter-spacing:-.01em;">{{ ig.name }}</span>
+              <span style="font-family:'IBM Plex Mono',monospace; font-size:10px; letter-spacing:.12em; text-transform:uppercase; color:{{ ig.statusColor }};">{{ ig.status }}</span>
+            </div>
+            <div style="margin-top:8px; font-family:'IBM Plex Mono',monospace; font-size:11px; color:{{ ig.accountColor }}; min-height:16px;">{{ ig.account }}</div>
+            <div style="display:flex; align-items:center; gap:10px; margin-top:20px;">
+              <sc-if value="{{ ig.connected }}" hint-placeholder-val="{{ true }}">
+                <button onClick="{{ ig.test }}" style="background:transparent; color:rgba(245,244,239,.85); border:1px solid rgba(245,244,239,.25); border-radius:8px; padding:9px 16px; font-family:'Instrument Sans',sans-serif; font-weight:500; font-size:13px; cursor:pointer;" style-hover="border-color:#8B7DFF; color:#8B7DFF;">Test connection</button>
+                <button onClick="{{ ig.disconnect }}" style="background:transparent; color:rgba(245,244,239,.4); border:none; padding:9px 6px; font-family:'Instrument Sans',sans-serif; font-weight:500; font-size:13px; cursor:pointer;" style-hover="color:#fff;">Disconnect</button>
+              </sc-if>
+              <sc-if value="{{ ig.notConnected }}" hint-placeholder-val="{{ false }}">
+                <button onClick="{{ ig.connect }}" style="background:#16151A; color:#fff; border:none; border-radius:8px; padding:10px 20px; font-family:'Instrument Sans',sans-serif; font-weight:500; font-size:13px; cursor:pointer;" style-hover="background:#5B4BF5;">Connect</button>
+              </sc-if>
+            </div>
+            <div style="margin-top:14px; font-family:'IBM Plex Mono',monospace; font-size:11.5px; min-height:16px; color:#8B7DFF;">{{ ig.testLog }}</div>
+          </div>
+        </sc-for>
+      </div>
+    </main>
+    </sc-if>
+
+  </div>
+
+  <!-- ═══════════ SETTINGS MODAL ═══════════ -->
+  <sc-if value="{{ settingsOpen }}" hint-placeholder-val="{{ false }}">
+  <div data-screen-label="Settings" onClick="{{ settingsClose }}" style="position:fixed; inset:0; z-index:100; background:rgba(15,15,18,.5); display:flex; align-items:center; justify-content:center; padding:40px; animation:lqIn .2s ease;">
+    <div onClick="{{ stopProp }}" style="width:100%; max-width:840px; height:560px; background:#EFEDFB; border-radius:14px; overflow:hidden; display:flex; box-shadow:0 24px 64px rgba(15,15,18,.35);">
+      <div style="width:200px; flex:none; background:#16151A; color:#F5F4EF; padding:24px 12px; display:flex; flex-direction:column; box-sizing:border-box;">
+        <div style="font-family:'IBM Plex Mono',monospace; font-size:10px; letter-spacing:.14em; text-transform:uppercase; color:rgba(245,244,239,.4); padding:0 12px 14px;">Settings</div>
+        <sc-for list="{{ settingsTabs }}" as="st" hint-placeholder-count="5">
+          <div onClick="{{ st.go }}" style="padding:9px 12px; border-radius:8px; cursor:pointer; font-size:14px; font-weight:500; color:{{ st.color }}; background:{{ st.bg }};" style-hover="color:#fff;">{{ st.label }}</div>
+        </sc-for>
+        <div style="flex:1;"></div>
+        <div onClick="{{ settingsClose }}" style="padding:9px 12px; font-family:'IBM Plex Mono',monospace; font-size:10.5px; letter-spacing:.12em; text-transform:uppercase; color:rgba(245,244,239,.4); cursor:pointer;" style-hover="color:#8B7DFF;">Close · esc</div>
+      </div>
+      <div style="flex:1; min-width:0; padding:32px 36px; overflow-y:auto; box-sizing:border-box;">
+        <div style="font-family:'Archivo',sans-serif; font-weight:600; font-size:22px; letter-spacing:-.02em;">{{ settingsTitle }}</div>
+
+        <sc-if value="{{ settingsIsBilling }}" hint-placeholder-val="{{ false }}">
+          <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin-top:20px;">
+            <sc-for list="{{ plans }}" as="p" hint-placeholder-count="5">
+              <div style="background:{{ p.bg }}; color:{{ p.fg }}; border:1px solid {{ p.border }}; border-radius:10px; padding:16px 16px 14px; display:flex; flex-direction:column;">
+                <div style="display:flex; justify-content:space-between; font-family:'IBM Plex Mono',monospace; font-size:9.5px; letter-spacing:.12em; text-transform:uppercase;">
+                  <span style="color:{{ p.labelColor }};">{{ p.name }}</span>
+                  <span style="color:#8B7DFF;">{{ p.tag }}</span>
+                </div>
+                <div style="margin-top:8px; font-family:'Archivo',sans-serif; font-weight:500; font-size:20px; letter-spacing:-.02em;">{{ p.price }}<sc-if value="{{ p.showPerMo }}" hint-placeholder-val="{{ true }}"><span style="font-size:10px; color:{{ p.perColor }};">/mo</span></sc-if></div>
+                <div style="flex:1;"></div>
+                <sc-if value="{{ p.isCurrent }}" hint-placeholder-val="{{ false }}">
+                  <div style="margin-top:12px; font-family:'IBM Plex Mono',monospace; font-size:9px; letter-spacing:.1em; text-transform:uppercase; color:#8B7DFF;">● Current</div>
+                </sc-if>
+                <sc-if value="{{ p.notCurrent }}" hint-placeholder-val="{{ true }}">
+                  <button onClick="{{ p.pick }}" style="margin-top:12px; background:transparent; color:#16151A; border:1px solid rgba(22,21,26,.2); border-radius:6px; padding:7px 0; font-family:'Instrument Sans',sans-serif; font-weight:500; font-size:11.5px; cursor:pointer; width:100%;" style-hover="border-color:#5B4BF5; color:#5B4BF5;">{{ p.cta }}</button>
+                </sc-if>
+              </div>
+            </sc-for>
+          </div>
+          <div style="display:grid; grid-template-columns:130px 1fr; row-gap:10px; margin-top:24px; font-family:'IBM Plex Mono',monospace; font-size:12px;">
+            <span style="color:rgba(22,21,26,.4); letter-spacing:.1em; text-transform:uppercase;">Next invoice</span><span>01 Aug 2026 — {{ nextInvoice }}</span>
+            <span style="color:rgba(22,21,26,.4); letter-spacing:.1em; text-transform:uppercase;">Payment</span><span>Visa ·· 4242</span>
+            <span style="color:rgba(22,21,26,.4); letter-spacing:.1em; text-transform:uppercase;">Billing email</span><span><a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="6e060f03140f2e020109071f40011c09401b05">[email&#160;protected]</a></span>
+          </div>
+        </sc-if>
+
+        <div style="display:{{ settingsRowsDisplay }}; flex-direction:column; margin-top:20px;">
+          <sc-for list="{{ settingsRows }}" as="sr" hint-placeholder-count="5">
+            <div style="display:flex; align-items:center; justify-content:space-between; gap:24px; padding:15px 0; border-bottom:1px solid rgba(22,21,26,.09);">
+              <div style="min-width:0;">
+                <div style="font-size:14.5px; font-weight:500; color:#16151A;">{{ sr.label }}</div>
+                <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; color:rgba(22,21,26,.4); margin-top:4px;">{{ sr.detail }}</div>
+              </div>
+              <sc-if value="{{ sr.isToggle }}" hint-placeholder-val="{{ false }}">
+                <div onClick="{{ sr.flip }}" style="width:40px; height:22px; border-radius:11px; flex:none; cursor:pointer; background:{{ sr.togBg }}; position:relative; transition:background .15s ease;">
+                  <div style="position:absolute; top:3px; left:{{ sr.knobLeft }}; width:16px; height:16px; border-radius:50%; background:#fff; transition:left .15s ease;"></div>
+                </div>
+              </sc-if>
+              <sc-if value="{{ sr.isValue }}" hint-placeholder-val="{{ true }}">
+                <span style="font-family:'IBM Plex Mono',monospace; font-size:12px; color:rgba(22,21,26,.55); flex:none;">{{ sr.value }}</span>
+              </sc-if>
+              <sc-if value="{{ sr.isAction }}" hint-placeholder-val="{{ false }}">
+                <button onClick="{{ sr.act }}" style="background:transparent; color:#16151A; border:1px solid rgba(22,21,26,.2); border-radius:8px; padding:8px 16px; font-family:'Instrument Sans',sans-serif; font-weight:500; font-size:13px; cursor:pointer; flex:none;" style-hover="border-color:#5B4BF5; color:#5B4BF5;">{{ sr.action }}</button>
+              </sc-if>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+    </div>
+  </div>
+  </sc-if>
+</div>
+</sc-if>
+</x-dc>
+<script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script type="text/x-dc" data-dc-script data-props="{&quot;navStyle&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;sidebar&quot;,&quot;topbar&quot;],&quot;default&quot;:&quot;sidebar&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Layout&quot;},&quot;startScreen&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;mission&quot;,&quot;blueprint&quot;,&quot;integrations&quot;],&quot;default&quot;:&quot;mission&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Layout&quot;},&quot;queueVolume&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;typical&quot;,&quot;busy&quot;],&quot;default&quot;:&quot;typical&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Mission Control&quot;}}">
+class Component extends DCLogic {
+  state = {
+    screen: null,
+    queue: null,
+    resolvedExtra: [],
+    expandedId: null,
+    integrations: { gmail: true, sheets: true, calendar: true, xero: false, slack: false, whatsapp: false, stripe: false, hubspot: false },
+    testLogs: {},
+    notified: {},
+    plan: 'starter',
+    bpInput: '', bpLines: [], bpPhase: 'idle', bpAgent: '', bpSummary: '',
+    obStep: 1, obName: '', obGmail: false, obAgents: { aria: true, nova: false }, obLog: [{ text: '[ok] session started', color: 'rgba(245,244,239,.55)' }],
+    workspaceName: 'Northfield Ops',
+    stopped: false,
+    settingsOpen: false, settingsTab: 'workspace',
+    prefs: { emailNotif: true, dailyDigest: true, smsAlerts: false, twoFactor: true, draftMode: false, apiAccess: true },
+  };
+
+  componentDidMount() {
+    this.timers = [];
+    this.idleDemo = setTimeout(() => {
+      if (this.state.screen === 'blueprint' && this.state.bpPhase === 'idle' && !this.state.bpInput) {
+        this.runBlueprint('Follow up every new lead within 10 minutes');
+      }
+    }, 4500);
+  }
+  componentWillUnmount() { (this.timers || []).forEach(clearTimeout); clearTimeout(this.idleDemo); }
+  after(ms, fn) { this.timers.push(setTimeout(fn, ms)); }
+
+  baseQueue() {
+    const Q = [
+      { id: 1, agentTag: 'Aria · Outreach', time: '2 min ago', title: "Send a follow-up email to a lead from Tuesday's demo request", to: 'james@northfield.co.uk', channel: 'Gmail', trigger: 'Demo request · no reply in 48h', draft: "Hi James — thanks for booking Tuesday's demo. Sharing the recap and the two workflows we scoped. Any time Thursday to walk through pricing?" },
+      { id: 2, agentTag: 'Nova · Scheduling', time: '18 min ago', title: 'Send appointment reminders to 14 clients booked tomorrow', to: '14 recipients', channel: 'SMS + Email', trigger: 'Bookings for Sat 12 Jul', draft: 'Reminder: your appointment is tomorrow at {time}. Reply C to confirm or R to reschedule.' },
+      { id: 3, agentTag: 'Finn · Finance · Preview', time: '1 hr ago', title: 'Send an overdue-invoice reminder to a client 30 days past due', to: 'accounts@harborlane.co.uk', channel: 'Gmail', trigger: 'Invoice #1042 · 30 days overdue', draft: 'Hi — a gentle nudge on invoice #1042 (£1,250), due 11 June. Happy to resend the original or set up a payment link.' },
+    ];
+    const busy = [
+      { id: 4, agentTag: 'Aria · Outreach', time: '1 hr ago', title: 'Flag a warm reply from Meridian Group for your review', to: 'you', channel: 'In-app', trigger: 'Reply sentiment: interested', draft: '"Yes — send over the proposal, we want to move before August." Flagged as warm.' },
+      { id: 5, agentTag: 'Nova · Scheduling', time: '2 hrs ago', title: 'Confirm a reschedule request for Monday 10:30', to: 'sofia@braywell.co.uk', channel: 'Email', trigger: 'Client asked to move Thursday slot', draft: 'Confirmed — moved you to Monday 10:30. Calendar invite updated.' },
+      { id: 6, agentTag: 'Aria · Outreach', time: '2 hrs ago', title: 'Send a second-touch email to 8 leads quiet for 14 days', to: '8 recipients', channel: 'Gmail', trigger: 'No reply in 14 days', draft: 'Just circling back — still worth a quick call, or shall I close the file for now?' },
+      { id: 7, agentTag: 'Nova · Scheduling', time: '3 hrs ago', title: "Cancel tomorrow's reminder for a client who rebooked", to: 'd.okafor@plumline.co.uk', channel: 'SMS', trigger: 'Booking moved to 19 Jul', draft: '(cancels scheduled reminder — no message sent to client)' },
+      { id: 8, agentTag: 'Finn · Finance · Preview', time: '4 hrs ago', title: 'Queue the weekly numbers digest for Monday 08:00', to: 'you', channel: 'Email', trigger: 'Weekly · Mondays', draft: 'Revenue, outstanding invoices, and reconciliation exceptions for w/c 13 Jul.' },
+      { id: 9, agentTag: 'Aria · Outreach', time: '5 hrs ago', title: 'Reply to an inbound pricing question from the contact form', to: 'hello@fernbrook.studio', channel: 'Gmail', trigger: 'Contact form · pricing intent', draft: 'Plans start at £20/mo flat — happy to walk you through which tier fits. 15 minutes this week?' },
+      { id: 10, agentTag: 'Nova · Scheduling', time: '6 hrs ago', title: 'Send intake forms to 3 new clients booked this week', to: '3 recipients', channel: 'Email', trigger: 'New booking · first visit', draft: 'Before your first session, here is a short intake form — takes about 3 minutes.' },
+    ];
+    return (this.props.queueVolume ?? 'typical') === 'busy' ? Q.concat(busy) : Q;
+  }
+
+  agents() {
+    return {
+      aria: { name: 'Aria', live: true, desc: 'Handles outreach and lead follow-up. Spots interest, flags it for you.', stats: 'This week — 32 actions · 29 approved · 3 denied', config: [
+        { k: 'Trigger', v: 'New lead, or 48h of lead silence' },
+        { k: 'Channels', v: 'Gmail, contact form, LinkedIn' },
+        { k: 'Approval', v: 'Manual — every send needs you' },
+        { k: 'Integrations', v: 'Gmail · Google Sheets' },
+      ], feed: [
+        { t: '09:41', line: '[..] drafted follow-up — awaiting approval', color: '#8B7DFF' },
+        { t: '09:12', line: '[ok] flagged warm reply — Meridian Group', color: 'rgba(245,244,239,.75)' },
+        { t: '08:47', line: '[--] second-touch batch denied by you', color: 'rgba(245,244,239,.45)' },
+        { t: '08:30', line: '[ok] logged 3 new leads to Sheets', color: 'rgba(245,244,239,.75)' },
+        { t: '07:58', line: '[ok] watching inbox — 2 threads tracked', color: 'rgba(245,244,239,.75)' },
+      ] },
+      nova: { name: 'Nova', live: true, desc: 'Runs comms and scheduling. Reminders, bookings, inbound replies.', stats: 'This week — 51 actions · 50 approved · 1 denied', config: [
+        { k: 'Trigger', v: 'Bookings, reschedules, day-before reminders' },
+        { k: 'Channels', v: 'SMS, Email, Google Calendar' },
+        { k: 'Approval', v: 'Manual — every send needs you' },
+        { k: 'Integrations', v: 'Google Calendar · Gmail' },
+      ], feed: [
+        { t: '09:35', line: '[..] 14 reminders drafted — awaiting approval', color: '#8B7DFF' },
+        { t: '09:12', line: '[ok] reschedule confirmed — Braywell', color: 'rgba(245,244,239,.75)' },
+        { t: '08:30', line: '[ok] 6 booking confirmations sent', color: 'rgba(245,244,239,.75)' },
+        { t: '08:02', line: '[ok] calendar synced — 11 events', color: 'rgba(245,244,239,.75)' },
+        { t: '07:45', line: '[ok] watching inbound — 1 reply parsed', color: 'rgba(245,244,239,.75)' },
+      ] },
+      finn: { name: 'Finn', live: false, desc: 'Finance & reporting. Invoices, reconciliation, weekly numbers.', planned: [
+        { n: '01', text: 'Chase overdue invoices with escalating, approved reminders' },
+        { n: '02', text: 'Reconcile payments against Xero and flag exceptions' },
+        { n: '03', text: 'Deliver a weekly numbers digest every Monday morning' },
+      ] },
+      zara: { name: 'Zara', live: false, desc: 'Operations. Stock, suppliers, fulfilment exceptions.', planned: [
+        { n: '01', text: 'Reorder stock when suppliers drop below threshold' },
+        { n: '02', text: 'Chase late purchase orders before they block fulfilment' },
+        { n: '03', text: 'Flag fulfilment exceptions the moment they appear' },
+      ] },
+      cleo: { name: 'Cleo', live: false, desc: 'Compliance & reporting. Policies, audits, regulatory filings.', planned: [
+        { n: '01', text: 'Track filing deadlines and prepare drafts ahead of time' },
+        { n: '02', text: 'Keep policy documents current and flag stale ones' },
+        { n: '03', text: 'Assemble audit evidence packs from the action log' },
+      ] },
+    };
+  }
+
+  go(screen) { this.setState({ screen, expandedId: null }); window.scrollTo(0, 0); }
+
+  resolveItem(id, verdict) {
+    const q = (this.state.queue || this.baseQueue());
+    const item = q.find(x => x.id === id);
+    this.setState(s => ({
+      queue: q.filter(x => x.id !== id),
+      resolvedExtra: [{ agent: item.agentTag.split(' ·')[0], title: item.title, verdict, verdictColor: verdict === 'Approved' ? '#5B4BF5' : 'rgba(22,21,26,.4)', time: '09:41' }, ...s.resolvedExtra],
+    }));
+  }
+
+  runBlueprint(text) {
+    (this.timers || []).forEach(clearTimeout); this.timers = [];
+    const lower = text.toLowerCase();
+    let agent = 'Aria';
+    if (/(invoice|reconcil|payment|numbers)/.test(lower)) agent = 'Finn';
+    else if (/(remind|book|schedul|appoint|calendar)/.test(lower)) agent = 'Nova';
+    else if (/(stock|supplier|reorder|fulfil)/.test(lower)) agent = 'Zara';
+    else if (/(policy|audit|filing|complian)/.test(lower)) agent = 'Cleo';
+    const summary = text.length > 60 ? text.slice(0, 57) + '…' : text;
+    this.setState({ bpInput: text, bpLines: [], bpPhase: 'parsing', bpAgent: agent, bpSummary: summary.toLowerCase() });
+    const dim = 'rgba(245,244,239,.55)';
+    const lines = [
+      { text: '[ok] intent parsed', color: dim },
+      { text: '[ok] matched 3 pre-approved actions', color: dim },
+      { text: '[ok] draft agent assembled — ' + agent.toUpperCase(), color: dim },
+      { text: '[..] nothing deploys without you', color: '#8B7DFF' },
+    ];
+    lines.forEach((l, i) => this.after(500 + i * 620, () => this.setState(s => ({ bpLines: [...s.bpLines, l] }))));
+    this.after(500 + 4 * 620, () => this.setState({ bpPhase: 'ready' }));
+  }
+
+  queueDraft() {
+    const { bpAgent, bpSummary } = this.state;
+    const q = this.state.queue || this.baseQueue();
+    this.setState({
+      bpPhase: 'queued',
+      queue: [{ id: Date.now(), agentTag: bpAgent + ' · Draft', time: 'just now', title: 'Deploy new agent: ' + bpSummary, to: 'workspace', channel: 'Blueprint', trigger: 'Built from your request', draft: 'First run executes in draft mode. You approve every outbound action individually.' }, ...q],
+    });
+  }
+
+  obPush(text) { this.setState(s => ({ obLog: [...s.obLog, { text, color: 'rgba(245,244,239,.75)' }] })); }
+
+  settingsData() {
+    const P = this.state.prefs;
+    const tog = (key) => ({ isToggle: true, isValue: false, isAction: false, togBg: P[key] ? '#5B4BF5' : 'rgba(22,21,26,.2)', knobLeft: P[key] ? '21px' : '3px', flip: () => this.setState(s => ({ prefs: { ...s.prefs, [key]: !s.prefs[key] } })) });
+    const val = (v) => ({ isToggle: false, isValue: true, isAction: false, value: v });
+    const act = (a) => ({ isToggle: false, isValue: false, isAction: true, action: a, act: () => {} });
+    return {
+      workspace: { title: 'Workspace', rows: [
+        { label: 'Workspace name', detail: 'shown across the app', ...val(this.state.workspaceName) },
+        { label: 'Owner', detail: 'full admin access', ...val('hamza@logiq.org.uk') },
+        { label: 'Timezone', detail: 'timestamps + schedules', ...val('Europe/London (GMT+1)') },
+        { label: 'Draft mode', detail: 'agents draft but never queue sends', ...tog('draftMode') },
+        { label: 'Delete workspace', detail: 'permanent — removes agents and history', ...act('Delete…') },
+      ]},
+      notifications: { title: 'Notifications', rows: [
+        { label: 'Email notifications', detail: 'new approvals land in your inbox', ...tog('emailNotif') },
+        { label: 'Daily digest', detail: '08:00 summary of queued + resolved', ...tog('dailyDigest') },
+        { label: 'SMS alerts', detail: 'urgent approvals only', ...tog('smsAlerts') },
+        { label: 'Quiet hours', detail: 'no notifications during this window', ...val('22:00 – 07:00') },
+      ]},
+      security: { title: 'Security', rows: [
+        { label: 'Two-factor authentication', detail: 'required at sign-in', ...tog('twoFactor') },
+        { label: 'Password', detail: 'last changed 3 months ago', ...act('Change') },
+        { label: 'Active sessions', detail: '2 devices — London, UK', ...act('Review') },
+        { label: 'Sign out everywhere', detail: 'ends all sessions except this one', ...act('Sign out') },
+      ]},
+      api: { title: 'API', rows: [
+        { label: 'API access', detail: 'allow external calls to this workspace', ...tog('apiAccess') },
+        { label: 'API key', detail: 'created 02 Jun 2026', ...val('lq_live_····story7c2') },
+        { label: 'Regenerate key', detail: 'invalidates the current key immediately', ...act('Regenerate') },
+        { label: 'Webhook URL', detail: 'approval events POST here', ...val('not set') },
+      ]},
+      team: { title: 'Team', rows: [
+        { label: 'Hamza', detail: 'hamza@logiq.org.uk — owner', ...val('Owner') },
+        { label: 'Approvers', detail: 'people who can approve agent actions', ...val('1 member') },
+        { label: 'Invite teammate', detail: 'approver or viewer roles', ...act('Invite') },
+      ]},
+      billing: { title: 'Billing', isBilling: true },
+      data: { title: 'Data & privacy', rows: [
+        { label: 'Action log retention', detail: 'full audit trail of every action', ...val('12 months') },
+        { label: 'Export data', detail: 'action log + agent configs as CSV', ...act('Export') },
+        { label: 'Delete all data', detail: 'permanent — 30-day grace period', ...act('Delete…') },
+      ]},
+    };
+  }
+
+  renderVals() {
+    const S = this.state;
+    const screen = S.screen ?? (this.props.startScreen ?? 'mission');
+    const navStyle = this.props.navStyle ?? 'sidebar';
+    const queue = S.queue || this.baseQueue();
+    const pendingCount = queue.length;
+    const AG = this.agents();
+
+    const navDef = [
+      { id: 'mission', label: 'Mission Control', badge: pendingCount > 0 ? String(pendingCount) : '' },
+      { id: 'blueprint', label: 'Blueprint', badge: '' },
+      { id: 'integrations', label: 'Integrations', badge: '' },
+    ];
+    const mkNav = (n) => ({
+      ...n,
+      go: () => this.go(n.id),
+      color: screen === n.id ? '#fff' : 'rgba(245,244,239,.6)',
+      bg: screen === n.id ? 'rgba(245,244,239,.1)' : 'transparent',
+    });
+    const navMain = navDef.map(mkNav);
+    const navAgents = Object.keys(AG).map(key => {
+      const a = AG[key]; const id = 'agent:' + key;
+      return {
+        label: a.name,
+        dot: a.live ? (S.stopped ? '‖ paused' : '● live') : 'soon',
+        dotColor: a.live && !S.stopped ? '#8B7DFF' : 'rgba(245,244,239,.3)',
+        go: () => this.go(id),
+        color: screen === id ? '#fff' : (a.live ? 'rgba(245,244,239,.6)' : 'rgba(245,244,239,.35)'),
+        bg: screen === id ? 'rgba(245,244,239,.1)' : 'transparent',
+      };
+    });
+    const navTop = navMain.concat(navAgents.map((n, i) => ({ ...n, badge: '' })));
+
+    // queue items
+    const pending = queue.map(q => ({
+      ...q,
+      isExpanded: S.expandedId === q.id,
+      toggleLabel: S.expandedId === q.id ? 'Hide details' : 'Details +',
+      toggle: () => this.setState(s => ({ expandedId: s.expandedId === q.id ? null : q.id })),
+      approve: () => this.resolveItem(q.id, 'Approved'),
+      deny: () => this.resolveItem(q.id, 'Denied'),
+    }));
+    const resolved = [...S.resolvedExtra,
+      { agent: 'Nova', title: 'Confirmed reschedule for Thursday 14:00', verdict: 'Approved', verdictColor: '#5B4BF5', time: '09:12' },
+      { agent: 'Aria', title: 'Second-touch email to 42 cold leads', verdict: 'Denied', verdictColor: 'rgba(22,21,26,.4)', time: '08:47' },
+      { agent: 'Nova', title: 'Sent booking confirmations (6)', verdict: 'Approved', verdictColor: '#5B4BF5', time: '08:30' },
+    ];
+
+    // agent screen
+    const agentKey = screen.startsWith('agent:') ? screen.slice(6) : null;
+    const agent = agentKey ? AG[agentKey] : null;
+
+    // integrations
+    const igDefs = [
+      { id: 'gmail', name: 'Gmail', account: 'hamza@logiq.org.uk' },
+      { id: 'calendar', name: 'Google Calendar', account: 'hamza@logiq.org.uk' },
+      { id: 'sheets', name: 'Google Sheets', account: 'hamza@logiq.org.uk' },
+      { id: 'xero', name: 'Xero', account: '' },
+      { id: 'slack', name: 'Slack', account: '' },
+      { id: 'whatsapp', name: 'WhatsApp Business', account: '' },
+      { id: 'stripe', name: 'Stripe', account: '' },
+      { id: 'hubspot', name: 'HubSpot', account: '' },
+    ];
+    const integrations = igDefs.map(d => {
+      const on = S.integrations[d.id];
+      return {
+        name: d.name,
+        connected: on, notConnected: !on,
+        status: on ? '● connected' : '○ not connected',
+        statusColor: on ? '#8B7DFF' : 'rgba(22,21,26,.35)',
+        bg: on ? '#16151A' : 'rgba(255,255,255,.6)',
+        fg: on ? '#F5F4EF' : 'rgba(22,21,26,.75)',
+        border: on ? '#16151A' : 'rgba(22,21,26,.1)',
+        account: on ? (d.account || 'workspace') : '',
+        accountColor: on ? 'rgba(245,244,239,.45)' : 'rgba(22,21,26,.35)',
+        testLog: S.testLogs[d.id] || '',
+        test: () => {
+          this.setState(s => ({ testLogs: { ...s.testLogs, [d.id]: '› ping…' } }));
+          this.after(750, () => this.setState(s => ({ testLogs: { ...s.testLogs, [d.id]: '› ok · ' + (90 + Math.floor(Math.random() * 120)) + 'ms · scopes valid' } })));
+        },
+        connect: () => this.setState(s => ({ integrations: { ...s.integrations, [d.id]: true } })),
+        disconnect: () => this.setState(s => ({ integrations: { ...s.integrations, [d.id]: false }, testLogs: { ...s.testLogs, [d.id]: '' } })),
+      };
+    });
+
+    // billing
+    const planDefs = [
+      { id: 'spark', name: 'Spark', price: '£30', amount: '£30.00', includes: '50 actions/mo · 1 agent · 1 workflow · no Blueprint AI' },
+      { id: 'starter', name: 'Starter', price: '£49', amount: '£49.00', tag: '★ Popular', includes: '500 actions/mo · 1 agent · 2 workflows · all integrations' },
+      { id: 'pro', name: 'Pro', price: '£149', amount: '£149.00', includes: '2,500 actions/mo · 3 agents · 10 workflows · priority support' },
+      { id: 'business', name: 'Business', price: '£399', amount: '£399.00', includes: '10,000 actions/mo · unlimited agents & workflows · multi-user' },
+      { id: 'enterprise', name: 'Enterprise', price: 'Custom', amount: 'custom', includes: 'White-glove onboarding · dedicated account manager · SLAs' },
+    ];
+    const currentIdx = planDefs.findIndex(p => p.id === S.plan);
+    const plans = planDefs.map((p, i) => {
+      const cur = p.id === S.plan;
+      const isEnterprise = p.id === 'enterprise';
+      return {
+        name: p.name, price: p.price, tag: p.tag || '', includes: p.includes,
+        showPerMo: !isEnterprise,
+        isCurrent: cur, notCurrent: !cur,
+        bg: cur ? '#16151A' : 'rgba(255,255,255,.6)',
+        fg: cur ? '#F5F4EF' : '#16151A',
+        border: cur ? '#16151A' : 'rgba(22,21,26,.12)',
+        shadow: cur ? '0 12px 32px rgba(22,21,26,.18)' : 'none',
+        lift: cur ? 'translateY(-6px)' : 'none',
+        labelColor: cur ? 'rgba(245,244,239,.7)' : 'rgba(22,21,26,.5)',
+        perColor: cur ? 'rgba(245,244,239,.5)' : 'rgba(22,21,26,.4)',
+        cta: isEnterprise ? 'Contact sales' : (i < currentIdx ? 'Switch to ' : 'Upgrade to ') + p.name,
+        pick: isEnterprise ? (() => {}) : (() => this.setState({ plan: p.id })),
+      };
+    });
+    const nextInvoice = (planDefs.find(p => p.id === S.plan) || {}).amount;
+
+    // blueprint
+    const bpPresets = [
+      'Chase unpaid invoices and flag anything 14 days over',
+      'Follow up every new lead within 10 minutes',
+      'Send booking reminders the day before each appointment',
+      'Reorder stock when a supplier drops below threshold',
+    ].map(t => ({ text: t, run: () => this.runBlueprint(t) }));
+    const bpStatus = S.bpPhase === 'parsing' ? '● building…' : S.bpPhase === 'ready' ? '● draft ready' : S.bpPhase === 'queued' ? '● queued' : '● listening…';
+
+    // onboarding
+    const obStepLabel = S.obStep >= 4 ? 'Setup complete' : 'Step ' + S.obStep + ' / 3';
+
+    return {
+      // shell
+      isOnboarding: screen === 'onboarding',
+      isApp: screen !== 'onboarding',
+      navSidebar: navStyle === 'sidebar',
+      navTopbar: navStyle === 'topbar',
+      navMain, navAgents, navTop,
+      workspaceName: S.workspaceName,
+      goOnboarding: () => this.setState({ screen: 'onboarding', obStep: 1, obLog: [{ text: '[ok] session started', color: 'rgba(245,244,239,.55)' }] }),
+      settingsToggle: () => this.setState(s => ({ settingsOpen: !s.settingsOpen })),
+      settingsClose: () => this.setState({ settingsOpen: false }),
+      settingsOpen: S.settingsOpen,
+      settingsTabs: [
+        { id: 'workspace', label: 'Workspace' }, { id: 'notifications', label: 'Notifications' }, { id: 'security', label: 'Security' }, { id: 'api', label: 'API' }, { id: 'team', label: 'Team' }, { id: 'billing', label: 'Billing' }, { id: 'data', label: 'Data & privacy' },
+      ].map(t => ({ label: t.label, go: () => this.setState({ settingsTab: t.id }), color: S.settingsTab === t.id ? '#fff' : 'rgba(245,244,239,.55)', bg: S.settingsTab === t.id ? 'rgba(245,244,239,.1)' : 'transparent' })),
+      settingsTitle: this.settingsData()[S.settingsTab].title,
+      settingsRows: this.settingsData()[S.settingsTab].rows || [],
+      settingsIsBilling: S.settingsTab === 'billing',
+      settingsRowsDisplay: S.settingsTab === 'billing' ? 'none' : 'flex',
+      plans, nextInvoice,
+      stopProp: (e) => e.stopPropagation(),
+      stopped: S.stopped,
+      notStopped: !S.stopped,
+      stopAll: () => this.setState({ stopped: true }),
+      resumeAll: () => this.setState({ stopped: false }),
+      agentsLine: S.stopped ? 'all agents paused' : '2 agents live',
+      agentLiveLabel: S.stopped ? '‖ paused' : '● Live',
+      agentLiveColor: S.stopped ? 'rgba(245,244,239,.45)' : '#8B7DFF',
+      goMission: () => this.go('mission'),
+      goBlueprint: () => this.go('blueprint'),
+
+      // mission
+      isMission: screen === 'mission',
+      pendingCount, pending, resolved,
+      queueEmpty: pendingCount === 0,
+
+      // agent
+      isAgent: !!agent,
+      agentLive: !!agent && agent.live,
+      agentSoon: !!agent && !agent.live,
+      agentName: agent ? agent.name : '',
+      agentDesc: agent ? agent.desc : '',
+      agentStats: agent && agent.live ? agent.stats : '',
+      agentConfig: agent && agent.live ? agent.config : [],
+      agentFeed: agent && agent.live ? agent.feed : [],
+      agentPlanned: agent && !agent.live ? agent.planned : [],
+      agentNotify: () => this.setState(s => ({ notified: { ...s.notified, [agentKey]: true } })),
+      agentNotifyState: agentKey && S.notified[agentKey] ? '[ok] on the list' : '',
+
+      // blueprint
+      isBlueprint: screen === 'blueprint',
+      bpIdle: S.bpPhase === 'idle' && !S.bpInput,
+      bpPresets, bpStatus,
+      bpInput: S.bpInput,
+      bpLines: S.bpLines,
+      bpReady: S.bpPhase === 'ready',
+      bpQueued: S.bpPhase === 'queued',
+      bpAgent: S.bpAgent, bpSummary: S.bpSummary,
+      bpChange: (e) => this.setState({ bpInput: e.target.value }),
+      bpKey: (e) => { if (e.key === 'Enter' && S.bpInput.trim()) this.runBlueprint(S.bpInput.trim()); },
+      bpQueue: () => this.queueDraft(),
+      bpReset: () => this.setState({ bpInput: '', bpLines: [], bpPhase: 'idle' }),
+
+      // integrations
+      isIntegrations: screen === 'integrations',
+      integrations,
+
+      // onboarding
+      obStepLabel,
+      obLog: S.obLog,
+      obIsStep1: S.obStep === 1, obIsStep2: S.obStep === 2, obIsStep3: S.obStep === 3, obIsDone: S.obStep >= 4,
+      obName: S.obName,
+      obNameChange: (e) => this.setState({ obName: e.target.value }),
+      obNameKey: (e) => { if (e.key === 'Enter' && S.obName.trim()) { this.setState({ obStep: 2, workspaceName: S.obName.trim() }); this.obPush('[ok] workspace created — "' + S.obName.trim() + '"'); } },
+      obNameSubmit: () => { const n = S.obName.trim() || 'Northfield Ops'; this.setState({ obStep: 2, workspaceName: n }); this.obPush('[ok] workspace created — "' + n + '"'); },
+      obGmailStatus: S.obGmail ? '● connected' : '○ not connected',
+      obConnectGmail: () => { this.setState(s => ({ obGmail: true, integrations: { ...s.integrations, gmail: true } })); this.obPush('[ok] gmail connected — hamza@logiq.org.uk'); this.after(700, () => this.setState({ obStep: 3 })); },
+      obSkipStep2: () => { this.setState({ obStep: 3 }); this.obPush('[--] inbox skipped — connect later in Integrations'); },
+      obPickAria: () => this.setState(s => ({ obAgents: { ...s.obAgents, aria: !s.obAgents.aria } })),
+      obPickNova: () => this.setState(s => ({ obAgents: { ...s.obAgents, nova: !s.obAgents.nova } })),
+      obAriaRing: S.obAgents.aria ? '#5B4BF5' : 'transparent',
+      obNovaRing: S.obAgents.nova ? '#5B4BF5' : 'transparent',
+      obAriaTag: S.obAgents.aria ? '● selected' : 'off',
+      obNovaTag: S.obAgents.nova ? '● selected' : 'off',
+      obFinish: () => { const picked = ['aria', 'nova'].filter(k => S.obAgents[k]).map(k => AG[k].name).join(', ') || 'none'; this.setState({ obStep: 4 }); this.obPush('[ok] agents live — ' + picked); this.obPush('[..] watching — actions will queue for your approval'); },
+      obSkip: () => this.go('mission'),
+      obOpenApp: () => this.go('mission'),
+    };
+  }
+}
+</script>
+</body>
+</html>
