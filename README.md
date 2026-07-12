@@ -1,4 +1,4 @@
-# LogiQ — Your Digital Employee
+# LogiQ - Your Digital Employee
 
 A full-stack AI agent platform demo. Visitors open a URL and use the complete LogiQ workforce — Blueprint AI, five default agents, custom agent deployment, and action queues — with no client-side API keys required.
 
