@@ -16,6 +16,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.exception_handlers import (
     http_exception_handler,
     request_validation_exception_handler,
@@ -482,6 +483,11 @@ def sse_event(event: str, data: Dict[str, Any]) -> str:
 
 
 # ─── Routes ───────────────────────────────────────────────────────────────────
+
+_assets_dir = ROOT_DIR / "assets"
+if _assets_dir.is_dir():
+    app.mount("/assets", StaticFiles(directory=str(_assets_dir)), name="assets")
+
 
 @app.get("/")
 async def serve_frontend():
