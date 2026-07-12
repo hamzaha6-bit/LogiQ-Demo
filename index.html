@@ -4,8 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>LogiQ — Mission Control</title>
-<link rel="icon" type="image/png" href="assets/logiq-icon-square.png">
-<link rel="apple-touch-icon" href="assets/logiq-icon-square.png">
+<link rel="icon" type="image/png" href="/assets/logiq-icon-square.png">
+<link rel="apple-touch-icon" href="/assets/logiq-icon-square.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Instrument+Sans:wght@400;500;600&display=swap">
@@ -1020,7 +1020,7 @@ input[type=file].hidden-input { display: none; }
   <div class="auth-wrap">
     <div class="auth-brand">
       <div class="logo-row">
-        <img class="logo-mark" src="assets/logiq-icon-square.png" alt="LogiQ" width="32" height="32">
+        <img class="logo-mark" src="/assets/logiq-icon-square.png" alt="LogiQ" width="32" height="32">
         <span class="auth-wordmark">Logi<span class="q">Q</span></span>
       </div>
       <div class="auth-infra">AI deployment infrastructure</div>
@@ -1103,7 +1103,7 @@ input[type=file].hidden-input { display: none; }
 <div class="app app-root hidden" id="app-root">
   <aside class="sidebar">
     <div class="logo-row">
-      <img class="logo-mark" src="assets/logiq-icon-square.png" alt="LogiQ" width="32" height="32">
+      <img class="logo-mark" src="/assets/logiq-icon-square.png" alt="LogiQ" width="32" height="32">
       <div class="logo-text">
         <div class="wordmark">Logi<span class="q">Q</span></div>
         <div class="tagline">/ app</div>
@@ -1591,7 +1591,7 @@ function renderBillingOnboardingStep() {
   const dots = [1, 2, 3].map(n =>
     `<span class="${n === billingOnboardingStep ? 'active' : ''}"></span>`
   ).join('');
-  let inner = `<div class="logo-row"><img class="logo-mark" src="assets/logiq-icon-square.png" alt="LogiQ" width="32" height="32"><div class="logo-text"><div class="wordmark">LogiQ</div></div></div>`;
+  let inner = `<div class="logo-row"><img class="logo-mark" src="/assets/logiq-icon-square.png" alt="LogiQ" width="32" height="32"><div class="logo-text"><div class="wordmark">LogiQ</div></div></div>`;
 
   if (billingOnboardingStep === 1) {
     inner += `
@@ -1665,7 +1665,7 @@ function showBillingPage(kind) {
   } else {
     card.innerHTML = `
       <div class="billing-onboarding">
-        <div class="logo-row"><img class="logo-mark" src="assets/logiq-icon-square.png" alt="LogiQ" width="32" height="32"><div class="logo-text"><div class="wordmark">LogiQ</div></div></div>
+        <div class="logo-row"><img class="logo-mark" src="/assets/logiq-icon-square.png" alt="LogiQ" width="32" height="32"><div class="logo-text"><div class="wordmark">LogiQ</div></div></div>
         <h1>Payment cancelled.</h1>
         <p class="sub">No payment was taken.</p>
         <a href="/" class="btn-billing" style="display:block;text-align:center;text-decoration:none">View pricing</a>
@@ -3144,7 +3144,7 @@ function renderBuild() {
             <h2 style="font-family:var(--font-display);font-weight:500;letter-spacing:-.03em;font-size:28px">Describe it. Vision <span style="color:#5B4BF5">builds it.</span></h2>
             <p>Assembled only from safe, pre-approved actions</p>
           </div>
-          <img class="logo-mark" src="assets/logiq-icon-square.png" alt="LogiQ" width="36" height="36" style="width:36px;height:36px;">
+          <img class="logo-mark" src="/assets/logiq-icon-square.png" alt="LogiQ" width="36" height="36" style="width:36px;height:36px;">
         </div>
         <div class="chat-messages-full" id="build-messages"></div>
         <div class="blueprint-compose">
