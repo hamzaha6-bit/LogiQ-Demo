@@ -26,7 +26,8 @@
         "includeFiles": "api_lib/action_registry.py,api_lib/agent_pipeline.py,api_lib/entitlements.py,api_lib/execution_gate.py,api_lib/http_auth.py,api_lib/supabase_rest.py,api_lib/usage.py"
       }
     },
-    { "src": "index.html", "use": "@vercel/static" }
+    { "src": "index.html", "use": "@vercel/static" },
+    { "src": "assets/**", "use": "@vercel/static" }
   ],
   "routes": [
     { "src": "/api/auth/hook/user-created", "dest": "/api/auth.py" },
