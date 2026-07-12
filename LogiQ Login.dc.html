@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&amp;family=IBM+Plex+Mono:wght@400;500;600&amp;family=Instrument+Sans:wght@400;500;600&amp;display=swap">
+<style>
+  html { background:#EFEDFB; }
+  body { margin:0; background:#EFEDFB; color:#16151A; font-family:'Instrument Sans',system-ui,sans-serif; -webkit-font-smoothing:antialiased; }
+  a { color:#4A3FE0; text-decoration:none; }
+  a:hover { color:#16151A; }
+  input:focus { outline:none; }
+  input { font-family:inherit; }
+  @keyframes lqIn { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:none; } }
+</style>
+</helmet>
+
+<div style="min-height:100vh; display:flex; align-items:center; justify-content:center; background:#EFEDFB; padding:40px 20px; box-sizing:border-box;">
+  <div style="width:100%; max-width:360px;">
+
+    <div style="display:flex; align-items:center; justify-content:center; gap:10px;">
+      <img src="assets/logiq-icon-square.png" alt="LogiQ" style="width:32px; height:32px; border-radius:8px; flex:none;">
+      <span style="font-family:'Archivo',sans-serif; font-weight:700; font-size:21px; letter-spacing:-.5px;">Logi<span style="color:#5B4BF5;">Q</span></span>
+    </div>
+    <div style="margin-top:10px; text-align:center; font-family:'IBM Plex Mono',monospace; font-size:10.5px; letter-spacing:.16em; text-transform:uppercase; color:rgba(22,21,26,.4);">AI deployment infrastructure</div>
+
+    <div style="margin-top:28px; background:#fff; border-radius:14px; padding:34px 30px 30px; box-shadow:0 1px 3px rgba(22,21,26,.1);">
+      <h1 style="margin:0; font-family:'Archivo',sans-serif; font-weight:500; font-size:24px; letter-spacing:-.03em; text-align:center;">{{ headline }}</h1>
+      <p style="margin:8px 0 0; font-size:13.5px; line-height:1.6; color:rgba(22,21,26,.55); text-align:center;">{{ subline }}</p>
+
+      <!-- toggle -->
+      <div style="display:flex; justify-content:center; gap:22px; margin-top:22px; border-bottom:1px solid rgba(22,21,26,.12);">
+        <div onClick="{{ goSignIn }}" style="padding:0 0 11px; font-size:14px; font-weight:500; cursor:pointer; color:{{ signInColor }}; border-bottom:2px solid {{ signInBorder }}; margin-bottom:-1px;">Sign in</div>
+        <div onClick="{{ goCreate }}" style="padding:0 0 11px; font-size:14px; font-weight:500; cursor:pointer; color:{{ createColor }}; border-bottom:2px solid {{ createBorder }}; margin-bottom:-1px;">Create account</div>
+      </div>
+
+      <div style="display:flex; flex-direction:column; gap:14px; margin-top:20px;">
+        <div>
+          <div style="font-family:'IBM Plex Mono',monospace; font-size:10px; letter-spacing:.12em; text-transform:uppercase; color:rgba(22,21,26,.45); margin-bottom:7px;">Email</div>
+          <input type="email" value="{{ email }}" onChange="{{ emailChange }}" placeholder="you@company.com" style="width:100%; box-sizing:border-box; background:#F7F6FC; border:1px solid {{ emailBorder }}; border-radius:9px; padding:12px 14px; font-size:14px; color:#16151A;">
+        </div>
+        <div>
+          <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:7px;">
+            <span style="font-family:'IBM Plex Mono',monospace; font-size:10px; letter-spacing:.12em; text-transform:uppercase; color:rgba(22,21,26,.45);">Password</span>
+            <sc-if value="{{ isSignIn }}" hint-placeholder-val="{{ true }}">
+              <span style="font-family:'IBM Plex Mono',monospace; font-size:10px; letter-spacing:.1em; text-transform:uppercase; color:#5B4BF5; cursor:pointer;">Forgot?</span>
+            </sc-if>
+          </div>
+          <input type="password" value="{{ password }}" onChange="{{ passwordChange }}" onKeyDown="{{ passwordKey }}" placeholder="••••••••" style="width:100%; box-sizing:border-box; background:#F7F6FC; border:1px solid {{ passBorder }}; border-radius:9px; padding:12px 14px; font-size:14px; color:#16151A;">
+        </div>
+      </div>
+
+      <sc-if value="{{ hasError }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex; align-items:baseline; gap:8px; margin-top:14px; animation:lqIn .2s ease;">
+          <span style="font-family:'IBM Plex Mono',monospace; font-size:10px; letter-spacing:.1em; text-transform:uppercase; color:#B23A3A;">Error</span>
+          <span style="font-size:12.5px; color:rgba(178,58,58,.85);">{{ errorText }}</span>
+        </div>
+      </sc-if>
+
+      <button onClick="{{ submit }}" style="margin-top:20px; width:100%; background:#16151A; color:#fff; border:none; border-radius:9px; padding:13px 0; font-family:'Instrument Sans',sans-serif; font-weight:600; font-size:14.5px; cursor:pointer;" style-hover="background:#5B4BF5;">{{ ctaText }}</button>
+
+      <div style="margin-top:16px; text-align:center; font-family:'IBM Plex Mono',monospace; font-size:9.5px; letter-spacing:.1em; text-transform:uppercase; color:#5B4BF5;">nothing sends without you</div>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  state = {
+    mode: 'signin',
+    email: '', password: '',
+    error: '',
+  };
+
+  submit() {
+    const { mode, email, password } = this.state;
+    if (!email || !password) {
+      this.setState({ error: mode === 'signin' ? 'Enter your email and password to continue.' : 'Fill in both fields to create your workspace.' });
+      return;
+    }
+    this.setState({ error: '' });
+  }
+
+  renderVals() {
+    const S = this.state;
+    const isSignIn = S.mode === 'signin';
+    return {
+      isSignIn,
+      headline: isSignIn ? 'Welcome back.' : 'Set up your workspace.',
+      subline: isSignIn ? 'Sign in to your Mission Control.' : 'Agents draft. You approve. Nothing sends without you.',
+      goSignIn: () => this.setState({ mode: 'signin', error: '' }),
+      goCreate: () => this.setState({ mode: 'create', error: '' }),
+      signInColor: isSignIn ? '#16151A' : 'rgba(22,21,26,.4)',
+      createColor: !isSignIn ? '#16151A' : 'rgba(22,21,26,.4)',
+      signInBorder: isSignIn ? '#5B4BF5' : 'transparent',
+      createBorder: !isSignIn ? '#5B4BF5' : 'transparent',
+      email: S.email,
+      password: S.password,
+      emailChange: (e) => this.setState({ email: e.target.value }),
+      passwordChange: (e) => this.setState({ password: e.target.value }),
+      passwordKey: (e) => { if (e.key === 'Enter') this.submit(); },
+      emailBorder: S.error && !S.email ? '#B23A3A' : 'rgba(22,21,26,.1)',
+      passBorder: S.error && !S.password ? '#B23A3A' : 'rgba(22,21,26,.1)',
+      hasError: !!S.error,
+      errorText: S.error,
+      ctaText: isSignIn ? 'Sign in' : 'Create account',
+      submit: () => this.submit(),
+    };
+  }
+}
+</script>
+</body>
+</html>
