@@ -41,10 +41,15 @@ INACTIVE_SHAPE_KEYS = {
     "limits",
     "percentages",
     "spend",
+    "current_period_end",
+    "current_period_start",
+    "next_invoice_at",
+    "payment_method_label",
     "stripe_configured",
 }
 
 
+@patch("billing_status.get_today_usage", return_value={"api_calls": 12, "emails_sent": 3, "actions_taken": 5})
 @patch("billing_status.get_monthly_usage", return_value={"actions_used": 240, "spend_pence": 120})
 @patch("billing_status.get_entitlement", return_value=ACTIVE_ENTITLEMENT)
 @patch("billing_status.client_id_from_user_id", return_value=CLIENT_ID)
@@ -52,6 +57,7 @@ def test_active_subscriber_returns_usage_and_limits(
     mock_client_id: MagicMock,
     mock_entitlement: MagicMock,
     mock_usage: MagicMock,
+    mock_today: MagicMock,
 ) -> None:
     result = get_billing_status(USER_ID)
 
@@ -59,13 +65,15 @@ def test_active_subscriber_returns_usage_and_limits(
     assert result["plan_name"] == "Starter"
     assert result["status"] == "active"
     assert result["usage"]["actions_this_month"] == 240
-    assert result["usage"]["api_calls_today"] == 0
-    assert result["usage"]["emails_sent_today"] == 0
+    assert result["usage"]["api_calls_today"] == 12
+    assert result["usage"]["emails_sent_today"] == 3
     assert result["limits"]["max_actions_month"] == 500
     assert result["limits"]["max_agents"] == 1
     assert result["limits"]["max_workflows"] == 2
-    assert result["limits"]["max_api_calls_day"] == 0
-    assert result["limits"]["max_emails_day"] == 0
+    assert result["limits"]["max_api_calls_day"] == 100
+    assert result["limits"]["max_emails_day"] == 50
+    assert result["percentages"]["api_calls"] == 12
+    assert result["percentages"]["emails"] == 6
     assert result["spend"]["used_pence"] == 120
     assert result["spend"]["cap_pence"] == 4000
     assert result["stripe_configured"] is True

@@ -17,6 +17,7 @@ from action_registry import registry_for_prompt
 from agent_pipeline import stream_agent_run
 from execution_gate import check_execution_gate, record_allowed_action
 from http_auth import resolve_user_id
+from usage import record_api_call
 
 MODEL = (os.environ.get("ANTHROPIC_MODEL") or "claude-sonnet-4-6").strip()
 MAX_CHAT_TOKENS = 4096
@@ -170,6 +171,7 @@ class handler(BaseHTTPRequestHandler):
             )
             content = _response_text(response)
             record_allowed_action(gate.client_id, "blueprint_chat")
+            record_api_call(user_id)
             self._json(200, {"content": content})
         except anthropic.APIError as exc:
             _log(f"chat Anthropic APIError: {exc}")
@@ -197,6 +199,7 @@ class handler(BaseHTTPRequestHandler):
 
         try:
             client = anthropic.Anthropic(api_key=api_key)
+            record_api_call(user_id)
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream")
             self.send_header("Cache-Control", "no-cache")

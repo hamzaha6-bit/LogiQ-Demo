@@ -1,4 +1,4 @@
-"""Billing status for the dashboard — entitlements + client_usage."""
+"""Billing status for the dashboard — entitlements + client_usage + daily usage."""
 
 from __future__ import annotations
 
@@ -7,7 +7,15 @@ from typing import Any, Dict, Optional, Tuple
 
 from entitlements import get_entitlement
 from supabase_rest import client_id_from_user_id
-from usage import get_monthly_usage
+from usage import get_monthly_usage, get_today_usage
+
+# Soft daily caps for Mission Control progress bars (entitlements gate on monthly actions).
+_DAILY_CAPS: Dict[str, Dict[str, int]] = {
+    "spark": {"max_api_calls_day": 50, "max_emails_day": 25},
+    "starter": {"max_api_calls_day": 100, "max_emails_day": 50},
+    "pro": {"max_api_calls_day": 500, "max_emails_day": 500},
+    "business": {"max_api_calls_day": 0, "max_emails_day": 0},  # 0 = unlimited in UI
+}
 
 
 def _stripe_configured() -> bool:
@@ -53,6 +61,10 @@ def _inactive_status() -> Dict[str, Any]:
             "cap_pence": 0,
             "percentage": 0,
         },
+        "current_period_end": None,
+        "current_period_start": None,
+        "next_invoice_at": None,
+        "payment_method_label": None,
         "stripe_configured": _stripe_configured(),
     }
 
@@ -74,12 +86,18 @@ def get_billing_status(user_id: str) -> Dict[str, Any]:
     usage = get_monthly_usage(client_id)
     actions_used = int(usage.get("actions_used") or 0)
     spend_used = int(usage.get("spend_pence") or 0)
+    today = get_today_usage(user_id)
+    api_today = int(today.get("api_calls") or 0)
+    emails_today = int(today.get("emails_sent") or 0)
 
     plan = (entitlement.get("plan") or "starter").strip().lower()
     actions_limit = int(entitlement.get("actions_limit") or 0)
     agents_limit = int(entitlement.get("agents_limit") or 0)
     workflows_limit = int(entitlement.get("workflows_limit") or 0)
     spend_cap = int(entitlement.get("spend_cap_pence") or 0)
+    caps = _DAILY_CAPS.get(plan) or _DAILY_CAPS["starter"]
+    api_limit = int(caps.get("max_api_calls_day") or 0)
+    email_limit = int(caps.get("max_emails_day") or 0)
 
     return {
         "plan": plan,
@@ -87,28 +105,32 @@ def get_billing_status(user_id: str) -> Dict[str, Any]:
         "status": status,
         "usage": {
             "actions_this_month": actions_used,
-            "api_calls_today": 0,
-            "emails_sent_today": 0,
-            "api_calls": 0,
-            "emails_sent": 0,
+            "api_calls_today": api_today,
+            "emails_sent_today": emails_today,
+            "api_calls": api_today,
+            "emails_sent": emails_today,
         },
         "limits": {
             "max_actions_month": actions_limit,
-            "max_api_calls_day": 0,
-            "max_emails_day": 0,
+            "max_api_calls_day": api_limit,
+            "max_emails_day": email_limit,
             "max_agents": agents_limit,
             "max_workflows": workflows_limit,
         },
         "percentages": {
             "actions": _pct(actions_used, actions_limit),
-            "api_calls": 0,
-            "emails": 0,
+            "api_calls": _pct(api_today, api_limit),
+            "emails": _pct(emails_today, email_limit),
         },
         "spend": {
             "used_pence": spend_used,
             "cap_pence": spend_cap,
             "percentage": _pct(spend_used, spend_cap),
         },
+        "current_period_end": entitlement.get("current_period_end"),
+        "current_period_start": entitlement.get("current_period_start"),
+        "next_invoice_at": entitlement.get("current_period_end"),
+        "payment_method_label": None,
         "stripe_configured": _stripe_configured(),
     }
 

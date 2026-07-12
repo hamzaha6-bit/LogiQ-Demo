@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from execution_gate import check_execution_gate, record_allowed_action
 from google_oauth import send_user_email
+from usage import record_email_sent
 from sheets_service import SchemaMismatchError, SheetsError, read_sheet
 from supabase_rest import client_id_from_user_id, rest_get, rest_patch, rest_post
 from workflow_context import empty_context, resolved_params_copy, set_step_output
@@ -186,6 +187,7 @@ def _execute_step(
         ok, message_id = send_user_email(user_id, to, subject, body, agent_name)
         if not ok:
             raise StepExecutionError(message_id)
+        record_email_sent(user_id)
         return {"sent": True, "message_id": message_id, "to": to, "subject": subject}
 
     return {"logged": True, "code": code}
