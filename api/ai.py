@@ -151,13 +151,22 @@ class handler(BaseHTTPRequestHandler):
         max_tokens = max(1, min(max_tokens, MAX_CHAT_TOKENS))
 
         system = (body.get("system") or "").strip() or _blueprint_system_prompt()
-        claude_messages = [{"role": "user", "content": message}]
-        if body.get("messages"):
-            claude_messages = [
-                {"role": m.get("role", "user"), "content": m.get("content", "")}
-                for m in body.get("messages")
-                if (m.get("content") or "").strip()
-            ]
+        raw_messages = body.get("messages") or [{"role": "user", "content": message}]
+        claude_messages: list[dict] = []
+        for m in raw_messages:
+            role = "assistant" if (m.get("role") or "user") == "assistant" else "user"
+            content = (m.get("content") or "").strip()
+            if not content:
+                continue
+            if claude_messages and claude_messages[-1]["role"] == role:
+                claude_messages[-1]["content"] += "\n\n" + content
+            else:
+                claude_messages.append({"role": role, "content": content})
+        if not claude_messages:
+            self._json(400, {"detail": "message is required"})
+            return
+        if claude_messages[0]["role"] != "user":
+            claude_messages.insert(0, {"role": "user", "content": "(continuing conversation)"})
 
         _log(f"blueprint chat user={user_id} model={MODEL} messages={len(claude_messages)} max_tokens={max_tokens}")
 

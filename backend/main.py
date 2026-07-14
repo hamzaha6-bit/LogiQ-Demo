@@ -717,12 +717,27 @@ async def chat(req: ChatRequest, request: Request):
         if not gate.allowed:
             raise _gate_http_exception(gate)
     client = get_anthropic_client()
+    # Anthropic requires alternating user/assistant roles — merge consecutive same-role turns.
+    normalized: List[Dict[str, str]] = []
+    for m in req.messages:
+        role = "assistant" if m.role == "assistant" else "user"
+        content = (m.content or "").strip()
+        if not content:
+            continue
+        if normalized and normalized[-1]["role"] == role:
+            normalized[-1]["content"] += "\n\n" + content
+        else:
+            normalized.append({"role": role, "content": content})
+    if not normalized:
+        raise HTTPException(status_code=400, detail="message is required")
+    if normalized[0]["role"] != "user":
+        normalized.insert(0, {"role": "user", "content": "(continuing conversation)"})
     try:
         response = client.messages.create(
             model=MODEL,
             max_tokens=req.max_tokens,
             system=req.system,
-            messages=[{"role": m.role, "content": m.content} for m in req.messages],
+            messages=normalized,
         )
         content = response.content[0].text if response.content else ""
         if gate and gate.allowed and record_allowed_action is not None:
