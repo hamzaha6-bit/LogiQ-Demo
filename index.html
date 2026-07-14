@@ -2758,15 +2758,31 @@ async function parseApiErrorPayload(res) {
 }
 
 async function callClaude(system, messages, maxTokens = 1200) {
+  // Anthropic requires strictly alternating user/assistant roles.
+  const normalized = [];
+  for (const m of messages || []) {
+    const role = m.role === 'assistant' ? 'assistant' : 'user';
+    const content = String(m.content || '').trim();
+    if (!content) continue;
+    const last = normalized[normalized.length - 1];
+    if (last && last.role === role) {
+      last.content += '\n\n' + content;
+    } else {
+      normalized.push({ role, content });
+    }
+  }
+  if (!normalized.length) throw new Error('Nothing to send — message was empty');
+  if (normalized[0].role !== 'user') {
+    normalized.unshift({ role: 'user', content: '(continuing conversation)' });
+  }
+
   const res = await apiFetch('/api/chat', {
     method: 'POST',
-    body: { system, messages, max_tokens: maxTokens }
+    body: { system, messages: normalized, max_tokens: maxTokens }
   });
   if (!res.ok) throw new Error(await parseApiError(res));
   backendReachable = true;
   backendAvailable = true;
-  document.getElementById('backend-dot').style.opacity = '1';
-  document.getElementById('backend-dot').style.background = 'var(--ok)';
   const data = await safeJson(res, {});
   return data.content || '';
 }
@@ -3300,23 +3316,34 @@ async function onComposeFileSelected(scopeId, input, kind) {
   if (!file) return;
   closeAllComposeAttachMenus();
 
+  const pushBlueprint = (role, text) => {
+    addBuildMsg(role, text);
+    blueprintHistory.push({ role, content: text });
+  };
+
   if (scopeId === 'blueprint') {
     if (kind === 'image') {
-      addBuildMsg('user', '🖼️ Attached image: ' + file.name);
-      addBuildMsg('assistant', 'Image noted. Tell me how it should feed into the workflow (template reference, extract text, etc.).');
-    } else if (/\.csv$/i.test(file.name)) {
+      pushBlueprint('user', 'Attached image: ' + file.name + ' (image bytes are not sent to Blueprint yet — describe what to extract or how to use it).');
+      pushBlueprint('assistant', 'Image noted by filename. Tell me how it should feed into the workflow (template reference, extract text, etc.).');
+    } else if (/\.csv$/i.test(file.name) || /\.(txt|tsv)$/i.test(file.name)) {
       try {
         const text = await readFileAsText(file);
-        const parsed = parseCSV(text);
-        const rows = Math.max(0, parsed.length - 1);
-        addBuildMsg('user', '📎 Attached CSV: ' + file.name + ' (' + rows + ' rows)');
-        addBuildMsg('assistant', 'Got the CSV. Describe the workflow you want built from this data — I\'ll map it to Gmail, Sheets, or Calendar actions.');
+        const preview = text.length > 12000 ? text.slice(0, 12000) + '\n…[truncated]' : text;
+        if (/\.csv$/i.test(file.name)) {
+          const parsed = parseCSV(text);
+          const rows = Math.max(0, parsed.length - 1);
+          pushBlueprint('user', 'Attached CSV: ' + file.name + ' (' + rows + ' rows).\n\nFile contents:\n' + preview);
+          pushBlueprint('assistant', 'I can read that CSV. Describe the workflow you want — I\'ll map it to Gmail, Sheets, or Calendar actions.');
+        } else {
+          pushBlueprint('user', 'Attached file: ' + file.name + '.\n\nFile contents:\n' + preview);
+          pushBlueprint('assistant', 'I can read that file. Describe what you want automated with it.');
+        }
       } catch (e) {
         toast('Could not read file');
       }
     } else {
-      addBuildMsg('user', '📎 Attached file: ' + file.name);
-      addBuildMsg('assistant', 'File noted. Describe what you want automated with it.');
+      pushBlueprint('user', 'Attached file: ' + file.name + ' (binary/Office formats are not parsed yet — describe what it contains).');
+      pushBlueprint('assistant', 'File noted. Describe what you want automated with it, or upload a CSV/TXT for me to read directly.');
     }
     input.value = '';
     return;
@@ -3324,21 +3351,29 @@ async function onComposeFileSelected(scopeId, input, kind) {
 
   // Agent composers
   if (kind === 'image') {
-    appendAgentMsg(scopeId, 'user', '🖼️ Attached image: ' + file.name);
+    appendAgentMsg(scopeId, 'user', 'Attached image: ' + file.name + ' (describe what to do with it — image bytes are not sent to the model yet).');
     appendAgentMsg(scopeId, 'assistant', 'Image noted. Tell me what you\'d like me to do with it.');
     input.value = '';
     return;
   }
-  if (/\.csv$/i.test(file.name) || kind === 'file') {
-    if (/\.csv$/i.test(file.name)) {
-      await agentUploadCSV(scopeId, input);
-      return;
+  if (/\.csv$/i.test(file.name)) {
+    await agentUploadCSV(scopeId, input);
+    return;
+  }
+  if (/\.(txt|tsv)$/i.test(file.name)) {
+    try {
+      const text = await readFileAsText(file);
+      const preview = text.length > 12000 ? text.slice(0, 12000) + '\n…[truncated]' : text;
+      appendAgentMsg(scopeId, 'user', 'Attached file: ' + file.name + '.\n\nFile contents:\n' + preview);
+      appendAgentMsg(scopeId, 'assistant', 'I can read that file. Tell me how you want me to use it.');
+    } catch (e) {
+      toast('Could not read file');
     }
-    appendAgentMsg(scopeId, 'user', '📎 Attached file: ' + file.name);
-    appendAgentMsg(scopeId, 'assistant', 'File noted. For structured imports, a CSV works best — or tell me how to use this file.');
     input.value = '';
     return;
   }
+  appendAgentMsg(scopeId, 'user', 'Attached file: ' + file.name);
+  appendAgentMsg(scopeId, 'assistant', 'File noted. For structured imports, a CSV works best — or tell me how to use this file.');
   input.value = '';
 }
 
@@ -3346,8 +3381,12 @@ function composeConnectSheet(scopeId) {
   if (scopeId === 'blueprint') {
     const url = (document.getElementById('sheet-url-blueprint')?.value || '').trim();
     if (!url) { toast('Paste a Google Sheets URL first'); return; }
-    addBuildMsg('user', '📊 Google Sheet: ' + url);
-    addBuildMsg('assistant', 'Sheet linked for this Blueprint conversation. Describe the workflow — I\'ll use Sheets actions where they fit.');
+    const note = 'Google Sheet linked: ' + url;
+    addBuildMsg('user', '📊 ' + note);
+    blueprintHistory.push({ role: 'user', content: note });
+    const reply = 'Sheet linked for this Blueprint conversation. Describe the workflow — I\'ll use Sheets actions where they fit.';
+    addBuildMsg('assistant', reply);
+    blueprintHistory.push({ role: 'assistant', content: reply });
     closeComposeSheetStrip('blueprint');
     return;
   }
@@ -4709,6 +4748,7 @@ async function sendAgentMessage(id) {
   const input = document.getElementById('agent-input-' + id);
   const text = input?.value?.trim();
   if (!text) return;
+  if (!(await requireAI())) return;
   input.value = '';
   appendAgentMsg(id, 'user', text);
 
@@ -4750,7 +4790,8 @@ async function sendAgentMessage(id) {
 Business: ${settings.business}. Stage: ${state.stage}. Loaded items: ${items.length}.
 ${isOutreachAgent(agent) ? 'You help with leads, email drafts, approval, and Gmail sending.' : 'You help process ' + agent.itemLabel + 's and show results inline.'}
 Be proactive, concise, use **bold** for emphasis.`;
-    const reply = await callClaude(sys, [...state.claudeHistory.slice(-12), { role:'user', content: text }], 900);
+    // claudeHistory already includes the user message from appendAgentMsg — do not append again.
+    const reply = await callClaude(sys, state.claudeHistory.slice(-12), 900);
     hideAgentTyping(id);
     appendAgentMsg(id, 'assistant', reply);
   } catch(e) {
