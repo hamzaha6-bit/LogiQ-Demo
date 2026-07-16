@@ -3411,7 +3411,9 @@ async function renderDashboard() {
   const liveAgents = [...deployedAgents.values()];
   const { data: allWorkflows } = await dbGet('workflows', {});
   const userId = getCurrentUserId();
-  const activeWorkflowCount = (allWorkflows || []).filter(w => w.user_id === userId && w.status === 'active').length;
+  const activeWorkflowCount = (allWorkflows || []).filter(w =>
+    w.user_id === userId && w.status === 'active' && !w.deleted_at
+  ).length;
 
   const usage = billingStatus?.usage || {};
   const limits = billingStatus?.limits || {};
@@ -4238,11 +4240,13 @@ async function deployBlueprintPlan() {
     toast('Select Aria or Nova — that agent must be active');
     return;
   }
+  if (!getAuthBearerToken()) {
+    toast('Sign in to deploy a workflow', 'err');
+    return;
+  }
   const agent = deployedAgents.get(agentId);
-  const userId = getCurrentUserId();
   const scheduleJson = readBlueprintSchedule();
   const record = {
-    user_id: userId,
     agent_id: agentId,
     name: plan.title || 'Custom workflow',
     description: plan.summary || '',
@@ -4252,15 +4256,30 @@ async function deployBlueprintPlan() {
     schedule: scheduleJson,
     updated_at: new Date().toISOString(),
   };
-  const saved = await dbInsert('workflows', record);
-  logAuditEvent(agent.name, 'workflow_deploy', { workflow_id: saved.id, title: record.name, status: 'completed' });
-  addBuildMsg('assistant', '✓ **' + record.name + '** is live on **' + agent.name + '**.' + scheduleSummaryLabel(scheduleJson) + ' I\'ll pause for your approval before any irreversible action.', 'deployed');
-  document.getElementById('blueprint-plan-review')?.remove();
-  blueprintPlan = null;
-  toast('Workflow deployed', 'success');
-  await runWorkflow(saved.id);
-  updateApprovalBadgeCount();
-  if (currentPage === 'dashboard') renderDashboard();
+  try {
+    const res = await apiFetch('/api/workflows/create', { method: 'POST', body: record });
+    const data = await safeJson(res, {});
+    if (!res.ok) {
+      toast(data.detail || data.message || 'Could not save workflow — nothing was deployed', 'err');
+      return;
+    }
+    const saved = data.workflow || data;
+    if (!saved?.id) {
+      toast('Could not save workflow — no id returned', 'err');
+      return;
+    }
+    logAuditEvent(agent.name, 'workflow_deploy', { workflow_id: saved.id, title: record.name, status: 'completed' });
+    addBuildMsg('assistant', '✓ **' + record.name + '** is live on **' + agent.name + '**.' + scheduleSummaryLabel(scheduleJson) + ' I\'ll pause for your approval before any irreversible action.', 'deployed');
+    document.getElementById('blueprint-plan-review')?.remove();
+    blueprintPlan = null;
+    toast('Workflow deployed', 'success');
+    await runWorkflow(saved.id);
+    updateApprovalBadgeCount();
+    if (currentPage === 'dashboard') renderDashboard();
+    if (currentPage === 'automations') renderAutomations();
+  } catch (e) {
+    toast(e.message || 'Could not save workflow — nothing was deployed', 'err');
+  }
 }
 
 async function emergencyStopWorkflows() {
@@ -4490,7 +4509,7 @@ async function rejectWorkflowApproval(approvalId) {
 
 async function continueWorkflowAfterApproval(approvalRow) {
   const { data: workflows } = await dbGet('workflows', {});
-  const wf = workflows.find(w => w.id === approvalRow.workflow_id);
+  const wf = (workflows || []).find(w => w.id === approvalRow.workflow_id && !w.deleted_at);
   if (!wf) return;
   const remaining = (wf.steps || []).filter(s => s.step > approvalRow.step_number);
   for (const step of remaining) {
