@@ -109,6 +109,12 @@ def _profile_payload(user_id: str, email: str, fallback_name: str):
     payload["email"] = email
     if not payload["name"]:
         payload["name"] = fallback_name
+    try:
+        from admin_dashboard import email_is_owner
+
+        payload["is_owner"] = email_is_owner(email)
+    except ImportError:
+        payload["is_owner"] = False
     return payload
 
 
