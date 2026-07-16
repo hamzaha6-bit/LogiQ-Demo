@@ -44,7 +44,7 @@ def _profile_row(user_id: str):
         "user_profiles",
         {
             "id": f"eq.{user_id}",
-            "select": "name,plan,onboarding_complete,tos_accepted_at,tos_version_accepted",
+            "select": "name,plan,onboarding_complete,tos_accepted_at,tos_version_accepted,onboarding_vertical,onboarding_pain_points,onboarding_completed_at,welcome_sent_at",
         },
     )
     if status >= 400:
@@ -96,6 +96,10 @@ def _profile_response(user_id: str, profile: dict) -> dict:
         "onboarding_complete": bool(profile.get("onboarding_complete")),
         "tos_accepted_at": profile.get("tos_accepted_at"),
         "tos_version_accepted": profile.get("tos_version_accepted"),
+        "onboarding_vertical": profile.get("onboarding_vertical"),
+        "onboarding_pain_points": profile.get("onboarding_pain_points"),
+        "onboarding_completed_at": profile.get("onboarding_completed_at"),
+        "welcome_sent_at": profile.get("welcome_sent_at"),
     }
 
 
@@ -173,6 +177,12 @@ class handler(BaseHTTPRequestHandler):
             self._json(400, {"detail": f"Invalid JSON body: {exc}"})
             return
 
+        # Post-OTP welcome email (frontend calls after successful verifyOtp).
+        # FLAG: This is the post-confirm welcome path — prefer this over the Before User Created hook.
+        if path.endswith("/welcome"):
+            self._welcome_after_verify(body)
+            return
+
         url = (os.environ.get("SUPABASE_URL") or "").strip()
         anon_key = (os.environ.get("SUPABASE_ANON_KEY") or "").strip()
         if not url or not anon_key:
@@ -247,6 +257,12 @@ class handler(BaseHTTPRequestHandler):
             updates["tos_accepted_at"] = str(body.get("tos_accepted_at")).strip()
         if "tos_version_accepted" in body and body.get("tos_version_accepted"):
             updates["tos_version_accepted"] = str(body.get("tos_version_accepted")).strip()
+        if "onboarding_vertical" in body:
+            updates["onboarding_vertical"] = str(body.get("onboarding_vertical") or "").strip() or None
+        if "onboarding_pain_points" in body:
+            updates["onboarding_pain_points"] = str(body.get("onboarding_pain_points") or "").strip() or None
+        if "onboarding_completed_at" in body and body.get("onboarding_completed_at"):
+            updates["onboarding_completed_at"] = str(body.get("onboarding_completed_at")).strip()
 
         if not updates:
             self._json(400, {"detail": "No valid profile fields to update"})
@@ -266,6 +282,64 @@ class handler(BaseHTTPRequestHandler):
         for key, value in updates.items():
             response[key] = value
         self._json(200, response)
+
+    def _welcome_after_verify(self, body):
+        """
+        POST /api/auth/welcome — sole welcome-email path (after OTP / magic-link confirm).
+        Idempotent via user_profiles.welcome_sent_at — skips if already sent.
+        """
+        try:
+            from hook_handler import send_welcome_email
+        except ImportError:
+            self._json(503, {"detail": "Welcome mailer unavailable"})
+            return
+
+        auth = self.headers.get("Authorization", "")
+        token = auth[7:].strip() if auth.startswith("Bearer ") else ""
+        email = ""
+        name = ""
+        user_id = ""
+        if token:
+            url = (os.environ.get("SUPABASE_URL") or "").strip()
+            anon_key = (os.environ.get("SUPABASE_ANON_KEY") or "").strip()
+            if url and anon_key:
+                try:
+                    client = create_client(url, anon_key)
+                    result = client.auth.get_user(token)
+                    user = result.user
+                    if user:
+                        user_id = str(user.id)
+                        email = (user.email or "").strip()
+                        meta = user.user_metadata or {}
+                        name = (meta.get("name") or "").strip()
+                except Exception as exc:
+                    print(f"[auth] welcome get_user failed: {exc}")
+        if not user_id and token:
+            user_id = user_id_from_bearer(token) or ""
+        if not email:
+            email = (body.get("email") or "").strip()
+        if not name:
+            name = (body.get("name") or "").strip()
+        if not email:
+            self._json(400, {"detail": "email is required"})
+            return
+        if not user_id:
+            self._json(401, {"detail": "Authentication required to send welcome email"})
+            return
+
+        profile = _ensure_profile(user_id, name, email)
+        if profile.get("welcome_sent_at"):
+            print(f"[auth] welcome already sent for user {user_id} — skipping")
+            self._json(200, {"sent": False, "skipped": True, "detail": "already_sent"})
+            return
+
+        ok, detail = send_welcome_email(email, name)
+        if ok:
+            from datetime import datetime, timezone
+
+            now = datetime.now(timezone.utc).isoformat()
+            rest_patch_with_error("user_profiles", {"id": user_id}, {"welcome_sent_at": now})
+        self._json(200, {"sent": ok, "skipped": False, "detail": detail})
 
     def _signup(self, body, url, anon_key):
         name = (body.get("name") or "").strip()

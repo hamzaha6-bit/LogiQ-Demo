@@ -312,7 +312,12 @@ def run_workflow_for_user(
 
     rows = rest_get(
         "workflows",
-        {"id": f"eq.{wid}", "user_id": f"eq.{uid}", "select": "*"},
+        {
+            "id": f"eq.{wid}",
+            "user_id": f"eq.{uid}",
+            "deleted_at": "is.null",
+            "select": "*",
+        },
     )
     if not rows:
         return 404, {"detail": "Workflow not found"}
@@ -471,6 +476,7 @@ def run_due_scheduled_workflows() -> Dict[str, Any]:
         "workflows",
         {
             "status": "eq.active",
+            "deleted_at": "is.null",
             "schedule": "not.is.null",
             "next_run_at": f"lte.{now}",
             "select": "id,user_id,name,schedule",

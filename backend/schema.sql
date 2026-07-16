@@ -7,6 +7,10 @@ CREATE TABLE IF NOT EXISTS user_profiles (
   onboarding_complete boolean DEFAULT false,
   tos_accepted_at timestamptz DEFAULT NULL,
   tos_version_accepted text DEFAULT NULL,
+  onboarding_vertical text DEFAULT NULL,
+  onboarding_pain_points text DEFAULT NULL,
+  onboarding_completed_at timestamptz DEFAULT NULL,
+  welcome_sent_at timestamptz DEFAULT NULL,
   created_at timestamptz DEFAULT now()
 );
 
@@ -130,6 +134,7 @@ CREATE TABLE IF NOT EXISTS workflows (
   schedule text DEFAULT NULL,
   next_run_at timestamptz DEFAULT NULL,
   last_run_at timestamptz DEFAULT NULL,
+  deleted_at timestamptz DEFAULT NULL,
   created_at timestamptz DEFAULT now(),
   updated_at timestamptz DEFAULT now()
 );
@@ -153,7 +158,20 @@ CREATE TABLE IF NOT EXISTS workflow_approvals (
 );
 
 CREATE INDEX IF NOT EXISTS idx_workflows_user ON workflows(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_workflows_user_not_deleted ON workflows (user_id, created_at DESC) WHERE deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_workflow_approvals_user ON workflow_approvals(user_id, status, created_at DESC);
+
+-- Client-scoped agent activation (tier active-agent limits). See migrations/008_agent_limits.sql
+CREATE TABLE IF NOT EXISTS client_agents (
+  id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+  client_id uuid NOT NULL,
+  agent_id text NOT NULL,
+  status text NOT NULL DEFAULT 'active',
+  activated_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (client_id, agent_id)
+);
+CREATE INDEX IF NOT EXISTS idx_client_agents_client_status ON client_agents (client_id, status);
 
 CREATE TABLE IF NOT EXISTS workflow_runs (
   id uuid DEFAULT gen_random_uuid() PRIMARY KEY,

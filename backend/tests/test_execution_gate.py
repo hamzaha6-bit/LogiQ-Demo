@@ -29,10 +29,12 @@ ACTIVE_ENTITLEMENT = {
     "status": "active",
     "plan": "starter",
     "actions_limit": 500,
+    "agents_limit": 2,
     "spend_cap_pence": 4000,
 }
 
 
+@patch("execution_gate.count_active_agents", return_value=0)
 @patch("execution_gate.get_monthly_usage", return_value={"actions_used": 0, "spend_pence": 0})
 @patch("execution_gate.get_entitlement", return_value=ACTIVE_ENTITLEMENT)
 @patch("execution_gate.client_id_from_user_id", return_value=CLIENT_ID)
@@ -40,10 +42,26 @@ def test_active_subscription_allows_action(
     mock_client_id: MagicMock,
     mock_entitlement: MagicMock,
     mock_usage: MagicMock,
+    mock_agents: MagicMock,
 ) -> None:
     result = check_execution_gate(USER_ID, "agent_action")
     assert result.allowed is True
     assert result.client_id == CLIENT_ID
+
+
+@patch("execution_gate.count_active_agents", return_value=5)
+@patch("execution_gate.get_monthly_usage", return_value={"actions_used": 0, "spend_pence": 0})
+@patch("execution_gate.get_entitlement", return_value=ACTIVE_ENTITLEMENT)
+@patch("execution_gate.client_id_from_user_id", return_value=CLIENT_ID)
+def test_over_agent_limit_blocks_action(
+    mock_client_id: MagicMock,
+    mock_entitlement: MagicMock,
+    mock_usage: MagicMock,
+    mock_agents: MagicMock,
+) -> None:
+    result = check_execution_gate(USER_ID, "agent_action")
+    assert result.allowed is False
+    assert result.error == "agent_limit_reached"
 
 
 @patch("execution_gate.get_monthly_usage", return_value={"actions_used": 0, "spend_pence": 0})
@@ -59,6 +77,7 @@ def test_inactive_subscription_blocks(
     assert result.error == "no_active_subscription"
 
 
+@patch("execution_gate.count_active_agents", return_value=0)
 @patch("execution_gate.get_monthly_usage", return_value={"actions_used": 500, "spend_pence": 0})
 @patch("execution_gate.get_entitlement", return_value=ACTIVE_ENTITLEMENT)
 @patch("execution_gate.client_id_from_user_id", return_value=CLIENT_ID)
@@ -66,12 +85,14 @@ def test_over_action_limit_blocks(
     mock_client_id: MagicMock,
     mock_entitlement: MagicMock,
     mock_usage: MagicMock,
+    mock_agents: MagicMock,
 ) -> None:
     result = check_execution_gate(USER_ID, "agent_action")
     assert result.allowed is False
     assert result.error == "action_limit_reached"
 
 
+@patch("execution_gate.count_active_agents", return_value=0)
 @patch("execution_gate.get_monthly_usage", return_value={"actions_used": 0, "spend_pence": 3995})
 @patch("execution_gate.get_entitlement", return_value=ACTIVE_ENTITLEMENT)
 @patch("execution_gate.client_id_from_user_id", return_value=CLIENT_ID)
@@ -79,12 +100,14 @@ def test_over_spend_cap_blocks(
     mock_client_id: MagicMock,
     mock_entitlement: MagicMock,
     mock_usage: MagicMock,
+    mock_agents: MagicMock,
 ) -> None:
     result = check_execution_gate(USER_ID, "agent_action")
     assert result.allowed is False
     assert result.error == "spend_cap_reached"
 
 
+@patch("execution_gate.count_active_agents", return_value=0)
 @patch("execution_gate._record_client_action")
 @patch("execution_gate.get_monthly_usage", return_value={"actions_used": 1, "spend_pence": 10})
 @patch("execution_gate.get_entitlement", return_value=ACTIVE_ENTITLEMENT)
@@ -94,6 +117,7 @@ def test_usage_recorded_after_allowed_action(
     mock_entitlement: MagicMock,
     mock_usage: MagicMock,
     mock_record: MagicMock,
+    mock_agents: MagicMock,
 ) -> None:
     gate = check_execution_gate(USER_ID, "agent_action")
     assert gate.allowed is True
@@ -101,6 +125,7 @@ def test_usage_recorded_after_allowed_action(
     mock_record.assert_called_once_with(CLIENT_ID, 10)
 
 
+@patch("execution_gate.count_active_agents", return_value=0)
 @patch("execution_gate._record_client_action")
 @patch("execution_gate.get_monthly_usage", return_value={"actions_used": 500, "spend_pence": 0})
 @patch("execution_gate.get_entitlement", return_value=ACTIVE_ENTITLEMENT)
@@ -110,6 +135,7 @@ def test_usage_not_recorded_when_blocked(
     mock_entitlement: MagicMock,
     mock_usage: MagicMock,
     mock_record: MagicMock,
+    mock_agents: MagicMock,
 ) -> None:
     gate = check_execution_gate(USER_ID, "agent_action")
     assert gate.allowed is False

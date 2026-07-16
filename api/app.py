@@ -14,9 +14,11 @@ from billing_checkout import CheckoutError, process_checkout
 from billing_portal import PortalError, process_portal
 from billing_status import billing_status_for_request
 from billing_webhook import WebhookError, process_event
+from client_agents import activate_agent_for_user, agents_status_for_user, pause_agent_for_user
 from http_auth import resolve_user_id
 from supabase_rest import pause_workflows_for_user
 from topup_checkout import TopupError, process_topup
+from workflow_delete import soft_delete_workflow_for_user
 from workflow_runner import run_due_scheduled_workflows, run_workflow_for_user
 
 
@@ -50,6 +52,8 @@ class handler(BaseHTTPRequestHandler):
             user_id = resolve_user_id(self)
             status, payload = billing_status_for_request(user_id)
             self._json(status, payload)
+        elif path.endswith("/agents/status"):
+            self._agents_status()
         elif path.endswith("/audit/log"):
             self._json(200, {"logs": [], "entries": []})
         elif path.endswith("/cron/workflows"):
@@ -63,6 +67,12 @@ class handler(BaseHTTPRequestHandler):
             self._emergency_stop_workflows()
         elif path.endswith("/workflows/run"):
             self._run_workflow()
+        elif path.endswith("/workflows/delete"):
+            self._delete_workflow()
+        elif path.endswith("/agents/activate"):
+            self._agents_activate()
+        elif path.endswith("/agents/pause"):
+            self._agents_pause()
         elif path.endswith("/billing/checkout"):
             self._billing_checkout()
         elif path.endswith("/billing/topup"):
@@ -159,6 +169,39 @@ class handler(BaseHTTPRequestHandler):
             workflow_run_id=workflow_run_id,
             approval_id=approval_id,
         )
+        self._json(status, payload)
+
+    def _delete_workflow(self):
+        user_id = resolve_user_id(self)
+        if not user_id:
+            self._json(401, {"detail": "Valid Bearer token required"})
+            return
+        body = self._read_json_body()
+        workflow_id = (body.get("workflow_id") or "").strip()
+        status, payload = soft_delete_workflow_for_user(user_id, workflow_id)
+        self._json(status, payload)
+
+    def _agents_status(self):
+        user_id = resolve_user_id(self)
+        status, payload = agents_status_for_user(user_id or "")
+        self._json(status, payload)
+
+    def _agents_activate(self):
+        user_id = resolve_user_id(self)
+        if not user_id:
+            self._json(401, {"detail": "Valid Bearer token required"})
+            return
+        body = self._read_json_body()
+        status, payload = activate_agent_for_user(user_id, body.get("agent_id") or "")
+        self._json(status, payload)
+
+    def _agents_pause(self):
+        user_id = resolve_user_id(self)
+        if not user_id:
+            self._json(401, {"detail": "Valid Bearer token required"})
+            return
+        body = self._read_json_body()
+        status, payload = pause_agent_for_user(user_id, body.get("agent_id") or "")
         self._json(status, payload)
 
     def _cron_run_workflows(self):
