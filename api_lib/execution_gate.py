@@ -10,6 +10,12 @@ from entitlements import get_entitlement
 from supabase_rest import client_id_from_user_id, email_from_user_id
 from usage import get_monthly_usage, record_action as _record_client_action
 
+try:
+    from client_agents import count_active_agents
+except ImportError:
+    def count_active_agents(_client_id: str) -> int:  # type: ignore[misc]
+        return 0
+
 # Provisional per-action cost estimates (pence). Tune when real usage data is available.
 ACTION_COST_PENCE: Dict[str, int] = {
     "blueprint_chat": 20,
@@ -88,6 +94,28 @@ def check_execution_gate(user_id: str, action_type: str = "action") -> GateResul
             error="no_active_subscription",
             client_id=client_id,
         )
+
+    # Active agent limit: block when oversubscribed (e.g. after plan downgrade).
+    # Activation itself enforces count >= limit before adding another agent.
+    # agents_limit == 0 means unlimited (enterprise).
+    agents_limit = int(entitlement.get("agents_limit") or 0)
+    if agents_limit > 0:
+        try:
+            active_count = count_active_agents(client_id)
+        except Exception as exc:
+            print(f"[gate] active agent count failed for client {client_id}: {exc}")
+            active_count = 0
+        if active_count > agents_limit:
+            return GateResult(
+                allowed=False,
+                reason=(
+                    f"Your plan allows {agents_limit} active agent"
+                    f"{'s' if agents_limit != 1 else ''}. "
+                    "Upgrade to activate more, or pause an agent first."
+                ),
+                error="agent_limit_reached",
+                client_id=client_id,
+            )
 
     actions_limit = int(entitlement.get("actions_limit") or 0)
     spend_cap_pence = int(entitlement.get("spend_cap_pence") or 0)

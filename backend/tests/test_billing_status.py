@@ -28,7 +28,7 @@ ACTIVE_ENTITLEMENT = {
     "status": "active",
     "plan": "starter",
     "actions_limit": 500,
-    "agents_limit": 1,
+    "agents_limit": 2,
     "workflows_limit": 2,
     "spend_cap_pence": 4000,
 }
@@ -68,7 +68,7 @@ def test_active_subscriber_returns_usage_and_limits(
     assert result["usage"]["api_calls_today"] == 12
     assert result["usage"]["emails_sent_today"] == 3
     assert result["limits"]["max_actions_month"] == 500
-    assert result["limits"]["max_agents"] == 1
+    assert result["limits"]["max_agents"] == 2
     assert result["limits"]["max_workflows"] == 2
     assert result["limits"]["max_api_calls_day"] == 100
     assert result["limits"]["max_emails_day"] == 50

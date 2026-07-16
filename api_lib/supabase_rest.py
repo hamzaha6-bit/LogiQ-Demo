@@ -248,7 +248,7 @@ def pause_workflows_for_user(user_id: str, *, active_only: bool = False) -> Tupl
     url = f"{env('SUPABASE_URL').rstrip('/')}/rest/v1/workflows"
     if not env("SUPABASE_URL") or not env("SUPABASE_SERVICE_KEY"):
         return 0, "SUPABASE_URL or SUPABASE_SERVICE_KEY not configured"
-    params: Dict[str, str] = {"user_id": f"eq.{user_id}"}
+    params: Dict[str, str] = {"user_id": f"eq.{user_id}", "deleted_at": "is.null"}
     if active_only:
         params["status"] = "eq.active"
     payload = {"status": "paused", "updated_at": datetime.now(timezone.utc).isoformat()}
