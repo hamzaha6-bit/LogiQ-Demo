@@ -1370,13 +1370,13 @@ input[type=file].hidden-input { display: none; }
     </div>
     <div class="tos-body" id="tos-body">
       <h3>What the service is</h3>
-      <p>LogiQ Vision is an AI workforce platform that helps you automate business workflows using agents, integrations, and Blueprint AI. By using the service, you agree to these terms governing your access and use of the platform.</p>
+      <p>LogiQ is an AI workforce platform that helps you automate business workflows using agents, integrations, and Blueprint AI. By using the service, you agree to these terms governing your access and use of the platform.</p>
       <h3>Subscription and payment terms</h3>
       <p>Access to paid features requires an active subscription billed monthly through Stripe. Fees are charged in advance and are non-refundable except where required by law. We may change pricing with reasonable notice; continued use after a price change constitutes acceptance.</p>
       <h3>Acceptable use</h3>
-      <p>You must use LogiQ Vision lawfully and responsibly. You may not use the platform to send spam, distribute malware, harass others, violate third-party rights, or attempt to bypass usage limits or security controls. You are responsible for content sent through connected integrations such as Gmail.</p>
+      <p>You must use LogiQ lawfully and responsibly. You may not use the platform to send spam, distribute malware, harass others, violate third-party rights, or attempt to bypass usage limits or security controls. You are responsible for content sent through connected integrations such as Gmail.</p>
       <h3>Limitation of liability</h3>
-      <p>LogiQ Vision is provided &ldquo;as is&rdquo; to the fullest extent permitted by law. We are not liable for indirect, incidental, or consequential damages arising from your use of the service. Our total liability is limited to the amount you paid us in the twelve months before the claim.</p>
+      <p>LogiQ is provided &ldquo;as is&rdquo; to the fullest extent permitted by law. We are not liable for indirect, incidental, or consequential damages arising from your use of the service. Our total liability is limited to the amount you paid us in the twelve months before the claim.</p>
       <h3>How to cancel</h3>
       <p>You may cancel your subscription at any time from Settings &rarr; Manage subscription. Cancellation takes effect at the end of the current billing period. You may export your data before cancelling; we may delete account data after a reasonable retention period.</p>
       <p style="margin-top:16px"><a href="https://logiqops.co.uk/terms" target="_blank" rel="noopener noreferrer">Read full Terms of Service</a></p>
@@ -1880,7 +1880,7 @@ async function acceptTos() {
 }
 
 function declineTos() {
-  doLogout('You must accept the Terms of Service to use Vision.');
+  doLogout('You must accept the Terms of Service to use LogiQ.');
 }
 
 async function finishAuthenticatedBoot() {
@@ -1974,7 +1974,7 @@ function renderBillingOnboardingStep() {
       <button type="button" class="skip-link" onclick="billingOnboardingSkip()">I'll do this later →</button>`;
   } else {
     inner += `
-      <h1>You're live on Vision</h1>
+      <h1>You're live on LogiQ</h1>
       <p class="sub">Your agents are ready. Head to your dashboard to see everything.</p>
       <button type="button" class="btn-billing" onclick="finishBillingOnboarding('dashboard')">Go to dashboard</button>`;
   }
@@ -4024,7 +4024,7 @@ function renderBuild() {
         <div class="chat-page-header">
           <div>
             <div class="mono-label" style="color:var(--brand);margin-bottom:6px">Blueprint AI</div>
-            <h2 style="font-family:var(--font-display);font-weight:500;letter-spacing:-.03em;font-size:28px">Describe it. Vision <span style="color:#5B4BF5">builds it.</span></h2>
+            <h2 style="font-family:var(--font-display);font-weight:500;letter-spacing:-.03em;font-size:28px">Describe it. LogiQ <span style="color:#5B4BF5">builds it.</span></h2>
             <p>Assembled only from safe, pre-approved actions</p>
           </div>
           <img class="logo-mark" src="/assets/logiq-icon-square.png" alt="LogiQ" width="36" height="36" style="width:36px;height:36px;">

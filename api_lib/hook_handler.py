@@ -73,13 +73,13 @@ def _first_name_from_email(email: str) -> str:
 def _subscription_body(first_name: str, tier_name: str, actions_limit: int) -> str:
     return f"""Hi {first_name},
 
-Your {tier_name} subscription is now active. Welcome properly — you're live on Vision.
+Your {tier_name} subscription is now active. Welcome properly — you're live on LogiQ.
 
 Here's what to do right now:
 
 1. Connect your Gmail — go to Integrations in your dashboard and connect your Google account. Takes 30 seconds and unlocks Aria and Nova immediately.
 
-2. Tell Blueprint AI what you want to automate — go to Build, describe your workflow in plain English, and Vision will build it for you.
+2. Tell Blueprint AI what you want to automate — go to Build, describe your workflow in plain English, and LogiQ will build it for you.
 
 3. Approve your first workflow — nothing runs until you say so. You're always in control.
 
