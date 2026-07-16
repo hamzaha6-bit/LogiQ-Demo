@@ -2,6 +2,7 @@
 from http.server import BaseHTTPRequestHandler
 import json
 import os
+import re
 import sys
 from urllib.parse import urlparse
 
@@ -10,6 +11,7 @@ _API_LIB = os.path.normpath(os.path.join(_API_DIR, "..", "api_lib"))
 if _API_LIB not in sys.path:
     sys.path.insert(0, _API_LIB)
 
+from admin_dashboard import build_admin_dashboard
 from billing_checkout import CheckoutError, process_checkout
 from billing_portal import PortalError, process_portal
 from billing_status import billing_status_for_request
@@ -19,12 +21,15 @@ from http_auth import resolve_user_id
 from supabase_rest import pause_workflows_for_user
 from topup_checkout import TopupError, process_topup
 from workflow_delete import soft_delete_workflow_for_user
+from workflow_queries import latest_run_for_user_workflow, list_workflows_for_user
 from workflow_runner import run_due_scheduled_workflows, run_workflow_for_user
 
 
 class handler(BaseHTTPRequestHandler):
     def do_GET(self):
         path = urlparse(self.path).path.rstrip("/")
+
+        latest_run_match = re.search(r"/workflows/([^/]+)/runs/latest$", path)
 
         if path.endswith("/ping"):
             self._json(200, {"status": "ok", "version": "2"})
@@ -54,6 +59,12 @@ class handler(BaseHTTPRequestHandler):
             self._json(status, payload)
         elif path.endswith("/agents/status"):
             self._agents_status()
+        elif path.endswith("/admin/dashboard"):
+            self._admin_dashboard()
+        elif latest_run_match:
+            self._workflow_latest_run(latest_run_match.group(1))
+        elif path.endswith("/workflows"):
+            self._list_workflows()
         elif path.endswith("/audit/log"):
             self._json(200, {"logs": [], "entries": []})
         elif path.endswith("/cron/workflows"):
@@ -184,6 +195,30 @@ class handler(BaseHTTPRequestHandler):
     def _agents_status(self):
         user_id = resolve_user_id(self)
         status, payload = agents_status_for_user(user_id or "")
+        self._json(status, payload)
+
+    def _list_workflows(self):
+        user_id = resolve_user_id(self)
+        if not user_id:
+            self._json(401, {"detail": "Valid Bearer token required"})
+            return
+        status, payload = list_workflows_for_user(user_id)
+        self._json(status, payload)
+
+    def _workflow_latest_run(self, workflow_id: str):
+        user_id = resolve_user_id(self)
+        if not user_id:
+            self._json(401, {"detail": "Valid Bearer token required"})
+            return
+        status, payload = latest_run_for_user_workflow(user_id, workflow_id)
+        self._json(status, payload)
+
+    def _admin_dashboard(self):
+        user_id = resolve_user_id(self)
+        if not user_id:
+            self._json(401, {"detail": "Valid Bearer token required"})
+            return
+        status, payload = build_admin_dashboard(user_id)
         self._json(status, payload)
 
     def _agents_activate(self):

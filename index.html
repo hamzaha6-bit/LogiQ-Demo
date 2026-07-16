@@ -45,7 +45,21 @@ a:hover { color: var(--text); }
 .sidebar {
   width: var(--sidebar); min-width: var(--sidebar); height: 100vh;
   background: #16151A; color: #F5F4EF;
-  display: flex; flex-direction: column; padding: 26px 16px 20px; box-sizing: border-box;
+  display: flex; flex-direction: column; padding: 0; box-sizing: border-box;
+  overflow: hidden;
+}
+.sidebar-scroll {
+  flex: 1; min-height: 0; overflow-y: auto;
+  padding: 26px 16px 12px; box-sizing: border-box;
+  display: flex; flex-direction: column;
+}
+.sidebar-footer {
+  flex-shrink: 0;
+  position: sticky; bottom: 0;
+  background: #16151A;
+  padding: 10px 16px 20px;
+  border-top: 1px solid rgba(245,244,239,.1);
+  z-index: 3;
 }
 .main-wrap { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; height: 100vh; overflow: hidden; background: #EFEDFB; }
 .topbar { display: none !important; }
@@ -90,7 +104,10 @@ a:hover { color: var(--text); }
 .nav-item:hover { color: #fff; }
 .nav-item.active { background: rgba(245,244,239,.1); color: #fff; }
 .nav-item .badge-new { margin-left: auto; font-size: 9px; background: var(--brand); color: #fff; padding: 1px 5px; border-radius: 4px; }
-.sidebar-spacer { flex: 1; }
+.nav-item .nav-item-label { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.nav-item .nav-ico { width: 16px; height: 16px; opacity: .7; flex: none; }
+.nav-item.active .nav-ico { opacity: 1; }
+.sidebar-spacer { flex: 1; min-height: 12px; }
 .sidebar-foot-link {
   padding: 10px 12px; border-radius: 8px; cursor: pointer; width: 100%; text-align: left;
   font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .12em; text-transform: uppercase;
@@ -1130,6 +1147,145 @@ input[type=file].hidden-input { display: none; }
   .otp-digits { gap: 6px; }
   .otp-digits input { width: 40px; height: 48px; font-size: 20px; }
 }
+
+/* Automations */
+.auto-approvals { display: flex; flex-direction: column; gap: 10px; margin-bottom: 28px; }
+.auto-approval-row {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  background: #16151A; color: #F5F4EF; border-radius: 12px; padding: 14px 16px;
+}
+.auto-approval-row .meta { flex: 1; min-width: 160px; }
+.auto-approval-row .meta .who { font-family: var(--font-mono); font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: #8B7DFF; }
+.auto-approval-row .meta .what { font-size: 14px; margin-top: 4px; }
+.wf-card {
+  background: #fff; border: 1px solid rgba(22,21,26,.1); border-radius: 14px;
+  padding: 18px 20px; margin-bottom: 12px; cursor: pointer; transition: border-color .15s;
+}
+.wf-card:hover { border-color: rgba(91,75,245,.35); }
+.wf-card.expanded { border-color: #5B4BF5; }
+.wf-card-top { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
+.wf-card h3 { font-family: var(--font-display); font-weight: 600; font-size: 18px; letter-spacing: -.02em; margin: 0; }
+.wf-card .wf-meta { font-size: 13px; color: var(--text2); margin-top: 6px; line-height: 1.5; }
+.wf-badge {
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: .1em; text-transform: uppercase;
+  padding: 4px 8px; border-radius: 6px; flex: none;
+}
+.wf-badge.active { background: #ECFDF5; color: #059669; }
+.wf-badge.paused { background: #FFFBEB; color: #D97706; }
+.wf-badge.failed { background: #FDF2F2; color: #B23A3A; }
+.wf-card-actions { display: flex; gap: 8px; align-items: center; margin-top: 12px; }
+.wf-delete-confirm { font-size: 13px; color: var(--text2); display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.wf-expand {
+  margin-top: 16px; padding-top: 16px; border-top: 1px solid rgba(22,21,26,.1);
+  display: none;
+}
+.wf-card.expanded .wf-expand { display: block; }
+.wf-step {
+  display: grid; grid-template-columns: 28px 1fr auto; gap: 10px; align-items: start;
+  padding: 10px 0; border-bottom: 1px solid rgba(22,21,26,.06); font-size: 14px;
+}
+.wf-step:last-child { border-bottom: none; }
+.wf-step .n { font-family: var(--font-mono); font-size: 11px; color: var(--text3); padding-top: 2px; }
+.wf-step .detail { color: var(--text2); font-size: 13px; margin-top: 4px; }
+.wf-step .err { color: #B23A3A; }
+
+/* Intake onboarding */
+.intake-overlay {
+  position: fixed; inset: 0; z-index: 12000; background: #EFEDFB;
+  display: flex; align-items: center; justify-content: center; padding: 24px;
+}
+.intake-overlay.hidden { display: none; }
+.intake-shell { width: 100%; max-width: 720px; }
+.intake-dots { display: flex; gap: 8px; justify-content: center; margin-bottom: 28px; }
+.intake-dots span {
+  width: 8px; height: 8px; border-radius: 50%; background: rgba(22,21,26,.18);
+}
+.intake-dots span.on { background: #5B4BF5; }
+.intake-viewport { overflow: hidden; }
+.intake-track {
+  display: flex; width: 300%;
+  transition: transform .35s cubic-bezier(.22,1,.36,1);
+}
+.intake-track.step-0 { transform: translateX(0); }
+.intake-track.step-1 { transform: translateX(-33.333%); }
+.intake-track.step-2 { transform: translateX(-66.666%); }
+.intake-slide { width: 33.333%; padding: 0 8px; box-sizing: border-box; }
+.intake-slide h1 {
+  font-family: var(--font-display); font-weight: 600; font-size: clamp(26px, 4vw, 34px);
+  letter-spacing: -.03em; text-align: center; margin-bottom: 8px;
+}
+.intake-slide .sub { text-align: center; color: var(--text2); margin-bottom: 28px; font-size: 15px; }
+.intake-grid {
+  display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-bottom: 18px;
+}
+@media (min-width: 720px) {
+  .intake-grid { grid-template-columns: repeat(3, 1fr); }
+}
+.intake-card {
+  background: #fff; border: 1.5px solid rgba(22,21,26,.1); border-radius: 14px;
+  padding: 18px 14px; text-align: center; cursor: pointer; font-size: 14px; font-weight: 500;
+  transition: border-color .15s, background .15s;
+}
+.intake-card:hover { border-color: rgba(91,75,245,.4); }
+.intake-card.selected { border-color: #5B4BF5; background: #EFEDFB; }
+.intake-card .ico { font-size: 28px; display: block; margin-bottom: 8px; }
+.intake-pills { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; margin-bottom: 22px; }
+.intake-pill {
+  border: 1.5px solid rgba(22,21,26,.12); background: #fff; border-radius: 999px;
+  padding: 10px 14px; font-size: 13.5px; cursor: pointer;
+}
+.intake-pill.selected { border-color: #5B4BF5; background: #EFEDFB; color: #5B4BF5; }
+.intake-other { width: 100%; margin-top: 8px; padding: 12px 14px; border-radius: 10px; border: 1.5px solid rgba(22,21,26,.12); display: none; }
+.intake-other.show { display: block; }
+.intake-actions { display: flex; justify-content: center; margin-top: 8px; }
+.intake-actions .btn-primary { padding: 12px 28px; border-radius: 10px; font-size: 14px; }
+.intake-actions .btn-primary:disabled { opacity: .4; }
+.suggest-cards { display: flex; flex-direction: column; gap: 12px; margin-bottom: 20px; }
+.suggest-card {
+  background: #fff; border: 1px solid rgba(22,21,26,.1); border-radius: 14px;
+  padding: 16px 18px; display: flex; gap: 14px; align-items: center;
+}
+.suggest-av {
+  width: 40px; height: 40px; border-radius: 50%; background: #5B4BF5; color: #fff;
+  display: flex; align-items: center; justify-content: center; font-weight: 700; flex: none;
+}
+.suggest-card .body { flex: 1; min-width: 0; }
+.suggest-card .body strong { display: block; font-size: 15px; margin-bottom: 2px; }
+.suggest-card .body span { font-size: 13px; color: var(--text2); }
+.intake-skip {
+  display: block; margin: 8px auto 0; background: none; border: 1.5px solid rgba(22,21,26,.14);
+  border-radius: 10px; padding: 10px 18px; font-size: 13px; color: var(--text2); cursor: pointer;
+}
+
+/* Admin */
+.admin-stats {
+  display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin: 20px 0 28px;
+}
+@media (min-width: 900px) {
+  .admin-stats { grid-template-columns: repeat(4, 1fr); }
+}
+.admin-stat {
+  background: #fff; border: 1px solid rgba(22,21,26,.1); border-radius: 12px; padding: 18px 16px;
+}
+.admin-stat .k { font-family: var(--font-mono); font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--text3); }
+.admin-stat .v { font-family: var(--font-display); font-size: 28px; font-weight: 600; letter-spacing: -.03em; margin-top: 8px; }
+.admin-table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 12px; overflow: hidden; border: 1px solid rgba(22,21,26,.1); }
+.admin-table th {
+  text-align: left; font-family: var(--font-mono); font-size: 10px; letter-spacing: .1em;
+  text-transform: uppercase; color: var(--text3); padding: 12px 14px; border-bottom: 1px solid rgba(22,21,26,.08);
+}
+.admin-table td { padding: 12px 14px; border-bottom: 1px solid rgba(22,21,26,.06); font-size: 13.5px; vertical-align: top; }
+.admin-table tr.client-row { cursor: pointer; }
+.admin-table tr.client-row:hover td { background: #F7F6FC; }
+.admin-expand td { background: #F7F6FC; font-size: 13px; color: var(--text2); }
+.admin-404 { text-align: center; padding: 80px 24px; }
+.admin-404 h1 { font-family: var(--font-display); font-size: 42px; letter-spacing: -.04em; }
+.hidden { display: none !important; }
+
+@media (max-width: 720px) {
+  .page { padding: 24px 18px 64px; }
+  .admin-table { display: block; overflow-x: auto; }
+}
 </style>
 </head>
 <body>
@@ -1235,33 +1391,48 @@ input[type=file].hidden-input { display: none; }
 
 <div class="app app-root hidden" id="app-root">
   <aside class="sidebar">
-    <div class="logo-row">
-      <img class="logo-mark" src="/assets/logiq-icon-square.png" alt="LogiQ" width="32" height="32">
-      <div class="logo-text">
-        <div class="wordmark">Logi<span class="q">Q</span></div>
-        <div class="tagline">/ app</div>
+    <div class="sidebar-scroll">
+      <div class="logo-row">
+        <img class="logo-mark" src="/assets/logiq-icon-square.png" alt="LogiQ" width="32" height="32">
+        <div class="logo-text">
+          <div class="wordmark">Logi<span class="q">Q</span></div>
+          <div class="tagline">/ app</div>
+        </div>
       </div>
+      <nav class="nav-section">
+        <div class="nav-label">Workspace</div>
+        <button class="nav-item active" data-page="dashboard">Mission Control<span class="nav-badge hidden" id="nav-approval-badge">0</span></button>
+        <button class="nav-item" data-page="build">Blueprint</button>
+      </nav>
+      <nav class="nav-section" id="nav-agents">
+        <div class="nav-label">Agents</div>
+        <div id="nav-agents-list"></div>
+      </nav>
+      <nav class="nav-section">
+        <button class="nav-item" data-page="automations" type="button">
+          <span class="nav-item-label">
+            <svg class="nav-ico" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M5.5 3.5H3.5a1 1 0 0 0-1 1v2a1 1 0 0 0 1 1h2a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1Zm7 0h-2a1 1 0 0 0-1 1v2a1 1 0 0 0 1 1h2a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1ZM5.5 9.5H3.5a1 1 0 0 0-1 1v2a1 1 0 0 0 1 1h2a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1Zm7 0h-2a1 1 0 0 0-1 1v2a1 1 0 0 0 1 1h2a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1Z" stroke="currentColor" stroke-width="1.2"/><path d="M6.5 5.5h3M6.5 11.5h3M5.5 6.5v3M10.5 6.5v3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+            Automations
+          </span>
+          <span class="nav-badge hidden" id="nav-automations-badge">0</span>
+        </button>
+        <button class="nav-item hidden" data-page="admin" type="button" id="nav-admin">
+          <span class="nav-item-label">Admin</span>
+        </button>
+      </nav>
+      <div class="sidebar-spacer"></div>
     </div>
-    <nav class="nav-section">
-      <div class="nav-label">Workspace</div>
-      <button class="nav-item active" data-page="dashboard">Mission Control<span class="nav-badge hidden" id="nav-approval-badge">0</span></button>
-      <button class="nav-item" data-page="build">Blueprint</button>
-      <button class="nav-item" data-page="integrations">Integrations</button>
-    </nav>
-    <nav class="nav-section" id="nav-agents">
-      <div class="nav-label">Agents</div>
-      <div id="nav-agents-list"></div>
-    </nav>
-    <div class="sidebar-spacer"></div>
-    <button class="nav-item" type="button" id="nav-settings" onclick="openSettingsModal()">Settings<span style="font-family:var(--font-mono);font-size:10px;color:rgba(245,244,239,.3)">⌘,</span></button>
-    <button class="sidebar-foot-link" type="button" onclick="replayOnboarding()">Replay setup →</button>
-    <div class="user-profile" id="user-profile" onclick="openSettingsModal()">
-      <div class="avatar" id="user-avatar">?</div>
-      <div class="user-info">
-        <div class="name" id="user-name">Guest</div>
-        <div class="plan" id="user-plan">Workspace</div>
+    <div class="sidebar-footer">
+      <button class="nav-item" type="button" id="nav-settings" onclick="openSettingsModal()">Settings<span style="font-family:var(--font-mono);font-size:10px;color:rgba(245,244,239,.3)">⌘,</span></button>
+      <button class="sidebar-foot-link" type="button" onclick="replayOnboarding()">Replay setup →</button>
+      <div class="user-profile" id="user-profile" onclick="openSettingsModal()">
+        <div class="avatar" id="user-avatar">?</div>
+        <div class="user-info">
+          <div class="name" id="user-name">Guest</div>
+          <div class="plan" id="user-plan">Workspace</div>
+        </div>
+        <button class="logout-btn" onclick="event.stopPropagation();doLogout()">Logout</button>
       </div>
-      <button class="logout-btn" onclick="event.stopPropagation();doLogout()">Logout</button>
     </div>
   </aside>
 
@@ -1279,10 +1450,48 @@ input[type=file].hidden-input { display: none; }
       <div class="page" id="page-integrations"></div>
       <div class="page" id="page-workforce"></div>
       <div class="page page-chat" id="page-build"></div>
+      <div class="page" id="page-automations"></div>
+      <div class="page" id="page-admin"></div>
       <div class="page" id="page-pricing"></div>
       <div class="page" id="page-landscape"></div>
       <div class="page" id="page-settings"></div>
       <div id="agent-pages"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Mandatory onboarding intake (cannot dismiss until complete) -->
+<div class="intake-overlay hidden" id="intake-overlay" aria-modal="true" role="dialog">
+  <div class="intake-shell">
+    <div class="intake-dots" id="intake-dots"><span class="on"></span><span></span><span></span></div>
+    <div class="intake-viewport">
+      <div class="intake-track step-0" id="intake-track">
+        <div class="intake-slide" data-step="0">
+          <h1>What kind of business do you run?</h1>
+          <p class="sub">This helps us suggest the right automations for you.</p>
+          <div class="intake-grid" id="intake-verticals"></div>
+          <input type="text" class="intake-other" id="intake-other-text" placeholder="Tell us what you do…" maxlength="80">
+          <div class="intake-actions">
+            <button type="button" class="btn-primary" id="intake-continue-1" disabled onclick="intakeNext()">Continue →</button>
+          </div>
+        </div>
+        <div class="intake-slide" data-step="1">
+          <h1>What takes up most of your time?</h1>
+          <p class="sub">Pick everything that applies.</p>
+          <div class="intake-pills" id="intake-pains"></div>
+          <div class="intake-actions">
+            <button type="button" class="btn-primary" onclick="intakeNext()">Continue →</button>
+          </div>
+        </div>
+        <div class="intake-slide" data-step="2">
+          <h1>Here's what LogiQ can do for you.</h1>
+          <p class="sub">Based on what you told us, these automations could save you hours every week.</p>
+          <div class="suggest-cards" id="intake-suggestions"></div>
+          <div class="intake-actions" style="flex-direction:column;gap:10px;align-items:center;">
+            <button type="button" class="intake-skip" onclick="completeIntakeOnboarding()">Go to my dashboard →</button>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 </div>
@@ -1358,10 +1567,18 @@ let billingStatus = null;
 let auditFilterAgent = '';
 let expandedApprovalId = null;
 let workflowsStopped = false;
-let settingsTab = 'workspace';
+let settingsTab = 'account';
 let resolvedTodayExtra = [];
 let workspaceName = localStorage.getItem('logiq_workspace_name') || '';
 let agentNotifyPrefs = {};
+let expandedAutomationId = null;
+let automationsCache = [];
+let intakeStep = 0;
+let intakeVertical = null;
+let intakeVerticalOther = '';
+let intakePains = new Set();
+let intakeResolve = null;
+const NOTIF_PREFS_KEY = 'logiq_notif_prefs';
 const KEYS = { anthropic: '', supabaseUrl: '', supabaseAnon: '' };
 let supabaseClient = null;
 
@@ -1669,6 +1886,11 @@ function declineTos() {
 async function finishAuthenticatedBoot() {
   showApp();
   updateUserProfile();
+  await refreshUserProfile();
+  updateOwnerNav();
+  if (!authSession?.user?.onboarding_completed_at) {
+    await showIntakeOnboarding();
+  }
   await loadBillingStatus();
   await loadActiveAgentsFromServer();
   await loadIntegrationConfig();
@@ -1694,11 +1916,19 @@ function normalizedAppPath() {
 function pageFromPath() {
   const path = normalizedAppPath();
   if (path === '/settings') return 'settings';
+  if (path === '/automations') return 'automations';
+  if (path === '/admin') return 'admin';
+  if (path === '/blueprint' || path === '/build') return 'build';
+  if (path === '/integrations') return 'integrations';
   return 'dashboard';
 }
 
 function pathForPage(page) {
   if (page === 'settings') return '/settings';
+  if (page === 'automations') return '/automations';
+  if (page === 'admin') return '/admin';
+  if (page === 'build' || page === 'blueprint') return '/';
+  if (page === 'integrations') return '/integrations';
   return '/';
 }
 
@@ -1830,7 +2060,8 @@ function goToAppHome() {
 }
 
 function isProtectedAppPath() {
-  return normalizedAppPath() === '/settings';
+  const path = normalizedAppPath();
+  return path === '/settings' || path === '/automations' || path === '/admin' || path === '/integrations';
 }
 
 async function apiFetch(path, options = {}) {
@@ -2362,6 +2593,9 @@ async function disconnectGmail() {
     if (currentPage === 'integrations') renderIntegrations();
     if (currentPage === 'settings') renderSettings();
     if (currentPage === 'dashboard') renderDashboard();
+    if (!document.getElementById('settings-modal')?.classList.contains('hidden') && settingsTab === 'integrations') {
+      renderSettingsIntegrations();
+    }
   } catch (e) {
     toast('Failed to disconnect Gmail');
   }
@@ -2530,7 +2764,8 @@ async function activateAgentOnServer(agentId) {
 async function maybeShowOnboarding() {
   if (!authSession) return;
   await refreshUserProfile();
-  if (authSession.user?.onboarding_complete) return;
+  // Source of truth: onboarding_completed_at (not the legacy onboarding_complete boolean).
+  if (authSession.user?.onboarding_completed_at) return;
 
   const gmailHealth = await checkGmailHealth();
   const gmailOk = gmailHealth.connected && gmailHealth.healthy;
@@ -2720,15 +2955,33 @@ const NOVA_MODAL_PROMPT = "You are Nova, a comms agent. Draft emails, onboarding
 
 // ═══ 2. NAVIGATION ═══
 function navigate(page, opts = {}) {
+  if (page === 'blueprint') page = 'build';
   const syncUrl = opts.syncUrl !== false;
   currentPage = page;
   document.querySelectorAll('.nav-item').forEach(n => {
     n.classList.toggle('active', n.dataset.page === page);
   });
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-  const titles = { dashboard:'Mission Control', integrations:'Integrations', workforce:'Workforce', build:'Blueprint', pricing:'Pricing', landscape:'Landscape' };
+  const titles = {
+    dashboard: 'Mission Control',
+    integrations: 'Integrations',
+    workforce: 'Workforce',
+    build: 'Blueprint',
+    automations: 'Automations',
+    admin: 'Admin',
+    pricing: 'Pricing',
+    landscape: 'Landscape',
+  };
   if (page === 'settings') {
-    openSettingsModal('workspace');
+    openSettingsModal('account');
+    return;
+  }
+  if (page === 'integrations') {
+    // Integrations moved into Settings — keep route for deep links.
+    openSettingsModal('integrations');
+    if (syncUrl && normalizedAppPath() !== '/integrations') {
+      history.pushState({}, '', '/integrations');
+    }
     return;
   }
   if (titles[page]) {
@@ -2741,9 +2994,10 @@ function navigate(page, opts = {}) {
       }
     }
     if (page === 'dashboard') renderDashboard();
-    if (page === 'integrations') renderIntegrations();
     if (page === 'workforce') renderWorkforce();
     if (page === 'build') renderBuild();
+    if (page === 'automations') renderAutomations();
+    if (page === 'admin') renderAdmin();
     if (page === 'pricing') renderPricing();
   } else if (deployedAgents.has(page) || ['aria','nova','finn','zara','cleo'].includes(page)) {
     if (syncUrl && normalizedAppPath() !== '/') {
@@ -3958,7 +4212,8 @@ function readBlueprintSchedule() {
 function scheduleSummaryLabel(scheduleJson) {
   if (!scheduleJson) return '';
   try {
-    const s = JSON.parse(scheduleJson);
+    const s = typeof scheduleJson === 'string' ? JSON.parse(scheduleJson) : scheduleJson;
+    if (!s || typeof s !== 'object') return '';
     if (s.freq === 'daily') return ` Runs daily at ${s.time_utc || '09:00'} UTC.`;
     if (s.freq === 'weekly') {
       const days = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
@@ -4137,10 +4392,13 @@ async function loadPendingApprovals() {
 async function updateApprovalBadgeCount() {
   const { pendingWf, pendingActions } = await loadPendingApprovals();
   const count = pendingWf.length + pendingActions.length;
-  const badge = document.getElementById('nav-approval-badge');
-  if (!badge) return;
-  badge.textContent = count > 99 ? '99+' : String(count);
-  badge.classList.toggle('hidden', count === 0);
+  const label = count > 99 ? '99+' : String(count);
+  ['nav-approval-badge', 'nav-automations-badge'].forEach(id => {
+    const badge = document.getElementById(id);
+    if (!badge) return;
+    badge.textContent = label;
+    badge.classList.toggle('hidden', count === 0);
+  });
 }
 
 async function rejectAgentAction(actionId) {
@@ -4186,6 +4444,7 @@ async function approveWorkflowApproval(approvalId) {
     logAuditEvent(agent?.name || row.agent_id, 'approval_granted', { approval_id: approvalId, code: row.primitive_code, workflow_run_id: row.workflow_run_id });
     updateApprovalBadgeCount();
     if (currentPage === 'dashboard') renderDashboard();
+    if (currentPage === 'automations') renderAutomations();
     return;
   }
 
@@ -4214,6 +4473,7 @@ async function approveWorkflowApproval(approvalId) {
   await continueWorkflowAfterApproval(row);
   updateApprovalBadgeCount();
   if (currentPage === 'dashboard') renderDashboard();
+  if (currentPage === 'automations') renderAutomations();
 }
 
 async function rejectWorkflowApproval(approvalId) {
@@ -4225,6 +4485,7 @@ async function rejectWorkflowApproval(approvalId) {
   toast('Action rejected and skipped');
   updateApprovalBadgeCount();
   if (currentPage === 'dashboard') renderDashboard();
+  if (currentPage === 'automations') renderAutomations();
 }
 
 async function continueWorkflowAfterApproval(approvalRow) {
@@ -4342,32 +4603,103 @@ async function openBillingModal() {
 
 async function openSettingsModal(tab) {
   if (tab) settingsTab = tab;
+  const allowed = ['account', 'workspace', 'integrations', 'billing', 'notifications'];
+  if (!allowed.includes(settingsTab)) settingsTab = 'account';
   await loadBillingStatus();
   const overlay = document.getElementById('settings-modal');
   const panel = document.getElementById('settings-modal-panel');
   if (!overlay || !panel) return;
 
   const tabs = [
+    { id: 'account', label: 'Account' },
     { id: 'workspace', label: 'Workspace' },
-    { id: 'notifications', label: 'Notifications' },
-    { id: 'security', label: 'Security' },
+    { id: 'integrations', label: 'Integrations' },
     { id: 'billing', label: 'Billing' },
-    { id: 'data', label: 'Data & privacy' },
+    { id: 'notifications', label: 'Notifications' },
   ];
-  const titles = { workspace: 'Workspace', notifications: 'Notifications', security: 'Security', billing: 'Billing', data: 'Data & privacy' };
+  const titles = {
+    account: 'Account',
+    workspace: 'Workspace',
+    integrations: 'Integrations',
+    billing: 'Billing',
+    notifications: 'Notifications',
+  };
   const user = authSession?.user || {};
   const currentPlan = (billingStatus?.plan || user.plan || 'inactive').toLowerCase();
-  const stripeOk = appConfig.stripe_configured;
+  const planMeta = BILLING_PLANS.find(p => p.id === currentPlan) || {};
   const hasActiveSub = authSession && billingStatus?.status === 'active';
-  const nextInvoice = billingStatus?.next_invoice_at || billingStatus?.current_period_end || null;
-  const nextAmount = (BILLING_PLANS.find(p => p.id === currentPlan) || {}).amount || '';
   const email = user.email || '—';
-  const ws = workspaceName || 'My workspace';
+  const displayName = user.name || '';
+  const ws = workspaceName || '';
+  const vertical = user.onboarding_vertical || '';
+  const usage = billingStatus?.usage || {};
+  const limits = billingStatus?.limits || {};
+  const spend = billingStatus?.spend || {};
+  const notif = getNotifPrefs();
 
   let body = '';
-  if (settingsTab === 'billing') {
+  if (settingsTab === 'account') {
     body = `
-      <div class="billing-plan-grid">
+      <div class="form-row" style="margin-top:16px">
+        <label for="settings-name">Display name</label>
+        <input type="text" id="settings-name" value="${esc(displayName)}" placeholder="Your name">
+      </div>
+      <div class="form-row">
+        <label for="settings-email">Email</label>
+        <input type="email" id="settings-email" value="${esc(email)}" readonly disabled style="opacity:0.55;cursor:not-allowed">
+      </div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:8px">
+        <button class="btn-primary" onclick="saveSettingsProfile()" id="btn-settings-save">Save</button>
+        <button class="btn-ghost" onclick="settingsChangePassword()">Change password</button>
+      </div>`;
+  } else if (settingsTab === 'workspace') {
+    body = `
+      <div class="form-row" style="margin-top:16px">
+        <label for="settings-business-name">Business name</label>
+        <input type="text" id="settings-business-name" value="${esc(ws)}" placeholder="Your business">
+      </div>
+      <p style="font-size:13px;color:var(--text2);margin:18px 0 10px">Industry</p>
+      <div class="intake-grid" id="settings-vertical-grid">
+        ${INTAKE_VERTICALS.map(v => `
+          <button type="button" class="intake-card${vertical === v.id || (v.id === 'other' && vertical && !INTAKE_VERTICALS.some(x => x.id === vertical)) ? ' selected' : ''}"
+            onclick="selectSettingsVertical('${v.id}')">
+            <span class="ico">${v.icon}</span>${esc(v.label)}
+          </button>`).join('')}
+      </div>
+      <input type="text" class="intake-other${vertical && !INTAKE_VERTICALS.some(x => x.id === vertical) ? ' show' : ''}" id="settings-vertical-other"
+        value="${esc(INTAKE_VERTICALS.some(x => x.id === vertical) ? '' : vertical)}" placeholder="Tell us what you do…" maxlength="80">
+      <button class="btn-primary" style="margin-top:16px" onclick="saveSettingsWorkspace()" id="btn-settings-ws">Save workspace</button>`;
+  } else if (settingsTab === 'integrations') {
+    body = `<div id="settings-integrations" style="margin-top:12px"><p style="color:var(--text2);font-size:13px">Loading…</p></div>`;
+  } else if (settingsTab === 'billing') {
+    const actionsUsed = usage.actions_this_month || 0;
+    const actionsLimit = limits.max_actions_month;
+    const spendUsed = spend.used_pence || 0;
+    const spendCap = spend.cap_pence || 0;
+    body = `
+      <div class="settings-row" style="margin-top:16px">
+        <div class="settings-row-info">
+          <div class="settings-row-title">${esc(billingStatus?.plan_name || planMeta.name || 'No plan')} · ${esc(planMeta.price || '—')}/mo</div>
+          <div class="settings-row-desc">Your current subscription</div>
+        </div>
+      </div>
+      <div class="settings-row">
+        <div class="settings-row-info">
+          <div class="settings-row-title">Actions this month</div>
+          <div class="settings-row-desc">${Number(actionsUsed).toLocaleString()} / ${actionsLimit ? Number(actionsLimit).toLocaleString() : '∞'}</div>
+        </div>
+      </div>
+      <div class="settings-row">
+        <div class="settings-row-info">
+          <div class="settings-row-title">Spend this month</div>
+          <div class="settings-row-desc">${formatMoneyPence(spendUsed)} / ${spendCap ? formatMoneyPence(spendCap) : '∞'}</div>
+        </div>
+      </div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px">
+        ${hasActiveSub ? '<button class="btn-primary" onclick="startPortal()">Manage subscription</button>' : ''}
+        <button class="btn-ghost" onclick="startTopup('100')">Top up</button>
+      </div>
+      <div class="billing-plan-grid" style="margin-top:24px">
         ${BILLING_PLANS.map(p => {
           const isCurrent = hasActiveSub && currentPlan === p.id;
           const isEnterprise = p.id === 'enterprise';
@@ -4382,44 +4714,36 @@ async function openSettingsModal(tab) {
               ? '<div class="current-tag">● Current</div>'
               : (isEnterprise
                 ? '<button class="btn-ghost" style="margin-top:12px;width:100%;font-size:11.5px;padding:7px 0">Contact sales</button>'
-                : (stripeOk
+                : (appConfig.stripe_configured
                   ? `<button class="btn-ghost" style="margin-top:12px;width:100%;font-size:11.5px;padding:7px 0" onclick="startCheckout('${p.id}')">Upgrade to ${esc(p.name)}</button>`
                   : '<button class="btn-ghost" style="margin-top:12px;width:100%;font-size:11.5px;padding:7px 0" disabled>Coming soon</button>'))}
           </div>`;
         }).join('')}
-      </div>
-      <div class="billing-meta">
-        <span class="k">Next invoice</span><span>${nextInvoice ? esc(formatDateTime(nextInvoice)) + (nextAmount ? ' — ' + nextAmount : '') : (hasActiveSub ? 'See Stripe portal' : '—')}</span>
-        <span class="k">Payment</span><span>${hasActiveSub
-          ? '<button type="button" class="btn-ghost" style="padding:6px 12px;font-size:12px;" onclick="startPortal()">Manage in Stripe</button>'
-          : '—'}</span>
-        <span class="k">Billing email</span><span>${esc(email)}</span>
-      </div>
-      ${hasActiveSub ? '<button class="btn-ghost" style="margin-top:20px" onclick="startPortal()">Manage subscription</button>' : ''}`;
-  } else if (settingsTab === 'workspace') {
-    body = `
-      <div class="settings-row"><div class="settings-row-info"><div class="settings-row-title">Workspace name</div><div class="settings-row-desc">shown across the app</div></div>
-        <span class="mono-label">${esc(ws)}</span></div>
-      <div class="settings-row"><div class="settings-row-info"><div class="settings-row-title">Owner</div><div class="settings-row-desc">full admin access</div></div>
-        <span class="mono-label">${esc(email)}</span></div>
-      <div class="settings-row"><div class="settings-row-info"><div class="settings-row-title">Display name</div><div class="settings-row-desc">your profile</div></div>
-        <button class="btn-ghost" onclick="navigate('settings');closeSettingsModal()">Edit in Settings</button></div>
-      <div class="settings-row"><div class="settings-row-info"><div class="settings-row-title">Log out</div><div class="settings-row-desc">this browser only</div></div>
-        <button class="btn-ghost" onclick="doLogout()">Log out</button></div>`;
-  } else if (settingsTab === 'security') {
-    body = `
-      <div class="settings-row"><div class="settings-row-info"><div class="settings-row-title">Password</div><div class="settings-row-desc">reset via email</div></div>
-        <button class="btn-ghost" onclick="settingsChangePassword()">Change</button></div>
-      <div class="settings-row"><div class="settings-row-info"><div class="settings-row-title">Sign out everywhere</div><div class="settings-row-desc">ends all sessions</div></div>
-        <button class="btn-ghost" onclick="settingsSignOutAll()">Sign out</button></div>`;
+      </div>`;
   } else if (settingsTab === 'notifications') {
-    body = `<p style="margin-top:20px;font-size:14px;color:rgba(22,21,26,.55)">Notification preferences are stored locally in this demo. Email digests and SMS alerts will sync to your workspace when the prefs API ships.</p>`;
-  } else {
     body = `
-      <div class="settings-row"><div class="settings-row-info"><div class="settings-row-title">Action log retention</div><div class="settings-row-desc">full audit trail</div></div>
-        <span class="mono-label">12 months</span></div>
-      <div class="settings-row"><div class="settings-row-info"><div class="settings-row-title">Export data</div><div class="settings-row-desc">via support for now</div></div>
-        <span class="mono-label">Contact us</span></div>`;
+      <p style="margin-top:12px;font-size:13px;color:var(--text2)">Email notification preferences</p>
+      <div class="settings-row">
+        <div class="settings-row-info">
+          <div class="settings-row-title">Approval alerts</div>
+          <div class="settings-row-desc">When an agent needs your go-ahead</div>
+        </div>
+        <label><input type="checkbox" id="notif-approval" ${notif.approval_alerts ? 'checked' : ''} onchange="saveNotifPrefsFromUi()"></label>
+      </div>
+      <div class="settings-row">
+        <div class="settings-row-info">
+          <div class="settings-row-title">Weekly summary</div>
+          <div class="settings-row-desc">A short digest of what your agents did</div>
+        </div>
+        <label><input type="checkbox" id="notif-weekly" ${notif.weekly_summary ? 'checked' : ''} onchange="saveNotifPrefsFromUi()"></label>
+      </div>
+      <div class="settings-row">
+        <div class="settings-row-info">
+          <div class="settings-row-title">Product updates</div>
+          <div class="settings-row-desc">New features and tips from LogiQ</div>
+        </div>
+        <label><input type="checkbox" id="notif-product" ${notif.product_updates ? 'checked' : ''} onchange="saveNotifPrefsFromUi()"></label>
+      </div>`;
   }
 
   panel.innerHTML = `
@@ -4434,6 +4758,75 @@ async function openSettingsModal(tab) {
       ${body}
     </div>`;
   overlay.classList.remove('hidden');
+  if (settingsTab === 'integrations') await renderSettingsIntegrations();
+}
+
+function selectSettingsVertical(id) {
+  document.querySelectorAll('#settings-vertical-grid .intake-card').forEach(btn => {
+    btn.classList.toggle('selected', btn.getAttribute('onclick')?.includes("'" + id + "'"));
+  });
+  const other = document.getElementById('settings-vertical-other');
+  if (other) other.classList.toggle('show', id === 'other');
+  window._settingsVertical = id;
+}
+
+async function saveSettingsWorkspace() {
+  const name = document.getElementById('settings-business-name')?.value.trim() || '';
+  workspaceName = name;
+  localStorage.setItem('logiq_workspace_name', name);
+  updateUserProfile();
+
+  let vertical = window._settingsVertical || authSession?.user?.onboarding_vertical || '';
+  if (vertical === 'other') {
+    vertical = document.getElementById('settings-vertical-other')?.value.trim() || 'other';
+  }
+  // If user clicked a card, use it; else keep existing or detect from selection
+  if (!window._settingsVertical) {
+    const selected = document.querySelector('#settings-vertical-grid .intake-card.selected');
+    if (selected) {
+      const m = selected.getAttribute('onclick')?.match(/'([^']+)'/);
+      if (m) vertical = m[1] === 'other'
+        ? (document.getElementById('settings-vertical-other')?.value.trim() || 'other')
+        : m[1];
+    }
+  } else if (window._settingsVertical === 'other') {
+    vertical = document.getElementById('settings-vertical-other')?.value.trim() || 'other';
+  } else {
+    vertical = window._settingsVertical;
+  }
+
+  const btn = document.getElementById('btn-settings-ws');
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+  try {
+    if (vertical) {
+      const res = await apiFetch('/api/auth/profile', {
+        method: 'PATCH',
+        body: { onboarding_vertical: vertical },
+      });
+      const data = await safeJson(res, {});
+      if (!res.ok) {
+        toast(data.detail || 'Saved locally; could not sync industry');
+      } else if (authSession) {
+        authSession.user = { ...authSession.user, ...data, onboarding_vertical: vertical };
+        saveSessionToStorage();
+      }
+    }
+    toast('Workspace updated');
+  } catch (e) {
+    toast('Workspace name saved on this device');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Save workspace'; }
+  }
+}
+
+function saveNotifPrefsFromUi() {
+  const prefs = {
+    approval_alerts: !!document.getElementById('notif-approval')?.checked,
+    weekly_summary: !!document.getElementById('notif-weekly')?.checked,
+    product_updates: !!document.getElementById('notif-product')?.checked,
+  };
+  saveNotifPrefs(prefs);
+  toast('Notification preferences saved');
 }
 
 document.addEventListener('keydown', (e) => {
@@ -6069,6 +6462,622 @@ function seedMemData() {
     { id:uid(), title:'Confirm warehouse lease terms', supplier:'Sterling Properties', due_date:'2026-06-01', status:'open', created_at:now }
   ];
 }
+
+// ═══ PLATFORM UI: Automations / Intake / Admin / Settings helpers ═══
+
+const INTAKE_VERTICALS = [
+  { id: 'dental', label: 'Dental & Healthcare', icon: '🦷' },
+  { id: 'estate', label: 'Estate Agency & Property', icon: '🏠' },
+  { id: 'construction', label: 'Construction & Engineering', icon: '🏗️' },
+  { id: 'nursery', label: 'Nursery & Education', icon: '🎓' },
+  { id: 'accountancy', label: 'Accountancy & Finance', icon: '📊' },
+  { id: 'logistics', label: 'Logistics & Operations', icon: '🚛' },
+  { id: 'other', label: 'Other', icon: '💼' },
+];
+
+const INTAKE_PAINS = [
+  { id: 'invoices', label: '💰 Chasing invoices & payments' },
+  { id: 'scheduling', label: '📅 Booking & scheduling' },
+  { id: 'leads', label: '📩 Following up leads' },
+  { id: 'questions', label: '🔁 Answering the same questions' },
+  { id: 'admin', label: '📋 Admin & data entry' },
+  { id: 'reporting', label: '📊 Reporting & compliance' },
+  { id: 'staff', label: '👥 Managing staff' },
+];
+
+function updateOwnerNav() {
+  const nav = document.getElementById('nav-admin');
+  if (!nav) return;
+  nav.classList.toggle('hidden', !authSession?.user?.is_owner);
+}
+
+function agentPlainName(agentId) {
+  const id = String(agentId || '').toLowerCase();
+  if (deployedAgents.has(id)) return deployedAgents.get(id).name;
+  const def = Object.values(DEFAULT_AGENTS || {}).find(a => a.id === id);
+  if (def) return def.name;
+  if (id === 'aria') return 'Aria';
+  if (id === 'nova') return 'Nova';
+  return id ? id.charAt(0).toUpperCase() + id.slice(1) : 'Agent';
+}
+
+function formatRelativeTime(d) {
+  if (!d) return '—';
+  const dt = new Date(d);
+  if (Number.isNaN(dt.getTime())) return '—';
+  const now = Date.now();
+  const diffSec = Math.round((dt.getTime() - now) / 1000);
+  const abs = Math.abs(diffSec);
+  const fmt = (n, unit) => {
+    const label = n === 1 ? unit : unit + 's';
+    return diffSec >= 0 ? ('in ' + n + ' ' + label) : (n + ' ' + label + ' ago');
+  };
+  if (abs < 60) return diffSec >= 0 ? 'in a moment' : 'just now';
+  if (abs < 3600) return fmt(Math.floor(abs / 60), 'minute');
+  if (abs < 86400) return fmt(Math.floor(abs / 3600), 'hour');
+  if (abs < 604800) return fmt(Math.floor(abs / 86400), 'day');
+  return dt.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+function formatMoneyPence(pence) {
+  const n = Number(pence || 0) / 100;
+  return '£' + n.toLocaleString('en-GB', { maximumFractionDigits: n % 1 ? 2 : 0 });
+}
+
+function workflowStatusMeta(wf) {
+  const last = wf.last_run || {};
+  const st = String(wf.status || 'active').toLowerCase();
+  if (String(last.status || '').toLowerCase() === 'failed') {
+    return { cls: 'failed', label: 'Last run failed' };
+  }
+  if (st === 'paused') return { cls: 'paused', label: 'Paused' };
+  return { cls: 'active', label: 'Active' };
+}
+
+function humanizeStepOutput(step, output) {
+  if (!output || typeof output !== 'object') return '';
+  if (output.row_count != null) return 'Read ' + output.row_count + ' rows from sheet';
+  if (Array.isArray(output.rows)) return 'Read ' + output.rows.length + ' rows from sheet';
+  if (output.sent) return 'Sent email' + (output.subject ? ': ' + output.subject : '');
+  if (output.subject) return 'Drafted email: ' + output.subject;
+  if (output.message) return String(output.message);
+  return '';
+}
+
+function stepPlainName(step) {
+  return step.description || step.name || 'Step';
+}
+
+function loadNotifPrefs() {
+  try {
+    return JSON.parse(localStorage.getItem(NOTIF_PREFS_KEY) || '{}');
+  } catch (e) {
+    return {};
+  }
+}
+
+function saveNotifPrefs(prefs) {
+  localStorage.setItem(NOTIF_PREFS_KEY, JSON.stringify(prefs));
+}
+
+function getNotifPrefs() {
+  const raw = loadNotifPrefs();
+  return {
+    approval_alerts: raw.approval_alerts !== false,
+    weekly_summary: !!raw.weekly_summary,
+    product_updates: raw.product_updates !== false,
+  };
+}
+
+// —— Intake onboarding ——
+function showIntakeOnboarding() {
+  return new Promise((resolve) => {
+    intakeResolve = resolve;
+    intakeStep = 0;
+    intakeVertical = null;
+    intakeVerticalOther = '';
+    intakePains = new Set();
+    renderIntakeVerticals();
+    renderIntakePains();
+    setIntakeStep(0);
+    document.getElementById('intake-overlay')?.classList.remove('hidden');
+  });
+}
+
+function setIntakeStep(step) {
+  intakeStep = step;
+  const track = document.getElementById('intake-track');
+  if (track) {
+    track.classList.remove('step-0', 'step-1', 'step-2');
+    track.classList.add('step-' + step);
+  }
+  document.querySelectorAll('#intake-dots span').forEach((dot, i) => {
+    dot.classList.toggle('on', i === step);
+  });
+  if (step === 2) renderIntakeSuggestions();
+}
+
+function renderIntakeVerticals() {
+  const el = document.getElementById('intake-verticals');
+  if (!el) return;
+  el.innerHTML = INTAKE_VERTICALS.map(v => `
+    <button type="button" class="intake-card${intakeVertical === v.id ? ' selected' : ''}" onclick="selectIntakeVertical('${v.id}')">
+      <span class="ico">${v.icon}</span>${esc(v.label)}
+    </button>`).join('');
+  const other = document.getElementById('intake-other-text');
+  if (other) {
+    other.classList.toggle('show', intakeVertical === 'other');
+    other.oninput = () => {
+      intakeVerticalOther = other.value;
+      document.getElementById('intake-continue-1').disabled = !intakeVerticalOther.trim();
+    };
+  }
+  document.getElementById('intake-continue-1').disabled = !intakeVertical || (intakeVertical === 'other' && !intakeVerticalOther.trim());
+}
+
+function selectIntakeVertical(id) {
+  intakeVertical = id;
+  if (id !== 'other') intakeVerticalOther = '';
+  renderIntakeVerticals();
+}
+
+function renderIntakePains() {
+  const el = document.getElementById('intake-pains');
+  if (!el) return;
+  el.innerHTML = INTAKE_PAINS.map(p => `
+    <button type="button" class="intake-pill${intakePains.has(p.id) ? ' selected' : ''}" onclick="toggleIntakePain('${p.id}')">${esc(p.label)}</button>`).join('');
+}
+
+function toggleIntakePain(id) {
+  if (intakePains.has(id)) intakePains.delete(id);
+  else intakePains.add(id);
+  renderIntakePains();
+}
+
+function intakeNext() {
+  if (intakeStep === 0) {
+    if (!intakeVertical) return;
+    if (intakeVertical === 'other' && !intakeVerticalOther.trim()) return;
+    setIntakeStep(1);
+    return;
+  }
+  if (intakeStep === 1) setIntakeStep(2);
+}
+
+function buildIntakeSuggestions() {
+  const v = intakeVertical || 'other';
+  const pains = intakePains;
+  const out = [];
+  const add = (agent, desc, prompt) => {
+    if (out.length >= 3) return;
+    if (out.some(x => x.desc === desc)) return;
+    out.push({ agent, desc, prompt });
+  };
+  if (v === 'dental' && pains.has('scheduling')) {
+    add('aria', 'Send appointment reminders automatically',
+      'I run a dental practice and I want to automatically remind patients of upcoming appointments by email');
+  }
+  if (v === 'dental' && pains.has('invoices')) {
+    add('aria', 'Chase outstanding patient payments by email',
+      'I run a dental practice and I want to chase outstanding patient payments by email');
+  }
+  if (v === 'estate' && pains.has('leads')) {
+    add('aria', 'Follow up new enquiries within minutes',
+      'I run an estate agency and I want to follow up new enquiries within minutes by email');
+  }
+  if (v === 'estate' && pains.has('scheduling')) {
+    add('nova', 'Book and confirm viewings automatically',
+      'I run an estate agency and I want to book and confirm viewings automatically');
+  }
+  if (v === 'construction' && pains.has('invoices')) {
+    add('aria', 'Chase overdue subcontractor invoices',
+      'I run a construction business and I want to chase overdue subcontractor invoices by email');
+  }
+  if (v === 'construction' && pains.has('admin')) {
+    add('nova', 'Compile daily site summary reports',
+      'I run a construction business and I want to compile daily site summary reports automatically');
+  }
+  if (v === 'nursery' && pains.has('scheduling')) {
+    add('aria', 'Confirm bookings and send reminders',
+      'I run a nursery and I want to confirm bookings and send reminders automatically');
+  }
+  if (v === 'accountancy' && pains.has('reporting')) {
+    add('nova', 'Pull monthly figures and email summaries',
+      'I run an accountancy practice and I want to pull monthly figures and email summaries automatically');
+  }
+  if (v === 'logistics' && pains.has('admin')) {
+    add('aria', 'Send automated delivery status updates',
+      'I run a logistics business and I want to send automated delivery status updates');
+  }
+  if (pains.has('questions')) {
+    add('aria', 'Handle your most common customer questions automatically',
+      'I want to handle my most common customer questions automatically by email');
+  }
+  if (!out.length) {
+    add('aria', 'Send appointment reminders automatically',
+      'I want to automatically remind clients of upcoming appointments by email');
+    add('aria', 'Chase outstanding invoices by email',
+      'I want to chase outstanding invoices by email automatically');
+    add('nova', 'Compile a daily summary report',
+      'I want Nova to compile a daily summary report and email it to me');
+  }
+  return out.slice(0, 3);
+}
+
+function renderIntakeSuggestions() {
+  const el = document.getElementById('intake-suggestions');
+  if (!el) return;
+  const cards = buildIntakeSuggestions();
+  el.innerHTML = cards.map((c, i) => `
+    <div class="suggest-card">
+      <div class="suggest-av">${c.agent === 'nova' ? 'N' : 'A'}</div>
+      <div class="body">
+        <strong>${esc(agentPlainName(c.agent))}</strong>
+        <span>${esc(c.desc)}</span>
+      </div>
+      <button type="button" class="btn-primary" style="flex:none;padding:8px 12px;font-size:12px" onclick="intakeOpenBlueprint(${i})">Set this up →</button>
+    </div>`).join('');
+  el._prompts = cards;
+}
+
+async function completeIntakeOnboarding(thenNavigate) {
+  const verticalLabel = intakeVertical === 'other'
+    ? (intakeVerticalOther.trim() || 'other')
+    : (INTAKE_VERTICALS.find(v => v.id === intakeVertical)?.id || intakeVertical);
+  const pains = JSON.stringify([...intakePains]);
+  const completedAt = new Date().toISOString();
+  try {
+    const res = await apiFetch('/api/auth/profile', {
+      method: 'PATCH',
+      body: {
+        onboarding_vertical: verticalLabel,
+        onboarding_pain_points: pains,
+        onboarding_completed_at: completedAt,
+      },
+    });
+    const data = await safeJson(res, {});
+    if (!res.ok) {
+      toast(data.detail || 'Could not save onboarding');
+      return;
+    }
+    if (authSession) {
+      authSession.user = {
+        ...authSession.user,
+        ...data,
+        onboarding_vertical: verticalLabel,
+        onboarding_pain_points: pains,
+        onboarding_completed_at: completedAt,
+      };
+      saveSessionToStorage();
+    }
+  } catch (e) {
+    toast('Could not save onboarding');
+    return;
+  }
+  document.getElementById('intake-overlay')?.classList.add('hidden');
+  if (intakeResolve) {
+    const done = intakeResolve;
+    intakeResolve = null;
+    done();
+  }
+  if (thenNavigate) navigate(thenNavigate);
+}
+
+async function intakeOpenBlueprint(index) {
+  const cards = document.getElementById('intake-suggestions')?._prompts || buildIntakeSuggestions();
+  const card = cards[index];
+  await completeIntakeOnboarding();
+  navigate('build');
+  setTimeout(() => {
+    const input = document.getElementById('build-input');
+    if (input && card?.prompt) {
+      input.value = card.prompt;
+      input.focus();
+    }
+  }, 200);
+}
+
+// —— Automations ——
+async function fetchWorkflowsList() {
+  try {
+    const res = await apiFetch('/api/workflows');
+    const data = await safeJson(res, {});
+    if (!res.ok) return [];
+    return data.workflows || [];
+  } catch (e) {
+    return [];
+  }
+}
+
+async function renderAutomations() {
+  const el = document.getElementById('page-automations');
+  if (!el) return;
+  el.innerHTML = '<div class="page-inner"><p style="color:var(--text2)">Loading automations…</p></div>';
+  const { pendingWf } = await loadPendingApprovals();
+  await updateApprovalBadgeCount();
+  automationsCache = await fetchWorkflowsList();
+
+  const approvalsHtml = pendingWf.length ? `
+    <div class="auto-approvals">
+      ${pendingWf.map(a => {
+        const agent = agentPlainName(a.agent_id);
+        const what = a.summary || a.action_name || 'Action awaiting approval';
+        return `<div class="auto-approval-row">
+          <div class="meta"><div class="who">${esc(agent)}</div><div class="what">${esc(what)}</div></div>
+          <button class="btn-approve" onclick="approveWorkflowApproval('${a.id}')">Approve</button>
+          <button class="btn-deny" onclick="rejectWorkflowApproval('${a.id}')">Reject</button>
+        </div>`;
+      }).join('')}
+    </div>` : '';
+
+  if (!automationsCache.length) {
+    el.innerHTML = `
+      <div class="page-inner">
+        <h1 style="font-family:var(--font-display);font-weight:500;font-size:36px;letter-spacing:-.04em;margin:0 0 8px">Automations</h1>
+        ${approvalsHtml}
+        <div class="empty-state" style="padding:48px;text-align:center">
+          <p style="font-size:16px;margin-bottom:16px">No automations yet. Start with Blueprint to build your first one.</p>
+          <button class="btn-primary" onclick="navigate('build')">Open Blueprint →</button>
+        </div>
+      </div>`;
+    return;
+  }
+
+  el.innerHTML = `
+    <div class="page-inner">
+      <h1 style="font-family:var(--font-display);font-weight:500;font-size:36px;letter-spacing:-.04em;margin:0 0 20px">Automations</h1>
+      ${approvalsHtml}
+      <div id="automations-list">${automationsCache.map(wf => renderAutomationCard(wf)).join('')}</div>
+    </div>`;
+
+  if (expandedAutomationId) {
+    await expandAutomation(expandedAutomationId, true);
+  }
+}
+
+function renderAutomationCard(wf) {
+  const status = workflowStatusMeta(wf);
+  const schedule = scheduleSummaryLabel(wf.schedule || null).replace(/^\s+/, '') || 'No schedule';
+  const expanded = expandedAutomationId === wf.id;
+  return `
+    <div class="wf-card${expanded ? ' expanded' : ''}" id="wf-card-${esc(wf.id)}" onclick="toggleAutomationExpand('${esc(wf.id)}', event)">
+      <div class="wf-card-top">
+        <div>
+          <h3>${esc(wf.name || 'Untitled automation')}</h3>
+          <div class="wf-meta">
+            ${esc(agentPlainName(wf.agent_id))} · ${esc(schedule)}<br>
+            Last run: ${esc(formatRelativeTime(wf.last_run_at))} · Next: ${esc(formatRelativeTime(wf.next_run_at))}
+          </div>
+        </div>
+        <span class="wf-badge ${status.cls}">${esc(status.label)}</span>
+      </div>
+      <div class="wf-card-actions" onclick="event.stopPropagation()">
+        <div id="wf-del-${esc(wf.id)}">
+          <button type="button" class="btn-ghost" style="font-size:12px;padding:6px 10px" onclick="confirmDeleteAutomation('${esc(wf.id)}')">Delete</button>
+        </div>
+      </div>
+      <div class="wf-expand" id="wf-expand-${esc(wf.id)}"><p style="color:var(--text2);font-size:13px">Loading…</p></div>
+    </div>`;
+}
+
+function confirmDeleteAutomation(id) {
+  const wrap = document.getElementById('wf-del-' + id);
+  if (!wrap) return;
+  wrap.innerHTML = `<div class="wf-delete-confirm">Are you sure?
+    <button type="button" class="btn-primary" style="padding:6px 10px;font-size:12px" onclick="deleteAutomation('${esc(id)}')">Confirm</button>
+    <button type="button" class="btn-ghost" style="padding:6px 10px;font-size:12px" onclick="cancelDeleteAutomation('${esc(id)}')">Cancel</button>
+  </div>`;
+}
+
+function cancelDeleteAutomation(id) {
+  const wrap = document.getElementById('wf-del-' + id);
+  if (!wrap) return;
+  wrap.innerHTML = `<button type="button" class="btn-ghost" style="font-size:12px;padding:6px 10px" onclick="confirmDeleteAutomation('${esc(id)}')">Delete</button>`;
+}
+
+async function deleteAutomation(id) {
+  try {
+    const res = await apiFetch('/api/workflows/delete', { method: 'POST', body: { workflow_id: id } });
+    const data = await safeJson(res, {});
+    if (!res.ok) {
+      toast(data.detail || 'Could not delete automation');
+      return;
+    }
+    if (expandedAutomationId === id) expandedAutomationId = null;
+    toast('Automation deleted');
+    await renderAutomations();
+  } catch (e) {
+    toast('Could not delete automation');
+  }
+}
+
+async function toggleAutomationExpand(id, event) {
+  if (event?.target?.closest?.('.wf-card-actions')) return;
+  if (expandedAutomationId === id) {
+    expandedAutomationId = null;
+    document.getElementById('wf-card-' + id)?.classList.remove('expanded');
+    return;
+  }
+  expandedAutomationId = id;
+  document.querySelectorAll('.wf-card.expanded').forEach(c => c.classList.remove('expanded'));
+  document.getElementById('wf-card-' + id)?.classList.add('expanded');
+  await expandAutomation(id);
+}
+
+async function expandAutomation(id, skipToggle) {
+  const box = document.getElementById('wf-expand-' + id);
+  const card = document.getElementById('wf-card-' + id);
+  if (!box) return;
+  if (!skipToggle) card?.classList.add('expanded');
+  box.innerHTML = '<p style="color:var(--text2);font-size:13px">Loading last run…</p>';
+  try {
+    const res = await apiFetch('/api/workflows/' + encodeURIComponent(id) + '/runs/latest');
+    const data = await safeJson(res, {});
+    if (!res.ok) {
+      box.innerHTML = '<p class="err">Could not load run details.</p>';
+      return;
+    }
+    const run = data.run;
+    const wf = automationsCache.find(w => w.id === id) || {};
+    let steps = wf.steps || [];
+    if (typeof steps === 'string') {
+      try { steps = JSON.parse(steps); } catch (e) { steps = []; }
+    }
+    if (!run) {
+      box.innerHTML = '<p style="color:var(--text2)">This automation hasn\'t run yet.</p>';
+      return;
+    }
+    const { pendingWf } = await loadPendingApprovals();
+    const ctx = run.context_json || {};
+    const runFailed = String(run.status || '').toLowerCase() === 'failed';
+    let failedStepNum = null;
+    if (runFailed) {
+      const firstIncomplete = [...steps]
+        .sort((a, b) => Number(a.step || 0) - Number(b.step || 0))
+        .find(s => !(ctx['step_' + s.step] || {}).output);
+      if (firstIncomplete) failedStepNum = Number(firstIncomplete.step || 0);
+    }
+    // Determine pending step from approvals for this workflow
+    const pendingForWf = pendingWf.filter(a => a.workflow_id === id);
+
+    box.innerHTML = steps.map(step => {
+      const num = Number(step.step || 0);
+      const output = (ctx['step_' + num] || {}).output;
+      const pending = pendingForWf.find(a => Number(a.step_number) === num);
+      let icon = '⏳';
+      let detail = '';
+      let extra = '';
+      if (output) {
+        icon = '✓';
+        detail = humanizeStepOutput(step, output) || 'Completed';
+      } else if (pending) {
+        icon = '⏳';
+        detail = 'Waiting for your approval';
+        extra = `<div style="margin-top:8px;display:flex;gap:8px">
+          <button class="btn-approve" onclick="event.stopPropagation();approveWorkflowApproval('${pending.id}')">Approve</button>
+          <button class="btn-deny" onclick="event.stopPropagation();rejectWorkflowApproval('${pending.id}')">Reject</button>
+        </div>`;
+      } else if (runFailed && failedStepNum != null && num === failedStepNum) {
+        icon = '✗';
+        detail = run.error || 'Something went wrong on this step';
+      } else if (runFailed && failedStepNum != null && num > failedStepNum) {
+        icon = '⏳';
+        detail = 'Not started';
+      } else if (String(run.status).toLowerCase() === 'completed') {
+        icon = '✓';
+        detail = 'Completed';
+      } else {
+        icon = '⏳';
+        detail = 'Pending';
+      }
+      return `<div class="wf-step">
+        <div class="n">${num || '—'}</div>
+        <div>
+          <div>${esc(stepPlainName(step))}</div>
+          <div class="detail${icon === '✗' ? ' err' : ''}">${esc(detail)}</div>
+          ${extra}
+        </div>
+        <div>${icon}</div>
+      </div>`;
+    }).join('') || '<p style="color:var(--text2)">No steps defined.</p>';
+  } catch (e) {
+    box.innerHTML = '<p class="err">Could not load run details.</p>';
+  }
+}
+
+// —— Admin ——
+async function renderAdmin() {
+  const el = document.getElementById('page-admin');
+  if (!el) return;
+  if (!authSession?.user?.is_owner) {
+    el.innerHTML = `<div class="admin-404"><h1>404</h1><p style="color:var(--text2);margin-top:8px">This page doesn't exist.</p>
+      <button class="btn-ghost" style="margin-top:20px" onclick="navigate('dashboard')">Back to Mission Control</button></div>`;
+    return;
+  }
+  el.innerHTML = '<div class="page-inner"><p style="color:var(--text2)">Loading dashboard…</p></div>';
+  try {
+    const res = await apiFetch('/api/admin/dashboard');
+    const data = await safeJson(res, {});
+    if (res.status === 403) {
+      el.innerHTML = `<div class="admin-404"><h1>404</h1><p style="color:var(--text2);margin-top:8px">This page doesn't exist.</p></div>`;
+      return;
+    }
+    if (!res.ok) {
+      el.innerHTML = '<div class="page-inner"><p>Could not load admin dashboard.</p></div>';
+      return;
+    }
+    const clients = data.clients || [];
+    el.innerHTML = `
+      <div class="page-inner">
+        <h1 style="font-family:var(--font-display);font-weight:500;font-size:36px;letter-spacing:-.04em;margin:0">Admin</h1>
+        <div class="admin-stats">
+          <div class="admin-stat"><div class="k">Total clients</div><div class="v">${esc(String(data.total_clients || 0))}</div></div>
+          <div class="admin-stat"><div class="k">Active this month</div><div class="v">${esc(String(data.active_this_month || 0))}</div></div>
+          <div class="admin-stat"><div class="k">Actions this month</div><div class="v">${esc(Number(data.total_actions_this_month || 0).toLocaleString())}</div></div>
+          <div class="admin-stat"><div class="k">MRR</div><div class="v">${esc(formatMoneyPence(data.mrr_pence))}</div></div>
+        </div>
+        ${!clients.length
+          ? '<div class="empty-state" style="padding:40px;text-align:center"><p>No clients yet. Share your platform and watch this fill up.</p></div>'
+          : `<div style="overflow-x:auto"><table class="admin-table">
+              <thead><tr>
+                <th>Email</th><th>Vertical</th><th>Tier</th><th>Actions</th><th>Last active</th><th>Workflows</th><th>Joined</th>
+              </tr></thead>
+              <tbody id="admin-clients-body">
+                ${clients.map((c, i) => adminClientRows(c, i)).join('')}
+              </tbody>
+            </table></div>`}
+      </div>`;
+  } catch (e) {
+    el.innerHTML = '<div class="page-inner"><p>Could not load admin dashboard.</p></div>';
+  }
+}
+
+function adminClientRows(c, i) {
+  const actions = `${Number(c.actions_used || 0).toLocaleString()} / ${Number(c.actions_limit || 0).toLocaleString()}`;
+  const joined = c.joined_at ? new Date(c.joined_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—';
+  return `
+    <tr class="client-row" onclick="toggleAdminClient(${i})" data-idx="${i}">
+      <td>${esc(c.email || '—')}</td>
+      <td>${esc(c.vertical || '—')}</td>
+      <td>${esc(c.tier || '—')}</td>
+      <td>${esc(actions)}</td>
+      <td>${esc(formatRelativeTime(c.last_active_at))}</td>
+      <td>${esc(String(c.workflows_deployed || 0))}</td>
+      <td>${esc(joined)}</td>
+    </tr>
+    <tr class="admin-expand hidden" id="admin-expand-${i}"><td colspan="7">
+      <div style="padding:8px 0">
+        <strong style="color:var(--text)">Deployed workflows</strong>
+        <p style="margin:6px 0 12px">Loading…</p>
+        <strong style="color:var(--text)">Recent audit</strong>
+        <p style="margin:6px 0 0">Audit log coming soon</p>
+      </div>
+    </td></tr>`;
+}
+
+async function toggleAdminClient(i) {
+  const row = document.getElementById('admin-expand-' + i);
+  if (!row) return;
+  const opening = row.classList.contains('hidden');
+  document.querySelectorAll('.admin-expand').forEach(r => r.classList.add('hidden'));
+  if (!opening) return;
+  row.classList.remove('hidden');
+  // Detail expansion: workflows list not on dashboard payload — show counts + audit placeholder
+  const cell = row.querySelector('td');
+  if (!cell) return;
+  cell.innerHTML = `
+    <div style="padding:8px 0">
+      <strong style="color:var(--text)">Deployed workflows</strong>
+      <p style="margin:6px 0 12px;color:var(--text2)">Workflow detail per client will appear here as audit data lands. Count is shown in the table.</p>
+      <strong style="color:var(--text)">Recent audit</strong>
+      <p style="margin:6px 0 0;color:var(--text2)">Audit log coming soon</p>
+    </div>`;
+}
+
+async function refreshSettingsIntegrationsPanel() {
+  await renderSettingsIntegrations();
+}
+
 
 async function bootApp() {
   seedMemData();
