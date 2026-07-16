@@ -20,6 +20,7 @@ from client_agents import activate_agent_for_user, agents_status_for_user, pause
 from http_auth import resolve_user_id
 from supabase_rest import pause_workflows_for_user
 from topup_checkout import TopupError, process_topup
+from workflow_create import create_workflow_for_user
 from workflow_delete import soft_delete_workflow_for_user
 from workflow_queries import latest_run_for_user_workflow, list_workflows_for_user
 from workflow_runner import run_due_scheduled_workflows, run_workflow_for_user
@@ -76,6 +77,8 @@ class handler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path.rstrip("/")
         if path.endswith("/workflows/emergency-stop"):
             self._emergency_stop_workflows()
+        elif path.endswith("/workflows/create"):
+            self._create_workflow()
         elif path.endswith("/workflows/run"):
             self._run_workflow()
         elif path.endswith("/workflows/delete"):
@@ -180,6 +183,15 @@ class handler(BaseHTTPRequestHandler):
             workflow_run_id=workflow_run_id,
             approval_id=approval_id,
         )
+        self._json(status, payload)
+
+    def _create_workflow(self):
+        user_id = resolve_user_id(self)
+        if not user_id:
+            self._json(401, {"detail": "Valid Bearer token required"})
+            return
+        body = self._read_json_body()
+        status, payload = create_workflow_for_user(user_id, body)
         self._json(status, payload)
 
     def _delete_workflow(self):

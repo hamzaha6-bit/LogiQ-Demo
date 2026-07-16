@@ -11,6 +11,7 @@ _ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(_ROOT / "api_lib"))
 
 from admin_dashboard import email_is_owner, build_admin_dashboard  # noqa: E402
+from workflow_create import create_workflow_for_user  # noqa: E402
 from workflow_queries import latest_run_for_user_workflow, list_workflows_for_user  # noqa: E402
 
 
@@ -63,3 +64,68 @@ def test_latest_run_null_when_no_runs(mock_get):
     status, payload = latest_run_for_user_workflow("user-1", "wf1")
     assert status == 200
     assert payload["run"] is None
+
+
+def test_create_workflow_requires_auth():
+    status, payload = create_workflow_for_user("", {"agent_id": "aria", "steps": [{"step": 1}]})
+    assert status == 401
+
+
+def test_create_workflow_validates_agent():
+    status, payload = create_workflow_for_user("user-1", {"agent_id": "cleo", "steps": [{"step": 1}]})
+    assert status == 400
+    assert "agent_id" in payload["detail"]
+
+
+def test_create_workflow_requires_steps():
+    status, payload = create_workflow_for_user("user-1", {"agent_id": "aria", "steps": []})
+    assert status == 400
+    assert "steps" in payload["detail"]
+
+
+@patch("workflow_create.rest_post_with_error")
+def test_create_workflow_success(mock_post):
+    mock_post.return_value = (
+        {
+            "id": "wf-new",
+            "user_id": "user-1",
+            "agent_id": "aria",
+            "name": "Remind patients",
+            "status": "active",
+            "steps": [{"step": 1, "code": "GS-01"}],
+        },
+        "",
+    )
+    status, payload = create_workflow_for_user(
+        "user-1",
+        {
+            "agent_id": "aria",
+            "name": "Remind patients",
+            "description": "Send reminders",
+            "trigger_description": "Every morning",
+            "steps": [{"step": 1, "code": "GS-01", "name": "Read sheet"}],
+            "status": "active",
+            "schedule": None,
+        },
+    )
+    assert status == 200
+    assert payload["workflow"]["id"] == "wf-new"
+    assert mock_post.call_args[0][0] == "workflows"
+    inserted = mock_post.call_args[0][1]
+    assert inserted["user_id"] == "user-1"
+    assert inserted["agent_id"] == "aria"
+    assert inserted["name"] == "Remind patients"
+
+
+@patch("workflow_create.rest_post_with_error")
+def test_create_workflow_insert_failure(mock_post):
+    mock_post.return_value = (None, "HTTP 500: boom")
+    status, payload = create_workflow_for_user(
+        "user-1",
+        {
+            "agent_id": "nova",
+            "steps": [{"step": 1, "code": "GM-03"}],
+        },
+    )
+    assert status == 502
+    assert "Failed" in payload["detail"] or "boom" in payload["detail"]
