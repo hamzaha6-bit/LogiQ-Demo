@@ -4,7 +4,7 @@ import json
 import os
 import sys
 import traceback
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 _API_DIR = os.path.dirname(os.path.abspath(__file__))
 _API_LIB = os.path.normpath(os.path.join(_API_DIR, "..", "api_lib"))
@@ -15,8 +15,18 @@ import anthropic
 
 from action_registry import registry_for_prompt
 from agent_pipeline import stream_agent_run
-from execution_gate import check_execution_gate, record_allowed_action
+from blueprint_history import (
+    CLAUDE_CONTEXT_MESSAGE_CAP,
+    append_message,
+    cap_messages_for_claude,
+    get_or_create_active_conversation,
+    load_active_history,
+    normalize_agent_id,
+    start_new_conversation,
+)
+from execution_gate import check_blueprint_chat_gate, record_allowed_action
 from http_auth import resolve_user_id
+from supabase_rest import client_id_from_user_id
 from usage import record_api_call
 
 MODEL = (os.environ.get("ANTHROPIC_MODEL") or "claude-sonnet-4-6").strip()
@@ -86,10 +96,22 @@ def _response_text(response) -> str:
     return "".join(parts)
 
 
+def _resolve_persist_client_id(user_id: str, gate_client_id: str) -> str:
+    if gate_client_id and gate_client_id != "owner-bypass":
+        return gate_client_id
+    try:
+        return client_id_from_user_id(user_id)
+    except ValueError:
+        return ""
+
+
 class handler(BaseHTTPRequestHandler):
     def do_GET(self):
-        path = urlparse(self.path).path.rstrip("/")
-        if path.endswith("/chat") or path.endswith("/chat/test"):
+        parsed = urlparse(self.path)
+        path = parsed.path.rstrip("/")
+        if path.endswith("/blueprint/history"):
+            self._blueprint_history(parse_qs(parsed.query))
+        elif path.endswith("/chat") or path.endswith("/chat/test"):
             self._json(200, {"status": "ok"})
         else:
             self._json(404, {"detail": f"Unknown route: {path}"})
@@ -97,7 +119,9 @@ class handler(BaseHTTPRequestHandler):
     def do_POST(self):
         try:
             path = urlparse(self.path).path.rstrip("/")
-            if path.endswith("/chat"):
+            if path.endswith("/blueprint/new"):
+                self._blueprint_new()
+            elif path.endswith("/chat"):
                 self._blueprint_chat()
             elif path.endswith("/agent/run"):
                 self._agent_run()
@@ -118,13 +142,35 @@ class handler(BaseHTTPRequestHandler):
         except json.JSONDecodeError:
             return {}
 
+    def _blueprint_history(self, query: dict):
+        user_id = resolve_user_id(self)
+        if not user_id:
+            self._json(401, {"detail": "Valid Bearer token required"})
+            return
+        raw_agent = (query.get("agent_id") or ["aria"])[0]
+        agent_id = normalize_agent_id(raw_agent) or "aria"
+        payload = load_active_history(user_id, agent_id)
+        if payload.get("error") == "invalid_agent":
+            self._json(400, {"detail": "agent_id must be one of aria, nova, finn, zara, cleo"})
+            return
+        self._json(200, payload)
+
+    def _blueprint_new(self):
+        user_id = resolve_user_id(self)
+        if not user_id:
+            self._json(401, {"detail": "Valid Bearer token required"})
+            return
+        body = self._read_json_body()
+        status, payload = start_new_conversation(user_id, body.get("agent_id") or "aria")
+        self._json(status, payload)
+
     def _blueprint_chat(self):
         user_id = resolve_user_id(self)
         if not user_id:
             self._json(401, {"detail": "Valid Bearer token required"})
             return
 
-        gate = check_execution_gate(user_id, "blueprint_chat")
+        gate = check_blueprint_chat_gate(user_id)
         if not gate.allowed:
             self._json(403, gate.as_error_payload())
             return
@@ -140,6 +186,36 @@ class handler(BaseHTTPRequestHandler):
         if not message:
             self._json(400, {"detail": "message is required"})
             return
+
+        agent_id = normalize_agent_id(body.get("agent_id")) or "aria"
+        persist_client_id = _resolve_persist_client_id(user_id, gate.client_id)
+
+        conversation_id = (body.get("conversation_id") or "").strip()
+        if conversation_id:
+            pass
+        elif persist_client_id:
+            conversation, conv_err = get_or_create_active_conversation(
+                user_id, agent_id, client_id=persist_client_id
+            )
+            if conv_err or not conversation:
+                _log(f"conversation ensure failed: {conv_err}")
+                self._json(502, {"detail": conv_err or "Failed to open conversation"})
+                return
+            conversation_id = str(conversation["id"])
+
+        if conversation_id and persist_client_id:
+            _, persist_err = append_message(
+                conversation_id=conversation_id,
+                user_id=user_id,
+                agent_id=agent_id,
+                role="user",
+                content=message,
+                client_id=persist_client_id,
+            )
+            if persist_err:
+                _log(f"user message persist failed: {persist_err}")
+                self._json(502, {"detail": "Failed to save message"})
+                return
 
         api_key = (os.environ.get("ANTHROPIC_API_KEY") or "").strip()
         if not api_key:
@@ -171,7 +247,12 @@ class handler(BaseHTTPRequestHandler):
         if claude_messages[0]["role"] != "user":
             claude_messages.insert(0, {"role": "user", "content": "(continuing conversation)"})
 
-        _log(f"blueprint chat user={user_id} model={MODEL} messages={len(claude_messages)} max_tokens={max_tokens}")
+        claude_messages = cap_messages_for_claude(claude_messages, CLAUDE_CONTEXT_MESSAGE_CAP)
+
+        _log(
+            f"blueprint chat user={user_id} agent={agent_id} model={MODEL} "
+            f"messages={len(claude_messages)} max_tokens={max_tokens} preview={gate.free_preview}"
+        )
 
         try:
             client = anthropic.Anthropic(api_key=api_key)
@@ -182,9 +263,31 @@ class handler(BaseHTTPRequestHandler):
                 messages=claude_messages,
             )
             content = _response_text(response)
-            record_allowed_action(gate.client_id, "blueprint_chat")
+
+            if conversation_id and persist_client_id and content:
+                _, asst_err = append_message(
+                    conversation_id=conversation_id,
+                    user_id=user_id,
+                    agent_id=agent_id,
+                    role="assistant",
+                    content=content,
+                    client_id=persist_client_id,
+                )
+                if asst_err:
+                    _log(f"assistant message persist failed: {asst_err}")
+
+            if not gate.free_preview:
+                record_allowed_action(gate.client_id, "blueprint_chat")
             record_api_call(user_id)
-            self._json(200, {"content": content})
+            self._json(
+                200,
+                {
+                    "content": content,
+                    "conversation_id": conversation_id or None,
+                    "agent_id": agent_id,
+                    "free_preview": gate.free_preview,
+                },
+            )
         except anthropic.APIError as exc:
             _log(f"chat Anthropic APIError: {exc}")
             self._json(502, {"detail": str(exc)})

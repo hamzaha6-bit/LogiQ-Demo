@@ -71,20 +71,32 @@ def test_create_workflow_requires_auth():
     assert status == 401
 
 
-def test_create_workflow_validates_agent():
+@patch("workflow_create.check_execution_gate")
+def test_create_workflow_validates_agent(mock_gate):
+    from execution_gate import GateResult
+
+    mock_gate.return_value = GateResult(allowed=True, client_id="c1")
     status, payload = create_workflow_for_user("user-1", {"agent_id": "cleo", "steps": [{"step": 1}]})
     assert status == 400
     assert "agent_id" in payload["detail"]
 
 
-def test_create_workflow_requires_steps():
+@patch("workflow_create.check_execution_gate")
+def test_create_workflow_requires_steps(mock_gate):
+    from execution_gate import GateResult
+
+    mock_gate.return_value = GateResult(allowed=True, client_id="c1")
     status, payload = create_workflow_for_user("user-1", {"agent_id": "aria", "steps": []})
     assert status == 400
     assert "steps" in payload["detail"]
 
 
+@patch("workflow_create.check_execution_gate")
 @patch("workflow_create.rest_post_with_error")
-def test_create_workflow_success(mock_post):
+def test_create_workflow_success(mock_post, mock_gate):
+    from execution_gate import GateResult
+
+    mock_gate.return_value = GateResult(allowed=True, client_id="c1")
     mock_post.return_value = (
         {
             "id": "wf-new",
@@ -117,8 +129,12 @@ def test_create_workflow_success(mock_post):
     assert inserted["name"] == "Remind patients"
 
 
+@patch("workflow_create.check_execution_gate")
 @patch("workflow_create.rest_post_with_error")
-def test_create_workflow_insert_failure(mock_post):
+def test_create_workflow_insert_failure(mock_post, mock_gate):
+    from execution_gate import GateResult
+
+    mock_gate.return_value = GateResult(allowed=True, client_id="c1")
     mock_post.return_value = (None, "HTTP 500: boom")
     status, payload = create_workflow_for_user(
         "user-1",

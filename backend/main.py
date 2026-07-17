@@ -353,10 +353,16 @@ class ChatRequest(BaseModel):
     messages: List[ChatMessage]
     system: str = ""
     max_tokens: int = 1200
+    message: Optional[str] = None
+    agent_id: Optional[str] = None
+    conversation_id: Optional[str] = None
 
 
 class ChatResponse(BaseModel):
     content: str
+    conversation_id: Optional[str] = None
+    agent_id: Optional[str] = None
+    free_preview: bool = False
 
 
 class AgentInfo(BaseModel):
@@ -631,12 +637,35 @@ except Exception as exc:
 
 try:
     from agent_pipeline import stream_agent_run as api_stream_agent_run
-    from execution_gate import check_execution_gate, record_allowed_action
+    from blueprint_history import (
+        CLAUDE_CONTEXT_MESSAGE_CAP,
+        append_message,
+        cap_messages_for_claude,
+        get_or_create_active_conversation,
+        load_active_history,
+        normalize_agent_id,
+        start_new_conversation,
+    )
+    from execution_gate import (
+        check_blueprint_chat_gate,
+        check_execution_gate,
+        record_allowed_action,
+    )
+    from supabase_rest import client_id_from_user_id as api_client_id_from_user_id
 except Exception as exc:
     _import_failed("execution_gate", exc)
     api_stream_agent_run = None  # type: ignore[assignment,misc]
     check_execution_gate = None  # type: ignore[assignment,misc]
+    check_blueprint_chat_gate = None  # type: ignore[assignment,misc]
     record_allowed_action = None  # type: ignore[assignment,misc]
+    append_message = None  # type: ignore[assignment,misc]
+    cap_messages_for_claude = None  # type: ignore[assignment,misc]
+    get_or_create_active_conversation = None  # type: ignore[assignment,misc]
+    load_active_history = None  # type: ignore[assignment,misc]
+    normalize_agent_id = None  # type: ignore[assignment,misc]
+    start_new_conversation = None  # type: ignore[assignment,misc]
+    api_client_id_from_user_id = None  # type: ignore[assignment,misc]
+    CLAUDE_CONTEXT_MESSAGE_CAP = 20  # type: ignore[assignment,misc]
 
 
 def _gate_http_exception(gate) -> HTTPException:
@@ -708,14 +737,87 @@ async def audit_log_event(req: AuditEventRequest, request: Request):
     return {"success": True}
 
 
+@app.get("/api/blueprint/history")
+async def blueprint_history(request: Request, agent_id: str = "aria"):
+    user_id = get_request_user_id(request)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    if load_active_history is None or normalize_agent_id is None:
+        raise HTTPException(status_code=503, detail="Blueprint history unavailable")
+    aid = normalize_agent_id(agent_id) or "aria"
+    payload = load_active_history(user_id, aid)
+    if payload.get("error") == "invalid_agent":
+        raise HTTPException(status_code=400, detail="agent_id must be one of aria, nova, finn, zara, cleo")
+    return payload
+
+
+@app.post("/api/blueprint/new")
+async def blueprint_new(request: Request):
+    user_id = get_request_user_id(request)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    if start_new_conversation is None:
+        raise HTTPException(status_code=503, detail="Blueprint history unavailable")
+    body = await request.json()
+    if not isinstance(body, dict):
+        body = {}
+    status, payload = start_new_conversation(user_id, body.get("agent_id") or "aria")
+    if status >= 400:
+        raise HTTPException(status_code=status, detail=payload.get("detail") or payload)
+    return payload
+
+
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat(req: ChatRequest, request: Request):
     user_id = get_request_user_id(request)
     gate = None
-    if user_id and check_execution_gate is not None:
-        gate = check_execution_gate(user_id, "blueprint_chat")
+    if user_id and check_blueprint_chat_gate is not None:
+        gate = check_blueprint_chat_gate(user_id)
         if not gate.allowed:
             raise _gate_http_exception(gate)
+
+    message = (req.message or "").strip()
+    if not message:
+        for m in reversed(req.messages or []):
+            if m.role == "user" and (m.content or "").strip():
+                message = m.content.strip()
+                break
+
+    agent_id = "aria"
+    if normalize_agent_id is not None:
+        agent_id = normalize_agent_id(req.agent_id) or "aria"
+
+    conversation_id = (req.conversation_id or "").strip() or None
+    persist_client_id = ""
+    if user_id and gate and api_client_id_from_user_id is not None:
+        if gate.client_id and gate.client_id != "owner-bypass":
+            persist_client_id = gate.client_id
+        else:
+            try:
+                persist_client_id = api_client_id_from_user_id(user_id)
+            except ValueError:
+                persist_client_id = ""
+
+    if user_id and persist_client_id and get_or_create_active_conversation is not None:
+        if not conversation_id:
+            conversation, conv_err = get_or_create_active_conversation(
+                user_id, agent_id, client_id=persist_client_id
+            )
+            if conv_err or not conversation:
+                raise HTTPException(status_code=502, detail=conv_err or "Failed to open conversation")
+            conversation_id = str(conversation["id"])
+        if message and append_message is not None:
+            _, persist_err = append_message(
+                conversation_id=conversation_id,
+                user_id=user_id,
+                agent_id=agent_id,
+                role="user",
+                content=message,
+                client_id=persist_client_id,
+            )
+            if persist_err:
+                raise HTTPException(status_code=502, detail="Failed to save message")
+
     client = get_anthropic_client()
     # Anthropic requires alternating user/assistant roles — merge consecutive same-role turns.
     normalized: List[Dict[str, str]] = []
@@ -732,6 +834,8 @@ async def chat(req: ChatRequest, request: Request):
         raise HTTPException(status_code=400, detail="message is required")
     if normalized[0]["role"] != "user":
         normalized.insert(0, {"role": "user", "content": "(continuing conversation)"})
+    if cap_messages_for_claude is not None:
+        normalized = cap_messages_for_claude(normalized, CLAUDE_CONTEXT_MESSAGE_CAP)
     try:
         response = client.messages.create(
             model=MODEL,
@@ -740,11 +844,31 @@ async def chat(req: ChatRequest, request: Request):
             messages=normalized,
         )
         content = response.content[0].text if response.content else ""
-        if gate and gate.allowed and record_allowed_action is not None:
+        if (
+            user_id
+            and conversation_id
+            and persist_client_id
+            and content
+            and append_message is not None
+        ):
+            append_message(
+                conversation_id=conversation_id,
+                user_id=user_id,
+                agent_id=agent_id,
+                role="assistant",
+                content=content,
+                client_id=persist_client_id,
+            )
+        if gate and gate.allowed and not getattr(gate, "free_preview", False) and record_allowed_action is not None:
             record_allowed_action(gate.client_id, "blueprint_chat")
         if user_id:
             await usage.record_api_call(user_id)
-        return ChatResponse(content=content)
+        return ChatResponse(
+            content=content,
+            conversation_id=conversation_id,
+            agent_id=agent_id,
+            free_preview=bool(getattr(gate, "free_preview", False)) if gate else False,
+        )
     except anthropic.APIError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 

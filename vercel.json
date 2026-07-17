@@ -4,7 +4,7 @@
     { "path": "/api/cron/workflows", "schedule": "0 9 * * *" }
   ],
   "builds": [
-    { "src": "api/app.py", "use": "@vercel/python", "config": { "includeFiles": "api_lib/action_registry.py,api_lib/admin_dashboard.py,api_lib/billing_checkout.py,api_lib/billing_portal.py,api_lib/billing_status.py,api_lib/billing_webhook.py,api_lib/client_agents.py,api_lib/entitlements.py,api_lib/execution_gate.py,api_lib/gmail_send.py,api_lib/google_oauth.py,api_lib/hook_handler.py,api_lib/http_auth.py,api_lib/sheets_service.py,api_lib/stripe_client.py,api_lib/supabase_rest.py,api_lib/tiers.py,api_lib/topup_checkout.py,api_lib/usage.py,api_lib/workflow_context.py,api_lib/workflow_create.py,api_lib/workflow_delete.py,api_lib/workflow_queries.py,api_lib/workflow_runner.py,api_lib/workflow_scheduler.py" } },
+    { "src": "api/app.py", "use": "@vercel/python", "config": { "includeFiles": "api_lib/action_registry.py,api_lib/admin_dashboard.py,api_lib/billing_checkout.py,api_lib/billing_portal.py,api_lib/billing_status.py,api_lib/billing_webhook.py,api_lib/blueprint_history.py,api_lib/client_agents.py,api_lib/entitlements.py,api_lib/execution_gate.py,api_lib/gmail_send.py,api_lib/google_oauth.py,api_lib/hook_handler.py,api_lib/http_auth.py,api_lib/sheets_service.py,api_lib/stripe_client.py,api_lib/supabase_rest.py,api_lib/tiers.py,api_lib/topup_checkout.py,api_lib/usage.py,api_lib/workflow_context.py,api_lib/workflow_create.py,api_lib/workflow_delete.py,api_lib/workflow_queries.py,api_lib/workflow_runner.py,api_lib/workflow_scheduler.py" } },
     {
       "src": "api/auth.py",
       "use": "@vercel/python",
@@ -16,14 +16,14 @@
       "src": "api/integrations.py",
       "use": "@vercel/python",
       "config": {
-        "includeFiles": "api_lib/action_registry.py,api_lib/client_agents.py,api_lib/entitlements.py,api_lib/execution_gate.py,api_lib/gmail_oauth.py,api_lib/gmail_send.py,api_lib/google_oauth.py,api_lib/hook_handler.py,api_lib/http_auth.py,api_lib/supabase_rest.py,api_lib/sheets_service.py,api_lib/tiers.py,api_lib/usage.py"
+        "includeFiles": "api_lib/action_registry.py,api_lib/blueprint_history.py,api_lib/client_agents.py,api_lib/entitlements.py,api_lib/execution_gate.py,api_lib/gmail_oauth.py,api_lib/gmail_send.py,api_lib/google_oauth.py,api_lib/hook_handler.py,api_lib/http_auth.py,api_lib/supabase_rest.py,api_lib/sheets_service.py,api_lib/tiers.py,api_lib/usage.py"
       }
     },
     {
       "src": "api/ai.py",
       "use": "@vercel/python",
       "config": {
-        "includeFiles": "api_lib/action_registry.py,api_lib/agent_pipeline.py,api_lib/client_agents.py,api_lib/entitlements.py,api_lib/execution_gate.py,api_lib/http_auth.py,api_lib/supabase_rest.py,api_lib/tiers.py,api_lib/usage.py"
+        "includeFiles": "api_lib/action_registry.py,api_lib/agent_pipeline.py,api_lib/blueprint_history.py,api_lib/client_agents.py,api_lib/entitlements.py,api_lib/execution_gate.py,api_lib/http_auth.py,api_lib/supabase_rest.py,api_lib/tiers.py,api_lib/usage.py"
       }
     },
     { "src": "index.html", "use": "@vercel/static" },
@@ -56,6 +56,8 @@
     { "src": "/api/auth/welcome", "dest": "/api/auth.py" },
     { "src": "/api/chat/test", "dest": "/api/ai.py" },
     { "src": "/api/chat", "dest": "/api/ai.py" },
+    { "src": "/api/blueprint/history", "dest": "/api/ai.py" },
+    { "src": "/api/blueprint/new", "dest": "/api/ai.py" },
     { "src": "/api/agent/run", "dest": "/api/ai.py" },
     { "src": "/api/send/gmail", "dest": "/api/integrations.py" },
     { "src": "/api/integrations/config", "dest": "/api/integrations.py" },
