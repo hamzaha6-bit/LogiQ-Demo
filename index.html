@@ -2900,6 +2900,7 @@ const ACTION_REGISTRY = {
 const REAL_CODES = new Set([
   'GS-01', 'GS-02', 'GS-03', 'GS-04', 'GS-05', 'GS-06', 'GS-07',
   'GM-01', 'GM-02', 'GM-03', 'GM-04', 'GM-05', 'GM-06', 'GM-07', 'GM-08',
+  'GC-01', 'GC-02', 'GC-03', 'GC-04', 'GC-05', 'GC-06',
 ]);
 
 const IRREVERSIBLE_PRIMITIVES = new Set(['GM-03','GM-04','GC-05','GC-06','GS-06']);
@@ -2943,14 +2944,14 @@ When the user describes what they want to automate:
 
 Rules:
 - Every step.code MUST be one of the registered primitives listed above. Do not use any code not in that list.
-- Set requires_approval implicitly from the registry (GM-03, GM-04, and GS-06 always need approval).
+- Set requires_approval implicitly from the registry (GM-03, GM-04, GS-06, GC-05, and GC-06 always need approval).
 - For steps that send email (GM-03, GM-04), include params: { "to", "subject", "body" } with realistic draft content.
 - For draft email (GM-05), include params: { "to", "subject", "body" }.
 - For search (GM-07), include structured params like { "from", "subject", "after", "before", "has_attachment", "query", "max_results" }.
 - For read message (GM-02) use { "message_id" }; for get thread (GM-08) use { "thread_id" }; for label (GM-06) use { "message_id", "add_labels", "remove_labels" }.
 - For Sheets steps, always include params.url (Google Sheets URL). GS-02 needs row/row_data; GS-03 needs row + row_data; GS-06 needs row; GS-07 needs cell (A1) + value.
+- For calendar: GC-01 needs time_min/time_max; GC-02 needs optional time range; GC-03/GC-06 need title, start, end (ISO); GC-06 also needs attendees[]; GC-04/GC-05 need event_id.
 - Prefer 2–6 steps. Be practical, not generic.
-- If the user asks for calendar actions, explain those are not available yet and offer a nearby alternative using the available primitives only.
 - Tone: warm, concise, colleague-like — not a form or checklist.
 - Never mention internal codes to the user in prose; codes belong only in JSON.`;
 }
