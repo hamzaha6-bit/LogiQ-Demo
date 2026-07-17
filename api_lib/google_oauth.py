@@ -168,9 +168,252 @@ def send_user_email(
     return True, sent.get("id", "sent")
 
 
+def get_gmail_service(user_id: str):
+    return build("gmail", "v1", credentials=get_credentials(user_id), cache_discovery=False)
+
+
 def get_sheets_service(user_id: str):
     return build("sheets", "v4", credentials=get_credentials(user_id), cache_discovery=False)
 
 
 def get_calendar_service(user_id: str):
     return build("calendar", "v3", credentials=get_credentials(user_id), cache_discovery=False)
+
+
+# ── Gmail read/search/draft/label/thread helpers (Phase 1 Track A) ──────────
+
+def _b64url_decode(data: str) -> str:
+    import base64
+
+    if not data:
+        return ""
+    padding = "=" * (-len(data) % 4)
+    try:
+        return base64.urlsafe_b64decode(data + padding).decode("utf-8", errors="replace")
+    except Exception:
+        return ""
+
+
+def _header(headers: List[Dict[str, str]], name: str) -> str:
+    lname = name.lower()
+    for h in headers or []:
+        if (h.get("name") or "").lower() == lname:
+            return h.get("value") or ""
+    return ""
+
+
+def _extract_body(payload: Dict[str, Any]) -> str:
+    """Walk a Gmail message payload and return the best-effort plain-text body."""
+    if not payload:
+        return ""
+    mime = payload.get("mimeType") or ""
+    body = payload.get("body") or {}
+    if mime == "text/plain" and body.get("data"):
+        return _b64url_decode(body["data"])
+
+    parts = payload.get("parts") or []
+    # Prefer text/plain, fall back to text/html, then recurse.
+    for part in parts:
+        if (part.get("mimeType") or "") == "text/plain" and (part.get("body") or {}).get("data"):
+            return _b64url_decode(part["body"]["data"])
+    for part in parts:
+        if (part.get("mimeType") or "") == "text/html" and (part.get("body") or {}).get("data"):
+            return _b64url_decode(part["body"]["data"])
+    for part in parts:
+        nested = _extract_body(part)
+        if nested:
+            return nested
+    if body.get("data"):
+        return _b64url_decode(body["data"])
+    return ""
+
+
+def build_gmail_query(params: Dict[str, Any]) -> str:
+    """Build a Gmail search query string from structured filter params.
+
+    Supported keys: query (freeform), from, to, subject, after, before,
+    newer_than, older_than, label, has_attachment, is_unread.
+    Dates for after/before accept YYYY/MM/DD or YYYY-MM-DD.
+    """
+    terms: List[str] = []
+    freeform = (params.get("query") or params.get("q") or "").strip()
+    if freeform:
+        terms.append(freeform)
+
+    def _q(value: str) -> str:
+        value = value.strip()
+        return f'"{value}"' if " " in value else value
+
+    if params.get("from"):
+        terms.append(f"from:{_q(str(params['from']))}")
+    if params.get("to"):
+        terms.append(f"to:{_q(str(params['to']))}")
+    if params.get("subject"):
+        terms.append(f"subject:{_q(str(params['subject']))}")
+    for key in ("after", "before", "newer_than", "older_than"):
+        if params.get(key):
+            val = str(params[key]).strip().replace("-", "/")
+            terms.append(f"{key}:{val}")
+    if params.get("label"):
+        terms.append(f"label:{_q(str(params['label']))}")
+    if params.get("has_attachment") in (True, "true", "True", 1, "1"):
+        terms.append("has:attachment")
+    if params.get("is_unread") in (True, "true", "True", 1, "1"):
+        terms.append("is:unread")
+    return " ".join(terms).strip()
+
+
+def list_messages(user_id: str, query: str = "", max_results: int = 10) -> Dict[str, Any]:
+    service = get_gmail_service(user_id)
+    try:
+        limit = max(1, min(int(max_results or 10), 100))
+    except (TypeError, ValueError):
+        limit = 10
+    kwargs: Dict[str, Any] = {"userId": "me", "maxResults": limit}
+    if query:
+        kwargs["q"] = query
+    resp = service.users().messages().list(**kwargs).execute()
+    messages = resp.get("messages") or []
+    return {
+        "query": query,
+        "message_ids": [m.get("id") for m in messages],
+        "messages": messages,
+        "count": len(messages),
+        "result_size_estimate": resp.get("resultSizeEstimate", len(messages)),
+    }
+
+
+def search_messages(user_id: str, params: Dict[str, Any]) -> Dict[str, Any]:
+    query = build_gmail_query(params)
+    if not query:
+        raise ValueError("search requires at least one filter (query, from, subject, after, ...)")
+    max_results = params.get("max_results") or params.get("maxResults") or 10
+    result = list_messages(user_id, query=query, max_results=max_results)
+    result["built_query"] = query
+    return result
+
+
+def read_message(user_id: str, message_id: str) -> Dict[str, Any]:
+    mid = (message_id or "").strip()
+    if not mid:
+        raise ValueError("message_id is required")
+    service = get_gmail_service(user_id)
+    msg = service.users().messages().get(userId="me", id=mid, format="full").execute()
+    payload = msg.get("payload") or {}
+    headers = payload.get("headers") or []
+    return {
+        "message_id": msg.get("id"),
+        "thread_id": msg.get("threadId"),
+        "subject": _header(headers, "Subject"),
+        "from": _header(headers, "From"),
+        "to": _header(headers, "To"),
+        "date": _header(headers, "Date"),
+        "snippet": msg.get("snippet", ""),
+        "body": _extract_body(payload),
+        "label_ids": msg.get("labelIds") or [],
+    }
+
+
+def create_draft(user_id: str, to: str, subject: str, body: str, from_name: str = "") -> Dict[str, Any]:
+    import base64
+    from email.mime.text import MIMEText
+
+    creds = get_credentials(user_id)
+    health = check_gmail_health(user_id)
+    sender = health.get("email") or env("GMAIL_SENDER_EMAIL") or "me"
+    from_header = f'"{from_name}" <{sender}>' if from_name else sender
+    message = MIMEText(body or "", "plain", "utf-8")
+    message["to"] = to
+    message["from"] = from_header
+    message["subject"] = subject
+    raw = base64.urlsafe_b64encode(message.as_bytes()).decode("utf-8")
+    service = build("gmail", "v1", credentials=creds, cache_discovery=False)
+    draft = service.users().drafts().create(userId="me", body={"message": {"raw": raw}}).execute()
+    return {
+        "draft_id": draft.get("id"),
+        "message_id": (draft.get("message") or {}).get("id"),
+        "to": to,
+        "subject": subject,
+        "created": True,
+    }
+
+
+def _resolve_label_ids(service, names: List[str], create_missing: bool = False) -> List[str]:
+    if not names:
+        return []
+    system = {
+        "inbox": "INBOX", "unread": "UNREAD", "starred": "STARRED",
+        "important": "IMPORTANT", "sent": "SENT", "draft": "DRAFT",
+        "spam": "SPAM", "trash": "TRASH",
+    }
+    existing = service.users().labels().list(userId="me").execute().get("labels") or []
+    by_name = {(l.get("name") or "").lower(): l.get("id") for l in existing}
+    ids: List[str] = []
+    for name in names:
+        clean = (name or "").strip()
+        if not clean:
+            continue
+        low = clean.lower()
+        if low in system:
+            ids.append(system[low])
+        elif low in by_name:
+            ids.append(by_name[low])
+        elif create_missing:
+            created = service.users().labels().create(
+                userId="me",
+                body={"name": clean, "labelListVisibility": "labelShow", "messageListVisibility": "show"},
+            ).execute()
+            ids.append(created.get("id"))
+            by_name[low] = created.get("id")
+        else:
+            raise ValueError(f"Label not found: {clean}")
+    return ids
+
+
+def modify_labels(
+    user_id: str,
+    message_id: str,
+    add_labels: Optional[List[str]] = None,
+    remove_labels: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    mid = (message_id or "").strip()
+    if not mid:
+        raise ValueError("message_id is required")
+    if not add_labels and not remove_labels:
+        raise ValueError("provide add_labels and/or remove_labels")
+    service = get_gmail_service(user_id)
+    add_ids = _resolve_label_ids(service, add_labels or [], create_missing=True)
+    remove_ids = _resolve_label_ids(service, remove_labels or [], create_missing=False)
+    updated = service.users().messages().modify(
+        userId="me",
+        id=mid,
+        body={"addLabelIds": add_ids, "removeLabelIds": remove_ids},
+    ).execute()
+    return {
+        "message_id": updated.get("id"),
+        "label_ids": updated.get("labelIds") or [],
+        "added": add_ids,
+        "removed": remove_ids,
+        "modified": True,
+    }
+
+
+def get_thread(user_id: str, thread_id: str) -> Dict[str, Any]:
+    tid = (thread_id or "").strip()
+    if not tid:
+        raise ValueError("thread_id is required")
+    service = get_gmail_service(user_id)
+    thread = service.users().threads().get(userId="me", id=tid, format="full").execute()
+    messages = []
+    for msg in thread.get("messages") or []:
+        payload = msg.get("payload") or {}
+        headers = payload.get("headers") or []
+        messages.append({
+            "message_id": msg.get("id"),
+            "subject": _header(headers, "Subject"),
+            "from": _header(headers, "From"),
+            "date": _header(headers, "Date"),
+            "snippet": msg.get("snippet", ""),
+            "body": _extract_body(payload),
+        })
+    return {"thread_id": thread.get("id"), "messages": messages, "count": len(messages)}
