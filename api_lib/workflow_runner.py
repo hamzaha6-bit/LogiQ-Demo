@@ -8,8 +8,28 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from action_registry import REAL_CODES, is_real_code
 from execution_gate import check_execution_gate, record_allowed_action
-from google_oauth import send_user_email
+from google_oauth import (
+    cancel_event,
+    check_availability,
+    create_draft,
+    create_event,
+    get_thread,
+    list_messages,
+    list_events,
+    modify_labels,
+    read_message,
+    search_messages,
+    send_calendar_invite,
+    send_user_email,
+    update_event,
+)
 from usage import record_email_sent
+
+try:
+    from googleapiclient.errors import HttpError
+except ImportError:  # pragma: no cover - googleapiclient always present in prod
+    class HttpError(Exception):
+        pass
 from sheets_service import (
     SchemaMismatchError,
     SheetsError,
@@ -200,10 +220,63 @@ def _execute_step(
         record_email_sent(user_id)
         return {"sent": True, "message_id": message_id, "to": to, "subject": subject}
 
+    if normalized in ("GM-01", "GM-02", "GM-05", "GM-06", "GM-07", "GM-08"):
+        return _execute_gmail_step(normalized, params, user_id=user_id, agent_name=agent_name)
+
+    if normalized.startswith("GC-"):
+        return _execute_calendar_step(normalized, params, user_id=user_id)
+
     # Defense in depth: REAL_CODES must always have an explicit branch above.
     raise StepExecutionError(
         f"Action {normalized} is marked real but has no executor — refusing to continue."
     )
+
+
+def _execute_gmail_step(
+    code: str,
+    params: Dict[str, Any],
+    *,
+    user_id: str,
+    agent_name: str,
+) -> Dict[str, Any]:
+    """Real Gmail read/search/draft/label/thread actions. Raises on any API failure."""
+    try:
+        if code == "GM-01":
+            return list_messages(
+                user_id,
+                query=(params.get("query") or params.get("q") or "").strip(),
+                max_results=params.get("max_results") or params.get("maxResults") or 10,
+            )
+        if code == "GM-07":
+            return search_messages(user_id, params)
+        if code == "GM-02":
+            return read_message(user_id, params.get("message_id") or params.get("id") or "")
+        if code == "GM-08":
+            return get_thread(user_id, params.get("thread_id") or params.get("threadId") or "")
+        if code == "GM-05":
+            to = (params.get("to") or "").strip()
+            subject = (params.get("subject") or "").strip()
+            body = (params.get("body") or "").strip()
+            if not to or not subject:
+                raise StepExecutionError("GM-05 requires to and subject")
+            return create_draft(user_id, to, subject, body, agent_name)
+        if code == "GM-06":
+            return modify_labels(
+                user_id,
+                params.get("message_id") or params.get("id") or "",
+                add_labels=params.get("add_labels") or params.get("add") or [],
+                remove_labels=params.get("remove_labels") or params.get("remove") or [],
+            )
+    except StepExecutionError:
+        raise
+    except (ValueError, PermissionError) as exc:
+        raise StepExecutionError(str(exc)) from exc
+    except HttpError as exc:
+        raise StepExecutionError(f"Gmail API error on {code}: {exc}") from exc
+    except Exception as exc:
+        raise StepExecutionError(f"{code} failed: {exc}") from exc
+
+    raise StepExecutionError(f"Unhandled Gmail action {code}")
 
 
 def _execute_sheets_step(
@@ -260,6 +333,76 @@ def _execute_sheets_step(
         raise StepExecutionError(f"{code} failed: {exc}") from exc
 
     raise StepExecutionError(f"Unhandled Sheets action {code}")
+
+
+def _execute_calendar_step(code: str, params: Dict[str, Any], *, user_id: str) -> Dict[str, Any]:
+    try:
+        if code == "GC-01":
+            return check_availability(
+                user_id,
+                params.get("time_min") or params.get("timeMin") or "",
+                params.get("time_max") or params.get("timeMax") or "",
+                calendar_id=params.get("calendar_id") or params.get("calendarId") or "primary",
+            )
+        if code == "GC-02":
+            return list_events(
+                user_id,
+                time_min=params.get("time_min") or params.get("timeMin") or "",
+                time_max=params.get("time_max") or params.get("timeMax") or "",
+                calendar_id=params.get("calendar_id") or params.get("calendarId") or "primary",
+                max_results=params.get("max_results") or params.get("maxResults") or 25,
+                query=params.get("query") or params.get("q") or "",
+            )
+        if code == "GC-03":
+            return create_event(
+                user_id,
+                title=params.get("title") or params.get("summary") or "",
+                start=params.get("start") or params.get("start_time") or "",
+                end=params.get("end") or params.get("end_time") or "",
+                description=params.get("description") or "",
+                attendees=params.get("attendees") or [],
+                calendar_id=params.get("calendar_id") or "primary",
+                timezone_name=params.get("timezone") or "UTC",
+                send_updates=params.get("send_updates") or "",
+            )
+        if code == "GC-04":
+            return update_event(
+                user_id,
+                params.get("event_id") or params.get("eventId") or "",
+                title=params.get("title") or params.get("summary") or "",
+                start=params.get("start") or params.get("start_time") or "",
+                end=params.get("end") or params.get("end_time") or "",
+                description=params.get("description"),
+                attendees=params.get("attendees"),
+                calendar_id=params.get("calendar_id") or "primary",
+                timezone_name=params.get("timezone") or "UTC",
+            )
+        if code == "GC-05":
+            return cancel_event(
+                user_id,
+                params.get("event_id") or params.get("eventId") or "",
+                calendar_id=params.get("calendar_id") or "primary",
+                send_updates=params.get("send_updates") or "all",
+            )
+        if code == "GC-06":
+            return send_calendar_invite(
+                user_id,
+                title=params.get("title") or params.get("summary") or "",
+                start=params.get("start") or params.get("start_time") or "",
+                end=params.get("end") or params.get("end_time") or "",
+                attendees=params.get("attendees") or [],
+                description=params.get("description") or "",
+                calendar_id=params.get("calendar_id") or "primary",
+                timezone_name=params.get("timezone") or "UTC",
+            )
+    except StepExecutionError:
+        raise
+    except (ValueError, PermissionError) as exc:
+        raise StepExecutionError(str(exc)) from exc
+    except Exception as exc:
+        raise StepExecutionError(f"{code} failed: {exc}") from exc
+
+    raise StepExecutionError(f"Unhandled Calendar action {code}")
 
 
 def _finish_workflow_schedule(wf: Dict[str, Any], wid: str) -> None:

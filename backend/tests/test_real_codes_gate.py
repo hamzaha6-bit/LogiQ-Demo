@@ -21,25 +21,26 @@ from workflow_create import create_workflow_for_user  # noqa: E402
 from workflow_runner import StepExecutionError, _execute_step  # noqa: E402
 
 
-def test_real_codes_includes_sheets_and_core_email_not_calendar():
-    assert {"GS-01", "GS-02", "GS-03", "GS-04", "GS-05", "GS-06", "GS-07"} <= REAL_CODES
-    assert {"GM-03", "GM-04"} <= REAL_CODES
-    assert "GC-01" not in REAL_CODES
-    assert "GM-07" not in REAL_CODES
+def test_real_codes_contains_all_21_actions():
+    expected = {
+        *(f"GM-{i:02d}" for i in range(1, 9)),
+        *(f"GS-{i:02d}" for i in range(1, 8)),
+        *(f"GC-{i:02d}" for i in range(1, 7)),
+    }
+    assert REAL_CODES == frozenset(expected)
 
 
 def test_registry_for_prompt_exposes_only_real_codes():
     codes = {p["code"] for p in registry_for_prompt()}
     assert codes == set(REAL_CODES)
-    assert "GC-01" not in codes
-    assert "GM-01" not in codes
+    assert len(codes) == 21
 
 
-def test_validate_plan_steps_rejects_stub_code():
-    err = validate_plan_steps([{"step": 1, "code": "GC-01", "description": "Check availability"}])
+def test_validate_plan_steps_rejects_unknown_code():
+    err = validate_plan_steps([{"step": 1, "code": "XX-99", "description": "Unknown"}])
     assert err is not None
-    assert "GC-01" in err
-    assert "not available" in err.lower() or "available" in err.lower()
+    assert "XX-99" in err
+    assert "unknown" in err.lower()
 
 
 def test_validate_plan_steps_allows_real_codes():
@@ -52,17 +53,17 @@ def test_validate_plan_steps_allows_real_codes():
     assert steps[1]["requires_approval"] is True
 
 
-def test_create_workflow_rejects_stub_code():
+def test_create_workflow_rejects_unknown_code():
     status, payload = create_workflow_for_user(
         "user-1",
         {
             "agent_id": "aria",
-            "steps": [{"step": 1, "code": "GC-01", "description": "Check availability"}],
+            "steps": [{"step": 1, "code": "XX-99", "description": "Unknown"}],
         },
     )
     assert status == 400
     assert payload.get("error") == "unsupported_step_code"
-    assert "GC-01" in payload["detail"]
+    assert "XX-99" in payload["detail"]
 
 
 @patch("workflow_create.rest_post_with_error")
@@ -79,20 +80,20 @@ def test_create_workflow_still_accepts_real_code(mock_post):
     assert payload["workflow"]["id"] == "wf-1"
 
 
-def test_execute_step_hard_fails_on_stub_code():
-    with pytest.raises(StepExecutionError) as exc:
-        _execute_step("GC-01", {}, user_id="u1", agent_id="aria", agent_name="Aria")
-    assert "GC-01" in str(exc.value)
-    assert "not implemented" in str(exc.value).lower()
-
-
 def test_execute_step_hard_fails_on_unknown_code():
     with pytest.raises(StepExecutionError) as exc:
         _execute_step("XX-99", {}, user_id="u1", agent_id="aria", agent_name="Aria")
     assert "XX-99" in str(exc.value)
+    assert "not implemented" in str(exc.value).lower()
+
+
+def test_execute_step_hard_fails_on_missing_code():
+    with pytest.raises(StepExecutionError) as exc:
+        _execute_step("", {}, user_id="u1", agent_id="aria", agent_name="Aria")
+    assert "missing" in str(exc.value)
 
 
 def test_execute_step_never_returns_logged_true_for_stub():
     with pytest.raises(StepExecutionError):
-        out = _execute_step("GM-07", {}, user_id="u1", agent_id="aria", agent_name="Aria")
+        out = _execute_step("XX-99", {}, user_id="u1", agent_id="aria", agent_name="Aria")
         assert not (isinstance(out, dict) and out.get("logged") is True)
