@@ -8,8 +8,22 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from action_registry import REAL_CODES, is_real_code
 from execution_gate import check_execution_gate, record_allowed_action
-from google_oauth import send_user_email
+from google_oauth import (
+    create_draft,
+    get_thread,
+    list_messages,
+    modify_labels,
+    read_message,
+    search_messages,
+    send_user_email,
+)
 from usage import record_email_sent
+
+try:
+    from googleapiclient.errors import HttpError
+except ImportError:  # pragma: no cover - googleapiclient always present in prod
+    class HttpError(Exception):
+        pass
 from sheets_service import SchemaMismatchError, SheetsError, read_sheet
 from supabase_rest import client_id_from_user_id, rest_get, rest_patch, rest_post
 from workflow_context import empty_context, resolved_params_copy, set_step_output
@@ -199,10 +213,60 @@ def _execute_step(
         record_email_sent(user_id)
         return {"sent": True, "message_id": message_id, "to": to, "subject": subject}
 
+    if normalized in ("GM-01", "GM-02", "GM-05", "GM-06", "GM-07", "GM-08"):
+        return _execute_gmail_step(normalized, params, user_id=user_id, agent_name=agent_name)
+
     # Defense in depth: REAL_CODES must always have an explicit branch above.
     raise StepExecutionError(
         f"Action {normalized} is marked real but has no executor — refusing to continue."
     )
+
+
+def _execute_gmail_step(
+    code: str,
+    params: Dict[str, Any],
+    *,
+    user_id: str,
+    agent_name: str,
+) -> Dict[str, Any]:
+    """Real Gmail read/search/draft/label/thread actions. Raises on any API failure."""
+    try:
+        if code == "GM-01":
+            return list_messages(
+                user_id,
+                query=(params.get("query") or params.get("q") or "").strip(),
+                max_results=params.get("max_results") or params.get("maxResults") or 10,
+            )
+        if code == "GM-07":
+            return search_messages(user_id, params)
+        if code == "GM-02":
+            return read_message(user_id, params.get("message_id") or params.get("id") or "")
+        if code == "GM-08":
+            return get_thread(user_id, params.get("thread_id") or params.get("threadId") or "")
+        if code == "GM-05":
+            to = (params.get("to") or "").strip()
+            subject = (params.get("subject") or "").strip()
+            body = (params.get("body") or "").strip()
+            if not to or not subject:
+                raise StepExecutionError("GM-05 requires to and subject")
+            return create_draft(user_id, to, subject, body, agent_name)
+        if code == "GM-06":
+            return modify_labels(
+                user_id,
+                params.get("message_id") or params.get("id") or "",
+                add_labels=params.get("add_labels") or params.get("add") or [],
+                remove_labels=params.get("remove_labels") or params.get("remove") or [],
+            )
+    except StepExecutionError:
+        raise
+    except (ValueError, PermissionError) as exc:
+        raise StepExecutionError(str(exc)) from exc
+    except HttpError as exc:
+        raise StepExecutionError(f"Gmail API error on {code}: {exc}") from exc
+    except Exception as exc:
+        raise StepExecutionError(f"{code} failed: {exc}") from exc
+
+    raise StepExecutionError(f"Unhandled Gmail action {code}")
 
 
 def _finish_workflow_schedule(wf: Dict[str, Any], wid: str) -> None:
