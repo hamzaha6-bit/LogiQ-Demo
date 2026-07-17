@@ -6,6 +6,7 @@ import json
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional, Tuple
 
+from action_registry import validate_plan_steps
 from supabase_rest import rest_post_with_error
 from workflow_scheduler import initial_next_run, parse_schedule
 
@@ -35,6 +36,10 @@ def create_workflow_for_user(user_id: str, body: Dict[str, Any]) -> Tuple[int, D
             return 400, {"detail": "steps must be a JSON array"}
     if not isinstance(steps, list) or not steps:
         return 400, {"detail": "steps must be a non-empty array"}
+
+    step_err = validate_plan_steps(steps)
+    if step_err:
+        return 400, {"detail": step_err, "error": "unsupported_step_code"}
 
     status = str(body.get("status") or "active").strip().lower() or "active"
     if status not in ("active", "paused"):
