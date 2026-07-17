@@ -26,10 +26,19 @@ ACTION_REGISTRY: Dict[str, Dict[str, Any]] = {
     "GC-06": {"integration": "Google Calendar", "name": "Send calendar invite", "requires_approval": True},
 }
 
+# Only these codes have real implementations in workflow_runner._execute_step.
+# Phase 1 tracks add codes here as each action is verified working.
+REAL_CODES = frozenset({"GS-01", "GM-03", "GM-04"})
+
 IRREVERSIBLE_CODES = frozenset({"GM-03", "GM-04", "GC-05", "GC-06", "GS-06"})
 
 
+def is_real_code(code: Optional[str]) -> bool:
+    return (code or "").strip().upper() in REAL_CODES
+
+
 def registry_for_prompt() -> List[Dict[str, Any]]:
+    """Primitives Blueprint may plan — executable codes only."""
     return [
         {
             "code": code,
@@ -38,16 +47,26 @@ def registry_for_prompt() -> List[Dict[str, Any]]:
             "requires_approval": meta["requires_approval"],
         }
         for code, meta in ACTION_REGISTRY.items()
+        if code in REAL_CODES
     ]
 
 
 def validate_plan_steps(steps: List[Dict[str, Any]]) -> Optional[str]:
+    """Validate steps for persistence/execution. Only REAL_CODES are allowed."""
     if not steps:
         return "Workflow must include at least one step"
     for i, step in enumerate(steps, start=1):
         code = (step.get("code") or "").strip().upper()
+        if not code:
+            return f"Step {i}: missing primitive code"
         if code not in ACTION_REGISTRY:
             return f"Step {i}: unknown primitive {code!r}"
+        if code not in REAL_CODES:
+            return (
+                f"Step {i}: action {code} is not available yet. "
+                f"Only these actions work today: {', '.join(sorted(REAL_CODES))}."
+            )
+        step["code"] = code
         meta = ACTION_REGISTRY[code]
         if meta["requires_approval"] and not step.get("requires_approval"):
             step["requires_approval"] = True

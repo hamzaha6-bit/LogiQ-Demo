@@ -6,6 +6,7 @@ import json
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
+from action_registry import REAL_CODES, is_real_code
 from execution_gate import check_execution_gate, record_allowed_action
 from google_oauth import send_user_email
 from usage import record_email_sent
@@ -165,8 +166,16 @@ def _execute_step(
     agent_id: str,
     agent_name: str,
 ) -> Dict[str, Any]:
-    """Execute a workflow primitive. GS-01 and approval-resume GM-03/GM-04 are wired."""
-    if code == "GS-01":
+    """Execute a workflow primitive. Only REAL_CODES are implemented — all others hard-fail."""
+    normalized = (code or "").strip().upper()
+    if not is_real_code(normalized):
+        available = ", ".join(sorted(REAL_CODES))
+        raise StepExecutionError(
+            f"Action {normalized or '(missing)'} is not implemented. "
+            f"Available actions: {available}."
+        )
+
+    if normalized == "GS-01":
         url = (params.get("url") or params.get("sheet_url") or "").strip()
         if not url:
             raise StepExecutionError("GS-01 requires a sheet url param")
@@ -178,19 +187,22 @@ def _execute_step(
         except SheetsError as exc:
             raise StepExecutionError(str(exc)) from exc
 
-    if code in ("GM-03", "GM-04"):
+    if normalized in ("GM-03", "GM-04"):
         to = (params.get("to") or "").strip()
         subject = (params.get("subject") or "").strip()
         body = (params.get("body") or "").strip()
         if not to or not subject:
-            raise StepExecutionError(f"{code} requires to and subject")
+            raise StepExecutionError(f"{normalized} requires to and subject")
         ok, message_id = send_user_email(user_id, to, subject, body, agent_name)
         if not ok:
             raise StepExecutionError(message_id)
         record_email_sent(user_id)
         return {"sent": True, "message_id": message_id, "to": to, "subject": subject}
 
-    return {"logged": True, "code": code}
+    # Defense in depth: REAL_CODES must always have an explicit branch above.
+    raise StepExecutionError(
+        f"Action {normalized} is marked real but has no executor — refusing to continue."
+    )
 
 
 def _finish_workflow_schedule(wf: Dict[str, Any], wid: str) -> None:

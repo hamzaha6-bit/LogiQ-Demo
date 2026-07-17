@@ -2896,12 +2896,17 @@ const ACTION_REGISTRY = {
   'GC-06': { integration:'Google Calendar', name:'Send calendar invite', requires_approval:true },
 };
 
+/** Only these codes have real workflow_runner implementations today. */
+const REAL_CODES = new Set(['GS-01', 'GM-03', 'GM-04']);
+
 const IRREVERSIBLE_PRIMITIVES = new Set(['GM-03','GM-04','GC-05','GC-06','GS-06']);
 
 function blueprintRegistryPromptBlock() {
-  return Object.entries(ACTION_REGISTRY).map(([code, m]) =>
-    `${code}: ${m.name} (${m.integration})${m.requires_approval ? ' [requires approval]' : ''}`
-  ).join('\n');
+  return Object.entries(ACTION_REGISTRY)
+    .filter(([code]) => REAL_CODES.has(code))
+    .map(([code, m]) =>
+      `${code}: ${m.name} (${m.integration})${m.requires_approval ? ' [requires approval]' : ''}`
+    ).join('\n');
 }
 
 function buildBlueprintSystemPrompt() {
@@ -2925,21 +2930,21 @@ When the user describes what they want to automate:
   "steps": [
     {
       "step": 1,
-      "code": "GM-07",
+      "code": "GS-01",
       "description": "Plain English: what this step does in context",
-      "params": {}
+      "params": { "url": "https://docs.google.com/spreadsheets/d/..." }
     }
   ]
 }
 \`\`\`
 
 Rules:
-- Every step.code MUST be one of the registered primitives listed above.
-- Set requires_approval implicitly from the registry (GM-03, GM-04, GC-05, GC-06, GS-06 always need approval).
+- Every step.code MUST be one of the registered primitives listed above (GS-01, GM-03, GM-04 only — nothing else is available yet).
+- Set requires_approval implicitly from the registry (GM-03 and GM-04 always need approval).
 - For steps that send email (GM-03, GM-04), include params: { "to", "subject", "body" } with realistic draft content.
-- For calendar irreversible steps (GC-05, GC-06), include params with event details.
-- For GS-06, include params describing the row to delete.
-- Prefer 3–8 steps. Be practical, not generic.
+- For GS-01, include params: { "url" } (or sheet_url) for the connected Google Sheet.
+- Prefer 2–6 steps. Be practical, not generic.
+- If the user asks for search, calendar, labels, drafts, or sheet writes, explain those are not available yet and offer a nearby alternative using GS-01 / GM-03 / GM-04 only.
 - Tone: warm, concise, colleague-like — not a form or checklist.
 - Never mention internal codes to the user in prose; codes belong only in JSON.`;
 }
@@ -3828,6 +3833,9 @@ function validateBlueprintPlan(plan) {
   if (!plan?.steps?.length) return 'Workflow needs at least one step';
   for (const step of plan.steps) {
     if (!ACTION_REGISTRY[step.code]) return `Unknown action ${step.code} — not in the registry`;
+    if (!REAL_CODES.has(step.code)) {
+      return `Action ${step.code} is not available yet. Only GS-01, GM-03, and GM-04 work today.`;
+    }
   }
   const agent = (plan.agent || '').toLowerCase();
   if (agent && !['aria', 'nova'].includes(agent)) return 'Agent must be aria or nova';
@@ -6555,6 +6563,7 @@ function workflowStatusMeta(wf) {
 
 function humanizeStepOutput(step, output) {
   if (!output || typeof output !== 'object') return '';
+  if (output.logged === true) return 'This step did not run — action is not implemented';
   if (output.row_count != null) return 'Read ' + output.row_count + ' rows from sheet';
   if (Array.isArray(output.rows)) return 'Read ' + output.rows.length + ' rows from sheet';
   if (output.sent) return 'Sent email' + (output.subject ? ': ' + output.subject : '');
@@ -6967,8 +6976,13 @@ async function expandAutomation(id, skipToggle) {
       let detail = '';
       let extra = '';
       if (output) {
-        icon = '✓';
-        detail = humanizeStepOutput(step, output) || 'Completed';
+        if (output.logged === true) {
+          icon = '✗';
+          detail = humanizeStepOutput(step, output);
+        } else {
+          icon = '✓';
+          detail = humanizeStepOutput(step, output) || 'Completed';
+        }
       } else if (pending) {
         icon = '⏳';
         detail = 'Waiting for your approval';
