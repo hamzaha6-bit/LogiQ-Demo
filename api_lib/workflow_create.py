@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Optional, Tuple
 
 from action_registry import validate_plan_steps
+from execution_gate import check_execution_gate
 from supabase_rest import rest_post_with_error
 from workflow_scheduler import initial_next_run, parse_schedule
 
@@ -19,6 +20,10 @@ def create_workflow_for_user(user_id: str, body: Dict[str, Any]) -> Tuple[int, D
     uid = (user_id or "").strip()
     if not uid:
         return 401, {"detail": "Authentication required", "error": "unauthenticated"}
+
+    gate = check_execution_gate(uid, "workflow_create")
+    if not gate.allowed:
+        return 403, gate.as_workflow_error_payload()
 
     agent_id = str(body.get("agent_id") or "").strip().lower()
     if agent_id not in ("aria", "nova"):

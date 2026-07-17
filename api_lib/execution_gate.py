@@ -6,6 +6,12 @@ import os
 from dataclasses import dataclass
 from typing import Any, Dict
 
+from blueprint_history import (
+    FREE_PREVIEW_BLOCK_MESSAGE,
+    FREE_PREVIEW_USER_MESSAGE_LIMIT,
+    WORKFLOW_UPGRADE_MESSAGE,
+    count_user_blueprint_messages,
+)
 from entitlements import get_entitlement
 from supabase_rest import client_id_from_user_id, email_from_user_id
 from usage import get_monthly_usage, record_action as _record_client_action
@@ -22,6 +28,7 @@ ACTION_COST_PENCE: Dict[str, int] = {
     "agent_action": 10,
     "integration": 2,
     "workflow_run": 10,
+    "workflow_create": 0,
     "action": 10,
 }
 
@@ -32,9 +39,20 @@ class GateResult:
     reason: str = ""
     client_id: str = ""
     error: str = ""
+    free_preview: bool = False
 
     def as_error_payload(self) -> Dict[str, str]:
-        return {"error": self.error, "message": self.reason}
+        return {"error": self.error, "message": self.reason, "detail": self.reason}
+
+    def as_workflow_error_payload(self) -> Dict[str, str]:
+        """Subscription blocks for deploy/run/resume use fixed upgrade copy."""
+        if self.error in ("no_active_subscription", "no_client_membership"):
+            return {
+                "error": self.error,
+                "message": WORKFLOW_UPGRADE_MESSAGE,
+                "detail": WORKFLOW_UPGRADE_MESSAGE,
+            }
+        return self.as_error_payload()
 
 
 def action_cost_pence(action_type: str) -> int:
@@ -142,5 +160,65 @@ def check_execution_gate(user_id: str, action_type: str = "action") -> GateResul
     return GateResult(allowed=True, client_id=client_id)
 
 
+def check_blueprint_chat_gate(user_id: str) -> GateResult:
+    """
+    Blueprint chat access:
+    - Owner bypass: unlimited
+    - Active entitlement: normal action/spend gate
+    - Otherwise: free preview — 5 user messages TOTAL across all agents
+    """
+    uid = (user_id or "").strip()
+    if not uid:
+        return GateResult(
+            allowed=False,
+            reason="Authentication required",
+            error="unauthenticated",
+        )
+
+    owners = _owner_emails()
+    if owners:
+        try:
+            email = email_from_user_id(uid)
+            if email and email.strip().lower() in owners:
+                print(f"[gate] Owner bypass applied for {email}")
+                return GateResult(allowed=True, client_id="owner-bypass")
+        except Exception as exc:
+            print(f"[gate] Owner bypass email lookup failed for user {uid}: {exc}")
+
+    try:
+        client_id = client_id_from_user_id(uid)
+    except ValueError as exc:
+        return GateResult(
+            allowed=False,
+            reason=str(exc),
+            error="no_client_membership",
+            client_id="",
+        )
+
+    entitlement = get_entitlement(client_id)
+    status = ((entitlement or {}).get("status") or "").strip().lower()
+    if entitlement and status == "active":
+        return check_execution_gate(uid, "blueprint_chat")
+
+    # Non-paying / inactive: free preview counted from blueprint_messages (all agents).
+    used = count_user_blueprint_messages(uid)
+    if used >= FREE_PREVIEW_USER_MESSAGE_LIMIT:
+        return GateResult(
+            allowed=False,
+            reason=FREE_PREVIEW_BLOCK_MESSAGE,
+            error="free_preview_exhausted",
+            client_id=client_id,
+            free_preview=True,
+        )
+
+    return GateResult(
+        allowed=True,
+        client_id=client_id,
+        free_preview=True,
+    )
+
+
 def record_allowed_action(client_id: str, action_type: str) -> None:
+    if not client_id or client_id == "owner-bypass":
+        return
     _record_client_action(client_id, action_cost_pence(action_type))

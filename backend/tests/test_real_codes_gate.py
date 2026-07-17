@@ -53,7 +53,11 @@ def test_validate_plan_steps_allows_real_codes():
     assert steps[1]["requires_approval"] is True
 
 
-def test_create_workflow_rejects_unknown_code():
+@patch("workflow_create.check_execution_gate")
+def test_create_workflow_rejects_unknown_code(mock_gate):
+    from execution_gate import GateResult
+
+    mock_gate.return_value = GateResult(allowed=True, client_id="c1")
     status, payload = create_workflow_for_user(
         "user-1",
         {
@@ -66,8 +70,12 @@ def test_create_workflow_rejects_unknown_code():
     assert "XX-99" in payload["detail"]
 
 
+@patch("workflow_create.check_execution_gate")
 @patch("workflow_create.rest_post_with_error")
-def test_create_workflow_still_accepts_real_code(mock_post):
+def test_create_workflow_still_accepts_real_code(mock_post, mock_gate):
+    from execution_gate import GateResult
+
+    mock_gate.return_value = GateResult(allowed=True, client_id="c1")
     mock_post.return_value = (
         {"id": "wf-1", "user_id": "user-1", "agent_id": "aria", "steps": [{"step": 1, "code": "GS-01"}]},
         "",

@@ -542,6 +542,10 @@ def run_workflow_for_user(
     agent_id = wf.get("agent_id") or "aria"
     agent_name = _agent_name(agent_id)
 
+    gate = check_execution_gate(uid, "workflow_run")
+    if not gate.allowed:
+        return 403, gate.as_workflow_error_payload()
+
     if workflow_run_id and approval_id:
         return _resume_after_approval(
             uid=uid,
@@ -552,11 +556,8 @@ def run_workflow_for_user(
             agent_name=agent_name,
             workflow_run_id=workflow_run_id.strip(),
             approval_id=approval_id.strip(),
+            gate_client_id=gate.client_id,
         )
-
-    gate = check_execution_gate(uid, "workflow_run")
-    if not gate.allowed:
-        return 403, gate.as_error_payload()
 
     run_id = _create_run(wid)
     if not run_id:
@@ -589,6 +590,7 @@ def _resume_after_approval(
     agent_name: str,
     workflow_run_id: str,
     approval_id: str,
+    gate_client_id: str = "",
 ) -> Tuple[int, Dict[str, Any]]:
     run = _load_run(workflow_run_id)
     if not run or str(run.get("workflow_id")) != wid:
@@ -633,6 +635,8 @@ def _resume_after_approval(
             resolved = {}
 
     _save_run(workflow_run_id, context=context, status="running")
+    if gate_client_id:
+        record_allowed_action(gate_client_id, "workflow_run")
 
     try:
         output = _execute_step(

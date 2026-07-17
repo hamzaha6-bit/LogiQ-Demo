@@ -2825,6 +2825,8 @@ let blueprintHistory = [];
 let blueprintUserTurns = 0;
 let blueprintPlan = null;
 let blueprintSelectedAgent = 'aria';
+let blueprintConversationId = null;
+let blueprintHistoryLoading = false;
 const agentChatState = {};
 let modalHistories = { cleo: [], nova: [] };
 const deployedAgents = new Map();
@@ -3336,21 +3338,28 @@ async function parseApiErrorPayload(res) {
   const text = await res.text();
   try {
     const j = JSON.parse(text);
-    const message = typeof j.detail === 'string'
-      ? j.detail
-      : Array.isArray(j.detail)
-        ? j.detail.map(d => d.msg || JSON.stringify(d)).join('; ')
-        : (j.detail || j.message || text);
-    return { message, error: j.error || '' };
+    let message = '';
+    if (typeof j.detail === 'string') {
+      message = j.detail;
+    } else if (Array.isArray(j.detail)) {
+      message = j.detail.map(d => d.msg || JSON.stringify(d)).join('; ');
+    } else if (j.detail && typeof j.detail === 'object') {
+      message = j.detail.message || j.detail.detail || '';
+    }
+    if (!message) message = j.message || j.detail || text;
+    if (typeof message !== 'string') message = JSON.stringify(message);
+    return { message, error: j.error || (j.detail && j.detail.error) || '' };
   } catch {
     return { message: text || `HTTP ${res.status} ${res.statusText}`, error: '' };
   }
 }
 
-async function callClaude(system, messages, maxTokens = 1200) {
+async function callClaude(system, messages, maxTokens = 1200, opts = {}) {
   // Anthropic requires strictly alternating user/assistant roles.
+  // Full history stays in DB/UI; only the last 20 go to Claude.
+  const sliced = (messages || []).slice(-20);
   const normalized = [];
-  for (const m of messages || []) {
+  for (const m of sliced) {
     const role = m.role === 'assistant' ? 'assistant' : 'user';
     const content = String(m.content || '').trim();
     if (!content) continue;
@@ -3366,14 +3375,26 @@ async function callClaude(system, messages, maxTokens = 1200) {
     normalized.unshift({ role: 'user', content: '(continuing conversation)' });
   }
 
+  const lastUser = [...normalized].reverse().find(m => m.role === 'user');
   const res = await apiFetch('/api/chat', {
     method: 'POST',
-    body: { system, messages: normalized, max_tokens: maxTokens }
+    body: {
+      system,
+      messages: normalized,
+      message: lastUser ? lastUser.content : '',
+      max_tokens: maxTokens,
+      agent_id: opts.agent_id || blueprintSelectedAgent || 'aria',
+      conversation_id: opts.conversation_id || blueprintConversationId || null,
+    }
   });
-  if (!res.ok) throw new Error(await parseApiError(res));
+  if (!res.ok) {
+    const err = await parseApiErrorPayload(res);
+    throw new Error(err.message || 'Chat request failed');
+  }
   backendReachable = true;
   backendAvailable = true;
   const data = await safeJson(res, {});
+  if (data.conversation_id) blueprintConversationId = data.conversation_id;
   return data.content || '';
 }
 
@@ -4029,8 +4050,7 @@ document.addEventListener('keydown', (e) => {
 function renderBuild() {
   const el = document.getElementById('page-build');
   if (el.dataset.init === '2') {
-    document.getElementById('build-chips')?.remove();
-    el.querySelector('.blueprint-agent-picker')?.remove();
+    loadBlueprintHistory(blueprintSelectedAgent);
     return;
   }
   el.dataset.init = '2';
@@ -4039,10 +4059,16 @@ function renderBuild() {
         <div class="chat-page-header">
           <div>
             <div class="mono-label" style="color:var(--brand);margin-bottom:6px">Blueprint AI</div>
-            <h2 style="font-family:var(--font-display);font-weight:500;letter-spacing:-.03em;font-size:28px">Describe it. Vision <span style="color:#5B4BF5">builds it.</span></h2>
+            <h2 style="font-family:var(--font-display);font-weight:500;letter-spacing:-.03em;font-size:28px">Describe it. LogiQ <span style="color:#5B4BF5">builds it.</span></h2>
             <p>Assembled only from safe, pre-approved actions</p>
           </div>
           <img class="logo-mark" src="/assets/logiq-icon-square.png" alt="LogiQ" width="36" height="36" style="width:36px;height:36px;">
+        </div>
+        <div class="blueprint-agent-picker">
+          <span>Build for</span>
+          <button type="button" class="agent-pick${blueprintSelectedAgent === 'aria' ? ' active' : ''}" data-agent="aria" onclick="setBlueprintAgent('aria')">Aria</button>
+          <button type="button" class="agent-pick${blueprintSelectedAgent === 'nova' ? ' active' : ''}" data-agent="nova" onclick="setBlueprintAgent('nova')">Nova</button>
+          <button type="button" class="agent-pick" style="margin-left:auto" onclick="startNewBlueprintConversation()">Start new conversation</button>
         </div>
         <div class="chat-messages-full" id="build-messages"></div>
         <div class="blueprint-compose">
@@ -4057,14 +4083,83 @@ function renderBuild() {
           </div>
         </div>
       </div>`;
-  addBuildMsg('assistant', 'Hi — tell me what you\'d like to automate. I\'ll map it to a workflow using Gmail, Google Sheets, and Calendar, then show you the plan before anything runs.');
+  loadBlueprintHistory(blueprintSelectedAgent);
+}
+
+async function loadBlueprintHistory(agentId) {
+  const aid = (agentId || blueprintSelectedAgent || 'aria').toLowerCase();
+  const box = document.getElementById('build-messages');
+  if (!box) return;
+  if (!getAuthBearerToken()) {
+    blueprintHistory = [];
+    blueprintConversationId = null;
+    box.innerHTML = '';
+    addBuildMsg('assistant', 'Hi — tell me what you\'d like to automate. I\'ll map it to a workflow using Gmail, Google Sheets, and Calendar, then show you the plan before anything runs.');
+    return;
+  }
+  if (blueprintHistoryLoading) return;
+  blueprintHistoryLoading = true;
+  try {
+    const res = await apiFetch('/api/blueprint/history?agent_id=' + encodeURIComponent(aid));
+    const data = await safeJson(res, {});
+    if (!res.ok) throw new Error(data.detail || data.message || 'Could not load chat history');
+    blueprintConversationId = data.conversation?.id || null;
+    const msgs = Array.isArray(data.messages) ? data.messages : [];
+    blueprintHistory = msgs.map(m => ({
+      role: m.role === 'assistant' ? 'assistant' : 'user',
+      content: String(m.content || ''),
+    }));
+    box.innerHTML = '';
+    if (!blueprintHistory.length) {
+      addBuildMsg('assistant', 'Hi — tell me what you\'d like to automate. I\'ll map it to a workflow using Gmail, Google Sheets, and Calendar, then show you the plan before anything runs.');
+    } else {
+      blueprintHistory.forEach(m => addBuildMsg(m.role, m.content));
+    }
+  } catch (e) {
+    console.warn('[blueprint] history load failed:', e);
+    if (!box.children.length) {
+      addBuildMsg('assistant', 'Hi — tell me what you\'d like to automate. I\'ll map it to a workflow using Gmail, Google Sheets, and Calendar, then show you the plan before anything runs.');
+    }
+  } finally {
+    blueprintHistoryLoading = false;
+  }
+}
+
+async function startNewBlueprintConversation() {
+  if (!getAuthBearerToken()) {
+    toast('Sign in to start a new conversation', 'err');
+    return;
+  }
+  const aid = blueprintSelectedAgent || 'aria';
+  try {
+    const res = await apiFetch('/api/blueprint/new', {
+      method: 'POST',
+      body: { agent_id: aid },
+    });
+    const data = await safeJson(res, {});
+    if (!res.ok) throw new Error(data.detail || data.message || 'Could not start conversation');
+    blueprintConversationId = data.conversation?.id || null;
+    blueprintHistory = [];
+    blueprintPlan = null;
+    const box = document.getElementById('build-messages');
+    if (box) box.innerHTML = '';
+    addBuildMsg('assistant', 'New conversation started. What would you like to automate?');
+    toast('Started a new conversation', 'success');
+  } catch (e) {
+    toast(e.message || 'Could not start conversation', 'err');
+  }
 }
 
 function setBlueprintAgent(id) {
-  blueprintSelectedAgent = id;
+  const aid = (id || 'aria').toLowerCase();
+  if (aid !== 'aria' && aid !== 'nova') return;
+  blueprintSelectedAgent = aid;
   document.querySelectorAll('.agent-pick').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.agent === id);
+    if (!btn.dataset.agent) return;
+    btn.classList.toggle('active', btn.dataset.agent === aid);
   });
+  blueprintPlan = null;
+  loadBlueprintHistory(aid);
 }
 
 function addBuildMsg(role, text, cls) {
@@ -4106,11 +4201,20 @@ async function sendBuild() {
 
   if (btn) btn.disabled = true;
   try {
-    const reply = await callClaude(buildBlueprintSystemPrompt(), blueprintHistory, 2200);
+    const reply = await callClaude(buildBlueprintSystemPrompt(), blueprintHistory, 2200, {
+      agent_id: blueprintSelectedAgent,
+      conversation_id: blueprintConversationId,
+    });
     document.getElementById('build-typing')?.remove();
     await handleBlueprintReply(reply);
   } catch (e) {
     document.getElementById('build-typing')?.remove();
+    // Roll back optimistic user turn if the server rejected (e.g. free preview).
+    if (blueprintHistory.length && blueprintHistory[blueprintHistory.length - 1]?.role === 'user'
+        && blueprintHistory[blueprintHistory.length - 1]?.content === text) {
+      blueprintHistory.pop();
+      if (blueprintUserTurns > 0) blueprintUserTurns--;
+    }
     addBuildMsg('assistant', e.message || String(e));
   } finally {
     if (btn) btn.disabled = false;
@@ -4275,7 +4379,7 @@ async function deployBlueprintPlan() {
     const res = await apiFetch('/api/workflows/create', { method: 'POST', body: record });
     const data = await safeJson(res, {});
     if (!res.ok) {
-      toast(data.detail || data.message || 'Could not save workflow — nothing was deployed', 'err');
+      toast(data.message || data.detail || 'Could not save workflow — nothing was deployed', 'err');
       return;
     }
     const saved = data.workflow || data;
