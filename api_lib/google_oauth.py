@@ -174,3 +174,222 @@ def get_sheets_service(user_id: str):
 
 def get_calendar_service(user_id: str):
     return build("calendar", "v3", credentials=get_credentials(user_id), cache_discovery=False)
+
+
+def _require_calendar(user_id: str, *, write: bool = False) -> None:
+    if not load_user_token(user_id):
+        raise PermissionError("Connect Google first — /api/auth/gmail/connect")
+    if write:
+        if not has_scope(user_id, CALENDAR_SCOPE):
+            raise PermissionError("Re-authorise Google for Calendar write access")
+    else:
+        if not has_scope(user_id, CALENDAR_SCOPE) and not has_scope(user_id, "calendar.readonly"):
+            raise PermissionError("Re-authorise Google for Calendar access")
+
+
+def check_availability(
+    user_id: str,
+    time_min: str,
+    time_max: str,
+    calendar_id: str = "primary",
+) -> Dict[str, Any]:
+    _require_calendar(user_id, write=False)
+    if not (time_min or "").strip() or not (time_max or "").strip():
+        raise ValueError("time_min and time_max are required")
+    cal = (calendar_id or "primary").strip()
+    service = get_calendar_service(user_id)
+    result = (
+        service.freebusy()
+        .query(body={"timeMin": time_min, "timeMax": time_max, "items": [{"id": cal}]})
+        .execute()
+    )
+    busy = result.get("calendars", {}).get(cal, {}).get("busy", [])
+    return {
+        "success": True,
+        "calendar_id": cal,
+        "time_min": time_min,
+        "time_max": time_max,
+        "busy": busy,
+        "busy_count": len(busy),
+    }
+
+
+def list_events(
+    user_id: str,
+    *,
+    time_min: str = "",
+    time_max: str = "",
+    calendar_id: str = "primary",
+    max_results: int = 25,
+    query: str = "",
+) -> Dict[str, Any]:
+    _require_calendar(user_id, write=False)
+    cal = (calendar_id or "primary").strip()
+    try:
+        limit = max(1, min(int(max_results or 25), 100))
+    except (TypeError, ValueError):
+        limit = 25
+    kwargs: Dict[str, Any] = {
+        "calendarId": cal,
+        "maxResults": limit,
+        "singleEvents": True,
+        "orderBy": "startTime",
+    }
+    if (time_min or "").strip():
+        kwargs["timeMin"] = time_min.strip()
+    if (time_max or "").strip():
+        kwargs["timeMax"] = time_max.strip()
+    if (query or "").strip():
+        kwargs["q"] = query.strip()
+    service = get_calendar_service(user_id)
+    result = service.events().list(**kwargs).execute()
+    items = result.get("items") or []
+    events = []
+    for ev in items:
+        events.append({
+            "event_id": ev.get("id"),
+            "summary": ev.get("summary", ""),
+            "description": ev.get("description", ""),
+            "start": (ev.get("start") or {}).get("dateTime") or (ev.get("start") or {}).get("date"),
+            "end": (ev.get("end") or {}).get("dateTime") or (ev.get("end") or {}).get("date"),
+            "html_link": ev.get("htmlLink"),
+            "status": ev.get("status"),
+            "attendees": [a.get("email") for a in (ev.get("attendees") or []) if a.get("email")],
+        })
+    return {"success": True, "calendar_id": cal, "events": events, "count": len(events)}
+
+
+def create_event(
+    user_id: str,
+    *,
+    title: str,
+    start: str,
+    end: str,
+    description: str = "",
+    attendees: Optional[List[str]] = None,
+    calendar_id: str = "primary",
+    timezone_name: str = "UTC",
+    send_updates: str = "",
+) -> Dict[str, Any]:
+    _require_calendar(user_id, write=True)
+    summary = (title or "").strip()
+    if not summary or not (start or "").strip() or not (end or "").strip():
+        raise ValueError("title, start, and end are required")
+    attendee_list = [{"email": e.strip()} for e in (attendees or []) if e and str(e).strip()]
+    cal = (calendar_id or "primary").strip()
+    event_body: Dict[str, Any] = {
+        "summary": summary,
+        "description": description or "",
+        "start": {"dateTime": start.strip(), "timeZone": timezone_name or "UTC"},
+        "end": {"dateTime": end.strip(), "timeZone": timezone_name or "UTC"},
+    }
+    if attendee_list:
+        event_body["attendees"] = attendee_list
+    updates = send_updates or ("all" if attendee_list else "none")
+    service = get_calendar_service(user_id)
+    created = (
+        service.events()
+        .insert(calendarId=cal, body=event_body, sendUpdates=updates)
+        .execute()
+    )
+    if not created.get("id"):
+        raise RuntimeError("Calendar create returned no event id")
+    return {
+        "success": True,
+        "event_id": created.get("id"),
+        "html_link": created.get("htmlLink"),
+        "summary": created.get("summary"),
+        "start": start.strip(),
+        "end": end.strip(),
+        "attendees": [a["email"] for a in attendee_list],
+        "send_updates": updates,
+    }
+
+
+def update_event(
+    user_id: str,
+    event_id: str,
+    *,
+    title: str = "",
+    start: str = "",
+    end: str = "",
+    description: Optional[str] = None,
+    attendees: Optional[List[str]] = None,
+    calendar_id: str = "primary",
+    timezone_name: str = "UTC",
+) -> Dict[str, Any]:
+    _require_calendar(user_id, write=True)
+    eid = (event_id or "").strip()
+    if not eid:
+        raise ValueError("event_id is required")
+    cal = (calendar_id or "primary").strip()
+    service = get_calendar_service(user_id)
+    existing = service.events().get(calendarId=cal, eventId=eid).execute()
+    if title:
+        existing["summary"] = title.strip()
+    if description is not None:
+        existing["description"] = description
+    if start:
+        existing["start"] = {"dateTime": start.strip(), "timeZone": timezone_name or "UTC"}
+    if end:
+        existing["end"] = {"dateTime": end.strip(), "timeZone": timezone_name or "UTC"}
+    if attendees is not None:
+        existing["attendees"] = [{"email": e.strip()} for e in attendees if e and str(e).strip()]
+    updated = service.events().update(calendarId=cal, eventId=eid, body=existing).execute()
+    if not updated.get("id"):
+        raise RuntimeError("Calendar update returned no event id")
+    return {
+        "success": True,
+        "event_id": updated.get("id"),
+        "summary": updated.get("summary"),
+        "html_link": updated.get("htmlLink"),
+        "updated": True,
+    }
+
+
+def cancel_event(
+    user_id: str,
+    event_id: str,
+    *,
+    calendar_id: str = "primary",
+    send_updates: str = "all",
+) -> Dict[str, Any]:
+    _require_calendar(user_id, write=True)
+    eid = (event_id or "").strip()
+    if not eid:
+        raise ValueError("event_id is required")
+    cal = (calendar_id or "primary").strip()
+    service = get_calendar_service(user_id)
+    service.events().delete(
+        calendarId=cal,
+        eventId=eid,
+        sendUpdates=send_updates or "all",
+    ).execute()
+    return {"success": True, "event_id": eid, "cancelled": True, "calendar_id": cal}
+
+
+def send_calendar_invite(
+    user_id: str,
+    *,
+    title: str,
+    start: str,
+    end: str,
+    attendees: List[str],
+    description: str = "",
+    calendar_id: str = "primary",
+    timezone_name: str = "UTC",
+) -> Dict[str, Any]:
+    """Create an event and email invites to attendees (sendUpdates=all)."""
+    if not attendees:
+        raise ValueError("attendees are required for a calendar invite")
+    return create_event(
+        user_id,
+        title=title,
+        start=start,
+        end=end,
+        description=description,
+        attendees=attendees,
+        calendar_id=calendar_id,
+        timezone_name=timezone_name,
+        send_updates="all",
+    )

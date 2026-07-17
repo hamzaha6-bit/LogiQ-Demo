@@ -21,15 +21,18 @@ from workflow_create import create_workflow_for_user  # noqa: E402
 from workflow_runner import StepExecutionError, _execute_step  # noqa: E402
 
 
-def test_real_codes_are_exactly_the_three_implemented():
-    assert REAL_CODES == frozenset({"GS-01", "GM-03", "GM-04"})
+def test_real_codes_includes_calendar_and_core_not_gmail_extras():
+    assert {"GS-01", "GM-03", "GM-04"} <= REAL_CODES
+    assert {"GC-01", "GC-02", "GC-03", "GC-04", "GC-05", "GC-06"} <= REAL_CODES
+    assert "GM-07" not in REAL_CODES
+    assert "GS-02" not in REAL_CODES
 
 
 def test_registry_for_prompt_exposes_only_real_codes():
     codes = {p["code"] for p in registry_for_prompt()}
     assert codes == set(REAL_CODES)
     assert "GM-07" not in codes
-    assert "GC-01" not in codes
+    assert "GS-06" not in codes
 
 
 def test_validate_plan_steps_rejects_stub_code():
@@ -91,5 +94,5 @@ def test_execute_step_hard_fails_on_unknown_code():
 
 def test_execute_step_never_returns_logged_true_for_stub():
     with pytest.raises(StepExecutionError):
-        out = _execute_step("GM-02", {}, user_id="u1", agent_id="aria", agent_name="Aria")
+        out = _execute_step("GS-02", {}, user_id="u1", agent_id="aria", agent_name="Aria")
         assert not (isinstance(out, dict) and out.get("logged") is True)

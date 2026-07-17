@@ -28,7 +28,12 @@ ACTION_REGISTRY: Dict[str, Dict[str, Any]] = {
 
 # Only these codes have real implementations in workflow_runner._execute_step.
 # Phase 1 tracks add codes here as each action is verified working.
-REAL_CODES = frozenset({"GS-01", "GM-03", "GM-04"})
+# Track C (Calendar): GC-01..GC-06 wired to real Calendar API calls.
+REAL_CODES = frozenset({
+    "GS-01",
+    "GM-03", "GM-04",
+    "GC-01", "GC-02", "GC-03", "GC-04", "GC-05", "GC-06",
+})
 
 IRREVERSIBLE_CODES = frozenset({"GM-03", "GM-04", "GC-05", "GC-06", "GS-06"})
 

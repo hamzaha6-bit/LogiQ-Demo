@@ -62,12 +62,13 @@ When the user describes what they want to automate:
 ```
 
 Rules:
-- Every step.code MUST be one of the registered primitives listed above (GS-01, GM-03, GM-04 only — nothing else is available yet).
-- Set requires_approval implicitly from the registry (GM-03 and GM-04 always need approval).
+- Every step.code MUST be one of the registered primitives listed above. Do not use any code not in that list.
+- Set requires_approval implicitly from the registry (GM-03, GM-04, GC-05, GC-06 always need approval).
 - For steps that send email (GM-03, GM-04), include params: {{ "to", "subject", "body" }} with realistic draft content.
-- For GS-01, include params: {{ "url" }} (or sheet_url) for the connected Google Sheet.
+- For calendar: GC-01 needs time_min/time_max; GC-02 needs optional time range; GC-03/GC-06 need title, start, end (ISO); GC-06 also needs attendees[]; GC-04/GC-05 need event_id.
+- For GS-01, include params: {{ "url" }} for the connected Google Sheet.
 - Prefer 2–6 steps. Be practical, not generic.
-- If the user asks for search, calendar, labels, drafts, or sheet writes, explain those are not available yet and offer a nearby alternative using GS-01 / GM-03 / GM-04 only.
+- If the user asks for Gmail search/list/label/draft/thread or sheet writes, explain those are not available yet on this branch and offer a nearby alternative using the available primitives only.
 - Tone: warm, concise, colleague-like — not a form or checklist.
 - Never mention internal codes to the user in prose; codes belong only in JSON."""
 
