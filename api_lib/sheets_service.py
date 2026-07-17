@@ -14,7 +14,7 @@ from google_oauth import (
     has_scope,
     load_user_token,
 )
-from supabase_rest import rest_get, rest_patch, rest_post
+from supabase_rest import rest_get, rest_patch, rest_post_with_error
 
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}|^\d{1,2}/\d{1,2}/\d{2,4}")
@@ -170,7 +170,7 @@ def connect(url: str, agent_id: str, user_id: str) -> Dict[str, Any]:
     if not columns:
         raise SheetsError("Sheet has no header row")
     locked_schema = build_schema(columns, rows)
-    row = rest_post(
+    row, err = rest_post_with_error(
         "sheet_connections",
         {
             "user_id": user_id,
@@ -186,6 +186,8 @@ def connect(url: str, agent_id: str, user_id: str) -> Dict[str, Any]:
         },
         on_conflict="user_id,agent_id,spreadsheet_id",
     )
+    if not row or not row.get("id"):
+        raise SheetsError(err or "Failed to persist sheet connection")
     return {
         "success": True,
         "row_count": len(rows),
@@ -193,7 +195,7 @@ def connect(url: str, agent_id: str, user_id: str) -> Dict[str, Any]:
         "spreadsheet_id": spreadsheet_id,
         "schema": locked_schema,
         "status": "active",
-        "connection_id": row.get("id") if row else None,
+        "connection_id": row["id"],
     }
 
 
@@ -245,14 +247,193 @@ def write_row(
         raise SchemaMismatchError("Sheet schema changed — write blocked", diff)
     row_values = [str(row_data.get(col, "")) for col in column_names]
     service = get_sheets_service(user_id)
-    service.spreadsheets().values().append(
-        spreadsheetId=spreadsheet_id,
-        range="A:ZZ",
-        valueInputOption="USER_ENTERED",
-        insertDataOption="INSERT_ROWS",
-        body={"values": [row_values]},
-    ).execute()
-    return {"success": True, "written_columns": column_names}
+    result = (
+        service.spreadsheets()
+        .values()
+        .append(
+            spreadsheetId=spreadsheet_id,
+            range="A:ZZ",
+            valueInputOption="USER_ENTERED",
+            insertDataOption="INSERT_ROWS",
+            body={"values": [row_values]},
+        )
+        .execute()
+    )
+    updates = result.get("updates") or {}
+    if not updates.get("updatedRange") and not updates.get("updatedRows"):
+        raise SheetsError("Sheets append returned no update confirmation")
+    return {
+        "success": True,
+        "written_columns": column_names,
+        "updated_range": updates.get("updatedRange"),
+        "updated_rows": updates.get("updatedRows", 1),
+    }
+
+
+def update_row(
+    url: str,
+    agent_id: str,
+    user_id: str,
+    row: int,
+    row_data: Dict[str, str],
+) -> Dict[str, Any]:
+    """Update a 1-based data row (row 1 = header; data starts at row 2)."""
+    _require_sheets(user_id)
+    spreadsheet_id = parse_spreadsheet_id(url)
+    if not spreadsheet_id:
+        raise SheetsError("Invalid Google Sheets URL")
+    try:
+        row_num = int(row)
+    except (TypeError, ValueError) as exc:
+        raise SheetsError("row must be an integer") from exc
+    if row_num < 2:
+        raise SheetsError("row must be >= 2 (row 1 is the header)")
+    conn = get_connection(user_id, agent_id, spreadsheet_id)
+    if not conn:
+        raise SheetsError("Sheet not connected")
+    if conn.get("status") == "paused_schema_mismatch":
+        raise SchemaMismatchError("Sheet paused due to schema mismatch", conn.get("schema_mismatch") or {})
+    locked = conn.get("locked_schema") or {}
+    column_names = locked.get("column_names") or [c["name"] for c in locked.get("columns", [])]
+    if not column_names:
+        raise SheetsError("Locked schema has no columns")
+    values = _fetch_values(user_id, spreadsheet_id)
+    _, columns = _rows_from_values(values)
+    diff = _validate_schema(locked, columns)
+    if diff:
+        _pause_connection(conn["id"], diff)
+        raise SchemaMismatchError("Sheet schema changed — update blocked", diff)
+    if len(values) < row_num:
+        raise SheetsError(f"Row {row_num} does not exist (sheet has {len(values)} rows including header)")
+    row_values = [str(row_data.get(col, "")) for col in column_names]
+    end_col = _col_letter(len(column_names))
+    a1 = f"A{row_num}:{end_col}{row_num}"
+    service = get_sheets_service(user_id)
+    result = (
+        service.spreadsheets()
+        .values()
+        .update(
+            spreadsheetId=spreadsheet_id,
+            range=a1,
+            valueInputOption="USER_ENTERED",
+            body={"values": [row_values]},
+        )
+        .execute()
+    )
+    if not result.get("updatedRange") and not result.get("updatedCells"):
+        raise SheetsError("Sheets update returned no update confirmation")
+    return {
+        "success": True,
+        "row": row_num,
+        "updated_range": result.get("updatedRange"),
+        "updated_cells": result.get("updatedCells"),
+        "written_columns": column_names,
+    }
+
+
+def write_cell(
+    url: str,
+    agent_id: str,
+    user_id: str,
+    cell: str,
+    value: Any,
+) -> Dict[str, Any]:
+    """Write a single cell by A1 notation (e.g. B3)."""
+    _require_sheets(user_id)
+    spreadsheet_id = parse_spreadsheet_id(url)
+    if not spreadsheet_id:
+        raise SheetsError("Invalid Google Sheets URL")
+    a1 = (cell or "").strip().upper()
+    if not re.match(r"^[A-Z]+\d+$", a1):
+        raise SheetsError("cell must be A1 notation like B3")
+    # Connection optional for write_cell but preferred for schema safety.
+    conn = get_connection(user_id, agent_id, spreadsheet_id)
+    if conn and conn.get("status") == "paused_schema_mismatch":
+        raise SchemaMismatchError("Sheet paused due to schema mismatch", conn.get("schema_mismatch") or {})
+    service = get_sheets_service(user_id)
+    result = (
+        service.spreadsheets()
+        .values()
+        .update(
+            spreadsheetId=spreadsheet_id,
+            range=a1,
+            valueInputOption="USER_ENTERED",
+            body={"values": [["" if value is None else str(value)]]},
+        )
+        .execute()
+    )
+    if not result.get("updatedRange") and not result.get("updatedCells"):
+        raise SheetsError("Sheets cell write returned no update confirmation")
+    return {
+        "success": True,
+        "cell": a1,
+        "value": "" if value is None else str(value),
+        "updated_range": result.get("updatedRange"),
+        "updated_cells": result.get("updatedCells"),
+    }
+
+
+def delete_row(url: str, agent_id: str, user_id: str, row: int) -> Dict[str, Any]:
+    """Delete a 1-based sheet row (including header row 1 — caller should avoid that)."""
+    _require_sheets(user_id)
+    spreadsheet_id = parse_spreadsheet_id(url)
+    if not spreadsheet_id:
+        raise SheetsError("Invalid Google Sheets URL")
+    try:
+        row_num = int(row)
+    except (TypeError, ValueError) as exc:
+        raise SheetsError("row must be an integer") from exc
+    if row_num < 2:
+        raise SheetsError("refusing to delete header row (row must be >= 2)")
+    conn = get_connection(user_id, agent_id, spreadsheet_id)
+    if not conn:
+        raise SheetsError("Sheet not connected")
+    service = get_sheets_service(user_id)
+    meta = service.spreadsheets().get(spreadsheetId=spreadsheet_id).execute()
+    sheets = meta.get("sheets") or []
+    if not sheets:
+        raise SheetsError("Spreadsheet has no sheets")
+    sheet_id = sheets[0].get("properties", {}).get("sheetId")
+    if sheet_id is None:
+        raise SheetsError("Could not resolve sheetId")
+    # Sheets API DeleteDimension uses 0-based inclusive start, exclusive end.
+    start = row_num - 1
+    result = (
+        service.spreadsheets()
+        .batchUpdate(
+            spreadsheetId=spreadsheet_id,
+            body={
+                "requests": [
+                    {
+                        "deleteDimension": {
+                            "range": {
+                                "sheetId": sheet_id,
+                                "dimension": "ROWS",
+                                "startIndex": start,
+                                "endIndex": start + 1,
+                            }
+                        }
+                    }
+                ]
+            },
+        )
+        .execute()
+    )
+    replies = result.get("replies")
+    if replies is None:
+        raise SheetsError("Sheets delete returned no confirmation")
+    return {"success": True, "row": row_num, "deleted": True, "sheet_id": sheet_id}
+
+
+def _col_letter(n: int) -> str:
+    """1-based column index to A1 letter(s)."""
+    if n < 1:
+        return "A"
+    letters = []
+    while n:
+        n, rem = divmod(n - 1, 26)
+        letters.append(chr(65 + rem))
+    return "".join(reversed(letters))
 
 
 def poll(url: str, agent_id: str, user_id: str) -> Dict[str, Any]:
@@ -264,14 +445,10 @@ def poll(url: str, agent_id: str, user_id: str) -> Dict[str, Any]:
     if not conn:
         raise SheetsError("Sheet not connected")
     if conn.get("status") == "paused_schema_mismatch":
-        return {
-            "success": False,
-            "paused": True,
-            "reason": "schema_mismatch",
-            "schema_mismatch": conn.get("schema_mismatch"),
-            "rows": [],
-            "new_count": 0,
-        }
+        raise SchemaMismatchError(
+            "Sheet schema changed — poll paused",
+            conn.get("schema_mismatch") or {},
+        )
     values = _fetch_values(user_id, spreadsheet_id)
     if len(values) < 2:
         return {"success": True, "rows": [], "new_count": 0, "columns": [], "paused": False}
@@ -281,14 +458,7 @@ def poll(url: str, agent_id: str, user_id: str) -> Dict[str, Any]:
     diff = _validate_schema(locked, columns)
     if diff:
         _pause_connection(conn["id"], diff)
-        return {
-            "success": False,
-            "paused": True,
-            "reason": "schema_mismatch",
-            "schema_mismatch": diff,
-            "rows": [],
-            "new_count": 0,
-        }
+        raise SchemaMismatchError("Sheet schema changed — poll paused", diff)
     start_index = int(conn.get("poll_cursor") or 1)
     new_rows: List[Dict[str, str]] = []
     for raw_row in values[start_index:]:
@@ -299,11 +469,13 @@ def poll(url: str, agent_id: str, user_id: str) -> Dict[str, Any]:
             row[header] = raw_row[i].strip() if i < len(raw_row) else ""
         if any(v for v in row.values()):
             new_rows.append(row)
-    rest_patch(
+    ok = rest_patch(
         "sheet_connections",
         {"id": conn["id"]},
         {"poll_cursor": len(values), "updated_at": datetime.now(timezone.utc).isoformat()},
     )
+    if not ok:
+        raise SheetsError("Failed to update poll cursor")
     return {
         "success": True,
         "paused": False,
@@ -312,6 +484,7 @@ def poll(url: str, agent_id: str, user_id: str) -> Dict[str, Any]:
         "rows": new_rows,
         "new_count": len(new_rows),
         "columns": columns,
+        "poll_cursor": len(values),
     }
 
 

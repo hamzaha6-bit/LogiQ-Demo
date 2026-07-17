@@ -24,7 +24,17 @@ try:
 except ImportError:  # pragma: no cover - googleapiclient always present in prod
     class HttpError(Exception):
         pass
-from sheets_service import SchemaMismatchError, SheetsError, read_sheet
+from sheets_service import (
+    SchemaMismatchError,
+    SheetsError,
+    connect,
+    delete_row,
+    poll,
+    read_sheet,
+    update_row,
+    write_cell,
+    write_row,
+)
 from supabase_rest import client_id_from_user_id, rest_get, rest_patch, rest_post
 from workflow_context import empty_context, resolved_params_copy, set_step_output
 from workflow_scheduler import compute_next_run, parse_schedule
@@ -189,17 +199,8 @@ def _execute_step(
             f"Available actions: {available}."
         )
 
-    if normalized == "GS-01":
-        url = (params.get("url") or params.get("sheet_url") or "").strip()
-        if not url:
-            raise StepExecutionError("GS-01 requires a sheet url param")
-        sheet_agent = (params.get("agent") or agent_id or "aria").strip()
-        try:
-            return read_sheet(url, sheet_agent, user_id)
-        except SchemaMismatchError as exc:
-            raise StepExecutionError(str(exc)) from exc
-        except SheetsError as exc:
-            raise StepExecutionError(str(exc)) from exc
+    if normalized.startswith("GS-"):
+        return _execute_sheets_step(normalized, params, user_id=user_id, agent_id=agent_id)
 
     if normalized in ("GM-03", "GM-04"):
         to = (params.get("to") or "").strip()
@@ -267,6 +268,62 @@ def _execute_gmail_step(
         raise StepExecutionError(f"{code} failed: {exc}") from exc
 
     raise StepExecutionError(f"Unhandled Gmail action {code}")
+
+
+def _execute_sheets_step(
+    code: str,
+    params: Dict[str, Any],
+    *,
+    user_id: str,
+    agent_id: str,
+) -> Dict[str, Any]:
+    url = (params.get("url") or params.get("sheet_url") or "").strip()
+    sheet_agent = (params.get("agent") or agent_id or "aria").strip()
+    try:
+        if code == "GS-01":
+            if not url:
+                raise StepExecutionError("GS-01 requires a sheet url param")
+            return read_sheet(url, sheet_agent, user_id)
+        if code == "GS-02":
+            if not url:
+                raise StepExecutionError("GS-02 requires a sheet url param")
+            row_data = params.get("row") or params.get("row_data") or params.get("data") or {}
+            if not isinstance(row_data, dict) or not row_data:
+                raise StepExecutionError("GS-02 requires row/row_data object")
+            return write_row(url, sheet_agent, user_id, {str(k): str(v) for k, v in row_data.items()})
+        if code == "GS-03":
+            if not url:
+                raise StepExecutionError("GS-03 requires a sheet url param")
+            row_data = params.get("row_data") or params.get("data") or {}
+            if not isinstance(row_data, dict) or not row_data:
+                raise StepExecutionError("GS-03 requires row_data object")
+            return update_row(url, sheet_agent, user_id, params.get("row"), {str(k): str(v) for k, v in row_data.items()})
+        if code == "GS-04":
+            if not url:
+                raise StepExecutionError("GS-04 requires a sheet url param")
+            return poll(url, sheet_agent, user_id)
+        if code == "GS-05":
+            if not url:
+                raise StepExecutionError("GS-05 requires a sheet url param")
+            return connect(url, sheet_agent, user_id)
+        if code == "GS-06":
+            if not url:
+                raise StepExecutionError("GS-06 requires a sheet url param")
+            return delete_row(url, sheet_agent, user_id, params.get("row"))
+        if code == "GS-07":
+            if not url:
+                raise StepExecutionError("GS-07 requires a sheet url param")
+            return write_cell(url, sheet_agent, user_id, params.get("cell") or "", params.get("value"))
+    except StepExecutionError:
+        raise
+    except SchemaMismatchError as exc:
+        raise StepExecutionError(str(exc)) from exc
+    except SheetsError as exc:
+        raise StepExecutionError(str(exc)) from exc
+    except Exception as exc:
+        raise StepExecutionError(f"{code} failed: {exc}") from exc
+
+    raise StepExecutionError(f"Unhandled Sheets action {code}")
 
 
 def _finish_workflow_schedule(wf: Dict[str, Any], wid: str) -> None:

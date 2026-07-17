@@ -28,9 +28,9 @@ ACTION_REGISTRY: Dict[str, Dict[str, Any]] = {
 
 # Only these codes have real implementations in workflow_runner._execute_step.
 # Phase 1 tracks add codes here as each action is verified working.
-# Track A (Gmail): GM-01/02/05/06/07/08 wired to real Gmail API calls.
+# Tracks A/B: Gmail GM-01..GM-08 and Sheets GS-01..GS-07 are real API calls.
 REAL_CODES = frozenset({
-    "GS-01",
+    "GS-01", "GS-02", "GS-03", "GS-04", "GS-05", "GS-06", "GS-07",
     "GM-01", "GM-02", "GM-03", "GM-04", "GM-05", "GM-06", "GM-07", "GM-08",
 })
 

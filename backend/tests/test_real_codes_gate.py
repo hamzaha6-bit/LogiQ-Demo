@@ -21,20 +21,16 @@ from workflow_create import create_workflow_for_user  # noqa: E402
 from workflow_runner import StepExecutionError, _execute_step  # noqa: E402
 
 
-def test_real_codes_includes_core_and_gmail_but_not_calendar():
-    # Core email + sheet read, plus Track A Gmail actions.
-    assert {"GS-01", "GM-03", "GM-04"} <= REAL_CODES
+def test_real_codes_includes_gmail_and_sheets_but_not_calendar():
     assert {"GM-01", "GM-02", "GM-05", "GM-06", "GM-07", "GM-08"} <= REAL_CODES
-    # Calendar and sheet writes are not implemented yet.
+    assert {"GS-01", "GS-02", "GS-03", "GS-04", "GS-05", "GS-06", "GS-07"} <= REAL_CODES
     assert "GC-01" not in REAL_CODES
-    assert "GS-02" not in REAL_CODES
 
 
 def test_registry_for_prompt_exposes_only_real_codes():
     codes = {p["code"] for p in registry_for_prompt()}
     assert codes == set(REAL_CODES)
     assert "GC-01" not in codes
-    assert "GS-06" not in codes
 
 
 def test_validate_plan_steps_rejects_stub_code():
