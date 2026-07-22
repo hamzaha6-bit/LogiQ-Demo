@@ -71,16 +71,20 @@ def test_send_subscription_confirmation_sends_to_all_members(
 @patch("hook_handler.email_from_user_id", side_effect=["alice@example.com", None])
 @patch("hook_handler.member_user_ids", return_value=[USER_A, USER_B])
 @patch("hook_handler.is_gmail_configured", return_value=True)
+@patch("hook_handler.rest_post")
 def test_send_subscription_confirmation_skips_failed_email_lookup(
+    mock_audit: MagicMock,
     mock_gmail: MagicMock,
     mock_members: MagicMock,
     mock_email_lookup: MagicMock,
     mock_send: MagicMock,
 ) -> None:
-    send_subscription_confirmation(CLIENT_ID, "pro")
+    failures = send_subscription_confirmation(CLIENT_ID, "pro")
 
     assert mock_send.call_count == 1
     assert mock_send.call_args.kwargs["to"] == "alice@example.com"
+    assert failures  # missing email for USER_B is a recorded failure
+    mock_audit.assert_called()
 
 
 @patch("hook_handler.send_platform_email", return_value=(True, "msg_123"))
@@ -97,7 +101,50 @@ def test_send_subscription_confirmation_uses_tier_name_and_action_count(
 
     body = mock_send.call_args.kwargs["body"]
     assert "Your Starter subscription is now active" in body
+    assert "you're live on LogiQ" in body
+    assert "LogiQ will build it for you" in body
     assert "Your plan: Starter — 500 actions per month." in body
     assert mock_send.call_args.kwargs["subject"] == (
         "Your LogiQ subscription is active - here's what to do next"
     )
+
+
+@patch("hook_handler.send_platform_email", return_value=(False, "smtp boom"))
+@patch("hook_handler.email_from_user_id", return_value="alice@example.com")
+@patch("hook_handler.member_user_ids", return_value=[USER_A])
+@patch("hook_handler.is_gmail_configured", return_value=True)
+@patch("hook_handler.rest_post")
+def test_send_subscription_confirmation_records_failure(
+    mock_audit: MagicMock,
+    mock_gmail: MagicMock,
+    mock_members: MagicMock,
+    mock_email_lookup: MagicMock,
+    mock_send: MagicMock,
+) -> None:
+    failures = send_subscription_confirmation(CLIENT_ID, "starter")
+    assert failures
+    assert any("alice@example.com" in f for f in failures)
+    mock_audit.assert_called()
+    assert mock_audit.call_args[0][0] == "audit_log"
+    entry = mock_audit.call_args[0][1]
+    assert entry["action_type"] == "subscription_email_failed"
+    assert entry["status"] == "failed"
+
+
+@patch("hook_handler.send_platform_email", side_effect=RuntimeError("network down"))
+@patch("hook_handler.email_from_user_id", return_value="alice@example.com")
+@patch("hook_handler.member_user_ids", return_value=[USER_A])
+@patch("hook_handler.is_gmail_configured", return_value=True)
+@patch("hook_handler.rest_post")
+def test_send_subscription_confirmation_exception_does_not_raise(
+    mock_audit: MagicMock,
+    mock_gmail: MagicMock,
+    mock_members: MagicMock,
+    mock_email_lookup: MagicMock,
+    mock_send: MagicMock,
+) -> None:
+    failures = send_subscription_confirmation(CLIENT_ID, "starter")
+    assert failures
+    assert any("network down" in f for f in failures)
+    mock_audit.assert_called()
+

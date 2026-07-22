@@ -9,6 +9,9 @@ from entitlements import get_entitlement
 from supabase_rest import client_id_from_user_id, rest_get, rest_patch_filter, rest_post
 from tiers import limits_for, upgrade_tier_for_agents
 
+# Must match workflow_create.py deployable agents (Phase 1).
+DEPLOYABLE_AGENTS = frozenset({"aria", "nova"})
+
 
 def count_active_agents(client_id: str) -> int:
     cid = (client_id or "").strip()
@@ -66,6 +69,7 @@ def activate_agent_for_user(user_id: str, agent_id: str) -> Tuple[int, Dict[str,
     """
     Activate an agent for the user's client if under tier limit.
     Returns (http_status, payload).
+    Only Phase-1 deployable agents (aria, nova) may be activated — matches workflow_create.
     """
     uid = (user_id or "").strip()
     aid = (agent_id or "").strip().lower()
@@ -73,6 +77,12 @@ def activate_agent_for_user(user_id: str, agent_id: str) -> Tuple[int, Dict[str,
         return 401, {"detail": "Authentication required", "error": "unauthenticated"}
     if not aid:
         return 400, {"detail": "agent_id is required"}
+    if aid not in DEPLOYABLE_AGENTS:
+        return 400, {
+            "detail": "agent_id must be aria or nova",
+            "error": "agent_not_deployable",
+            "agent_id": aid,
+        }
 
     try:
         client_id = client_id_from_user_id(uid)

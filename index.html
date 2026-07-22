@@ -1880,7 +1880,7 @@ async function acceptTos() {
 }
 
 function declineTos() {
-  doLogout('You must accept the Terms of Service to use Vision.');
+  doLogout('You must accept the Terms of Service to use LogiQ.');
 }
 
 async function finishAuthenticatedBoot() {
@@ -1974,7 +1974,7 @@ function renderBillingOnboardingStep() {
       <button type="button" class="skip-link" onclick="billingOnboardingSkip()">I'll do this later →</button>`;
   } else {
     inner += `
-      <h1>You're live on Vision</h1>
+      <h1>You're live on LogiQ</h1>
       <p class="sub">Your agents are ready. Head to your dashboard to see everything.</p>
       <button type="button" class="btn-billing" onclick="finishBillingOnboarding('dashboard')">Go to dashboard</button>`;
   }
@@ -6481,13 +6481,13 @@ async function sendAction(actionId, agentId) {
         return;
       }
       if (res.status === 503) {
-        toast('Gmail not configured — marked as sent locally');
-        await markActionSent(actionId, agentId);
+        toast('Gmail is not configured — email was not sent', 'error');
         const card = document.getElementById('qc-' + actionId);
         if (card?.querySelector('.queue-actions')) {
-          card.querySelector('.queue-actions').innerHTML = '<span style="color:var(--ok);font-size:12px;font-weight:500">✓ Sent (local)</span>';
+          card.querySelector('.queue-actions').innerHTML =
+            '<span style="color:var(--err);font-size:12px;font-weight:500">Send failed</span>' +
+            '<button class="btn-sm" style="margin-left:8px" onclick="sendAction(\'' + actionId + '\',\'' + agentId + '\')">Retry</button>';
         }
-        renderDashboard();
         return;
       }
       if (!res.ok) {

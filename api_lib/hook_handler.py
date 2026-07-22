@@ -2,15 +2,18 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import traceback
 from http.server import BaseHTTPRequestHandler
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, List, Tuple
 
 from gmail_send import is_gmail_configured, send_platform_email
 from entitlements import member_user_ids
-from supabase_rest import email_from_user_id
+from supabase_rest import email_from_user_id, rest_post
 from tiers import limits_for
+
+logger = logging.getLogger("logiq.subscription_email")
 
 WELCOME_SUBJECT = "Welcome to LogiQ - you're in."
 WELCOME_FROM_NAME = "Hamza at LogiQ"
@@ -73,13 +76,13 @@ def _first_name_from_email(email: str) -> str:
 def _subscription_body(first_name: str, tier_name: str, actions_limit: int) -> str:
     return f"""Hi {first_name},
 
-Your {tier_name} subscription is now active. Welcome properly — you're live on Vision.
+Your {tier_name} subscription is now active. Welcome properly — you're live on LogiQ.
 
 Here's what to do right now:
 
 1. Connect your Gmail — go to Integrations in your dashboard and connect your Google account. Takes 30 seconds and unlocks Aria and Nova immediately.
 
-2. Tell Blueprint AI what you want to automate — go to Build, describe your workflow in plain English, and Vision will build it for you.
+2. Tell Blueprint AI what you want to automate — go to Build, describe your workflow in plain English, and LogiQ will build it for you.
 
 3. Approve your first workflow — nothing runs until you say so. You're always in control.
 
@@ -125,28 +128,87 @@ def send_welcome_email(email: str, first_name: str = "") -> Tuple[bool, str]:
         return False, str(exc)
 
 
-def send_subscription_confirmation(client_id: str, tier: str) -> None:
+def _record_subscription_email_failure(
+    *,
+    client_id: str,
+    user_id: str,
+    email: str,
+    detail: str,
+) -> None:
+    """Persist failure for operator visibility (admin activity / audit_log)."""
+    entry: Dict[str, Any] = {
+        "client_id": client_id,
+        "user_id": user_id or None,
+        "agent": "Platform",
+        "action_type": "subscription_email_failed",
+        "status": "failed",
+        "metadata": {
+            "email": email,
+            "detail": str(detail)[:800],
+            "severity_note": "Checkout/webhook still succeeded; confirmation email did not send.",
+        },
+    }
+    try:
+        rest_post("audit_log", entry)
+    except Exception as exc:
+        logger.error(
+            "Failed to write audit_log for subscription email failure (client=%s): %s",
+            client_id,
+            exc,
+        )
+
+
+def send_subscription_confirmation(client_id: str, tier: str) -> List[str]:
+    """
+    Send subscription confirmation emails to all client members.
+    Returns a list of failure descriptions (empty on full success).
+    Never raises — callers (Stripe webhook) must still return HTTP 200.
+    """
+    failures: List[str] = []
     cid = (client_id or "").strip()
     tier_slug = (tier or "").strip().lower()
     if not cid or not tier_slug:
-        print(f"[subscription_email] Missing client_id or tier — skipping")
-        return
+        msg = "Missing client_id or tier — skipping subscription confirmation email"
+        logger.error("[subscription_email] %s", msg)
+        return [msg]
 
     if not is_gmail_configured():
-        print("[subscription_email] Gmail not configured — skipping confirmation email")
-        return
+        msg = f"Gmail not configured — confirmation email not sent for client {cid}"
+        logger.error("[subscription_email] %s", msg)
+        _record_subscription_email_failure(
+            client_id=cid,
+            user_id="",
+            email="",
+            detail=msg,
+        )
+        return [msg]
 
     tier_name = tier_slug.title()
     actions_limit = int(limits_for(tier_slug).get("actions") or 0)
     user_ids = member_user_ids(cid)
     if not user_ids:
-        print(f"[subscription_email] No members for client {cid} — skipping")
-        return
+        msg = f"No members for client {cid} — confirmation email not sent"
+        logger.error("[subscription_email] %s", msg)
+        _record_subscription_email_failure(
+            client_id=cid,
+            user_id="",
+            email="",
+            detail=msg,
+        )
+        return [msg]
 
     for user_id in user_ids:
         email = email_from_user_id(user_id)
         if not email:
-            print(f"[subscription_email] No email for user {user_id} — skipping")
+            msg = f"No email for user {user_id} — skipped"
+            logger.error("[subscription_email] %s", msg)
+            failures.append(msg)
+            _record_subscription_email_failure(
+                client_id=cid,
+                user_id=user_id,
+                email="",
+                detail=msg,
+            )
             continue
         first_name = _first_name_from_email(email)
         try:
@@ -157,11 +219,29 @@ def send_subscription_confirmation(client_id: str, tier: str) -> None:
                 from_name=WELCOME_FROM_NAME,
             )
             if ok:
-                print(f"[subscription_email] Sent to {email} (id={detail})")
+                logger.info("[subscription_email] Sent to %s (id=%s)", email, detail)
             else:
-                print(f"[subscription_email] Failed for {email}: {detail}")
+                msg = f"Send returned failure for {email}: {detail}"
+                logger.error("[subscription_email] %s", msg)
+                failures.append(msg)
+                _record_subscription_email_failure(
+                    client_id=cid,
+                    user_id=user_id,
+                    email=email,
+                    detail=str(detail),
+                )
         except Exception as exc:
-            print(f"[subscription_email] Error for {email}: {exc}")
+            msg = f"Exception sending to {email}: {exc}"
+            logger.error("[subscription_email] %s\n%s", msg, traceback.format_exc())
+            failures.append(msg)
+            _record_subscription_email_failure(
+                client_id=cid,
+                user_id=user_id,
+                email=email,
+                detail=str(exc),
+            )
+
+    return failures
 
 
 def json_response(handler: BaseHTTPRequestHandler, status: int, payload: Dict[str, Any]) -> None:
