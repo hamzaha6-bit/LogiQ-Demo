@@ -1370,13 +1370,13 @@ input[type=file].hidden-input { display: none; }
     </div>
     <div class="tos-body" id="tos-body">
       <h3>What the service is</h3>
-      <p>LogiQ Vision is an AI workforce platform that helps you automate business workflows using agents, integrations, and Blueprint AI. By using the service, you agree to these terms governing your access and use of the platform.</p>
+      <p>LogiQ is an AI workforce platform that helps you automate business workflows using agents, integrations, and Blueprint AI. By using the service, you agree to these terms governing your access and use of the platform.</p>
       <h3>Subscription and payment terms</h3>
       <p>Access to paid features requires an active subscription billed monthly through Stripe. Fees are charged in advance and are non-refundable except where required by law. We may change pricing with reasonable notice; continued use after a price change constitutes acceptance.</p>
       <h3>Acceptable use</h3>
-      <p>You must use LogiQ Vision lawfully and responsibly. You may not use the platform to send spam, distribute malware, harass others, violate third-party rights, or attempt to bypass usage limits or security controls. You are responsible for content sent through connected integrations such as Gmail.</p>
+      <p>You must use LogiQ lawfully and responsibly. You may not use the platform to send spam, distribute malware, harass others, violate third-party rights, or attempt to bypass usage limits or security controls. You are responsible for content sent through connected integrations such as Gmail.</p>
       <h3>Limitation of liability</h3>
-      <p>LogiQ Vision is provided &ldquo;as is&rdquo; to the fullest extent permitted by law. We are not liable for indirect, incidental, or consequential damages arising from your use of the service. Our total liability is limited to the amount you paid us in the twelve months before the claim.</p>
+      <p>LogiQ is provided &ldquo;as is&rdquo; to the fullest extent permitted by law. We are not liable for indirect, incidental, or consequential damages arising from your use of the service. Our total liability is limited to the amount you paid us in the twelve months before the claim.</p>
       <h3>How to cancel</h3>
       <p>You may cancel your subscription at any time from Settings &rarr; Manage subscription. Cancellation takes effect at the end of the current billing period. You may export your data before cancelling; we may delete account data after a reasonable retention period.</p>
       <p style="margin-top:16px"><a href="https://logiqops.co.uk/terms" target="_blank" rel="noopener noreferrer">Read full Terms of Service</a></p>
@@ -1880,7 +1880,7 @@ async function acceptTos() {
 }
 
 function declineTos() {
-  doLogout('You must accept the Terms of Service to use Vision.');
+  doLogout('You must accept the Terms of Service to use LogiQ.');
 }
 
 async function finishAuthenticatedBoot() {
@@ -1974,7 +1974,7 @@ function renderBillingOnboardingStep() {
       <button type="button" class="skip-link" onclick="billingOnboardingSkip()">I'll do this later →</button>`;
   } else {
     inner += `
-      <h1>You're live on Vision</h1>
+      <h1>You're live on LogiQ</h1>
       <p class="sub">Your agents are ready. Head to your dashboard to see everything.</p>
       <button type="button" class="btn-billing" onclick="finishBillingOnboarding('dashboard')">Go to dashboard</button>`;
   }
@@ -2530,6 +2530,24 @@ async function loadBillingStatus() {
   return billingStatus;
 }
 
+/** True only when entitlements.status is active — not when inactive zeros look like Enterprise unlimited. */
+function isSubActive() {
+  return (billingStatus?.status || '').toLowerCase() === 'active';
+}
+
+/**
+ * Format a numeric limit for display.
+ * Inactive: never show Unlimited/∞ (0 means no plan, not Enterprise).
+ * Active + 0: Enterprise unlimited sentinel.
+ */
+function displayLimit(n, unlimitedLabel = '∞') {
+  if (!isSubActive()) return '—';
+  const num = Number(n);
+  if (!Number.isFinite(num) || num < 0) return '—';
+  if (num === 0) return unlimitedLabel;
+  return num.toLocaleString();
+}
+
 async function logAuditEvent(agent, action_type, fields = {}) {
   try {
     await apiFetch('/api/audit/event', {
@@ -2692,8 +2710,10 @@ function showActionLimitToast(message) {
 
 async function canDeployMoreAgents() {
   await loadBillingStatus();
+  if (!isSubActive()) return false;
   const max = billingStatus?.limits?.max_agents;
-  if (max == null || max === 0) return true; // null/0 = unlimited when subscribed
+  // Active + 0 = Enterprise unlimited. Inactive already returned false above.
+  if (max == null || max === 0) return true;
   const active = [...deployedAgents.values()].filter(a => a.live !== false).length;
   return active < max;
 }
@@ -3453,8 +3473,12 @@ async function renderDashboard() {
   const pcts = billingStatus?.percentages || {};
   const actionsUsed = usage.actions_this_month || 0;
   const actionsLimit = limits.max_actions_month;
-  const actionsPct = pcts.actions || 0;
-  const planName = billingStatus?.plan_name || 'Starter';
+  const actionsPct = isSubActive() ? (pcts.actions || 0) : 0;
+  const actionsLimitLabel = displayLimit(actionsLimit, 'Unlimited');
+  const actionsQuotaLabel = isSubActive()
+    ? (actionsLimit ? 'of ' + Number(actionsLimit).toLocaleString() : 'Unlimited')
+    : 'No active plan';
+  const planName = isSubActive() ? (billingStatus?.plan_name || 'Starter') : 'Inactive';
   const nowLabel = new Date().toLocaleString('en-GB', { weekday:'short', day:'numeric', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit' });
   const agentsLine = workflowsStopped ? 'all agents paused' : (liveAgents.length + ' agents live');
 
@@ -3547,12 +3571,12 @@ async function renderDashboard() {
         <div class="mc-stat">
           <div class="mono-label">API calls today</div>
           <div class="mc-stat-value">${usage.api_calls_today || 0}</div>
-          <div class="mc-stat-delta">${limits.max_api_calls_day ? 'of ' + limits.max_api_calls_day : 'resets 00:00 UTC'}</div>
+          <div class="mc-stat-delta">${isSubActive() ? (limits.max_api_calls_day ? 'of ' + limits.max_api_calls_day : 'resets 00:00 UTC') : 'No active plan'}</div>
         </div>
         <div class="mc-stat">
           <div class="mono-label">Actions this month</div>
           <div class="mc-stat-value">${actionsUsed}</div>
-          <div class="mc-stat-delta">${actionsLimit ? 'of ' + actionsLimit.toLocaleString() : 'Unlimited'}</div>
+          <div class="mc-stat-delta">${actionsQuotaLabel}</div>
         </div>
         <div class="mc-stat">
           <div class="mono-label">Pending approvals</div>
@@ -3561,9 +3585,9 @@ async function renderDashboard() {
         </div>
         <div class="mc-stat">
           <div class="mono-label">Usage this month</div>
-          <div class="mc-stat-value">${actionsUsed}<span style="font-size:15px;color:rgba(22,21,26,.4);"> / ${actionsLimit || '∞'}</span></div>
+          <div class="mc-stat-value">${actionsUsed}<span style="font-size:15px;color:rgba(22,21,26,.4);"> / ${actionsLimitLabel === 'Unlimited' ? '∞' : actionsLimitLabel}</span></div>
           <div style="margin-top:12px;height:3px;background:rgba(22,21,26,.1);border-radius:2px;"><div style="width:${Math.min(100, actionsPct)}%;height:100%;background:#5B4BF5;border-radius:2px;"></div></div>
-          <div class="mc-stat-delta">${actionsPct}% of ${esc(planName)} allowance</div>
+          <div class="mc-stat-delta">${isSubActive() ? (actionsPct + '% of ' + esc(planName) + ' allowance') : 'Subscribe to unlock allowance'}</div>
         </div>
       </div>
       <div style="margin-top:44px;font-family:var(--font-mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:rgba(22,21,26,.45);border-top:2px solid #16151A;padding-top:16px;">Approval queue</div>
@@ -3745,6 +3769,9 @@ async function renderWorkforce() {
   ];
   const limit = billingStatus?.limits?.max_agents;
   const activeCount = [...deployedAgents.values()].filter(a => a.live !== false).length;
+  const agentsQuota = !isSubActive()
+    ? ''
+    : (limit ? ' / ' + limit : '');
   const cards = activatable.map(k => {
     const a = DEFAULT_AGENTS[k];
     const isLive = deployedAgents.has(a.id) && deployedAgents.get(a.id).live !== false;
@@ -3772,19 +3799,19 @@ async function renderWorkforce() {
   el.innerHTML = `
     <div class="mono-label" style="margin-bottom:10px;color:var(--brand)">Workforce</div>
     <div style="font-size:13px;color:var(--text2);margin-bottom:14px">
-      Active agents: ${activeCount}${limit ? ' / ' + limit : ''} · activate within your plan limit
+      Active agents: ${activeCount}${agentsQuota} · ${isSubActive() ? 'activate within your plan limit' : 'subscribe to activate agents'}
     </div>
     <div class="grid-3" style="margin-bottom:24px">
       ${cards}${soonCards}
     </div>
     <div class="card" style="max-width:700px">
       <div class="card-title">Usage this month</div>
-      <div class="progress-bar-wrap"><div class="progress-label"><span>Actions used</span><span>${(billingStatus?.usage?.actions_this_month||0).toLocaleString()} / ${billingStatus?.limits?.max_actions_month ? billingStatus.limits.max_actions_month.toLocaleString() : '∞'}</span></div>
-        <div class="progress-bar"><div class="progress-fill" style="width:${Math.min(100, billingStatus?.percentages?.actions||0)}%"></div></div></div>
-      <div class="progress-bar-wrap"><div class="progress-label"><span>API calls today</span><span>${billingStatus?.usage?.api_calls_today||0} / ${billingStatus?.limits?.max_api_calls_day||'∞'}</span></div>
-        <div class="progress-bar"><div class="progress-fill" style="width:${Math.min(100, billingStatus?.percentages?.api_calls||0)}%"></div></div></div>
-      <div class="progress-bar-wrap"><div class="progress-label"><span>Plan</span><span>${billingStatus?.plan_name||'Starter'}</span></div>
-        <div class="progress-bar"><div class="progress-fill" style="width:100%"></div></div></div>
+      <div class="progress-bar-wrap"><div class="progress-label"><span>Actions used</span><span>${(billingStatus?.usage?.actions_this_month||0).toLocaleString()} / ${displayLimit(billingStatus?.limits?.max_actions_month)}</span></div>
+        <div class="progress-bar"><div class="progress-fill" style="width:${isSubActive() ? Math.min(100, billingStatus?.percentages?.actions||0) : 0}%"></div></div></div>
+      <div class="progress-bar-wrap"><div class="progress-label"><span>API calls today</span><span>${billingStatus?.usage?.api_calls_today||0} / ${displayLimit(billingStatus?.limits?.max_api_calls_day)}</span></div>
+        <div class="progress-bar"><div class="progress-fill" style="width:${isSubActive() ? Math.min(100, billingStatus?.percentages?.api_calls||0) : 0}%"></div></div></div>
+      <div class="progress-bar-wrap"><div class="progress-label"><span>Plan</span><span>${isSubActive() ? (billingStatus?.plan_name||'Starter') : 'Inactive'}</span></div>
+        <div class="progress-bar"><div class="progress-fill" style="width:${isSubActive() ? 100 : 0}%"></div></div></div>
       <button class="btn-ghost" style="margin-top:8px" onclick="openBillingModal()">Manage billing</button>
     </div>`;
 }
@@ -4817,20 +4844,20 @@ async function openSettingsModal(tab) {
     body = `
       <div class="settings-row" style="margin-top:16px">
         <div class="settings-row-info">
-          <div class="settings-row-title">${esc(billingStatus?.plan_name || planMeta.name || 'No plan')} · ${esc(planMeta.price || '—')}/mo</div>
+          <div class="settings-row-title">${esc(hasActiveSub ? (billingStatus?.plan_name || planMeta.name || 'No plan') : 'Inactive')} · ${esc(hasActiveSub ? (planMeta.price || '—') : '—')}/mo</div>
           <div class="settings-row-desc">Your current subscription</div>
         </div>
       </div>
       <div class="settings-row">
         <div class="settings-row-info">
           <div class="settings-row-title">Actions this month</div>
-          <div class="settings-row-desc">${Number(actionsUsed).toLocaleString()} / ${actionsLimit ? Number(actionsLimit).toLocaleString() : '∞'}</div>
+          <div class="settings-row-desc">${Number(actionsUsed).toLocaleString()} / ${displayLimit(actionsLimit)}</div>
         </div>
       </div>
       <div class="settings-row">
         <div class="settings-row-info">
           <div class="settings-row-title">Spend this month</div>
-          <div class="settings-row-desc">${formatMoneyPence(spendUsed)} / ${spendCap ? formatMoneyPence(spendCap) : '∞'}</div>
+          <div class="settings-row-desc">${formatMoneyPence(spendUsed)} / ${isSubActive() ? (spendCap ? formatMoneyPence(spendCap) : '∞') : '—'}</div>
         </div>
       </div>
       <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px">
