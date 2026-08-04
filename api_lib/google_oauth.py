@@ -273,13 +273,21 @@ def list_messages(user_id: str, query: str = "", max_results: int = 10) -> Dict[
     if query:
         kwargs["q"] = query
     resp = service.users().messages().list(**kwargs).execute()
-    messages = resp.get("messages") or []
+    # Gmail returns newest-first; reverse so index 0 is oldest in this batch (fairness).
+    messages = list(reversed(resp.get("messages") or []))
+    results = [
+        {"message_id": m.get("id"), "thread_id": m.get("threadId")}
+        for m in messages
+        if m.get("id")
+    ]
     return {
         "query": query,
-        "message_ids": [m.get("id") for m in messages],
+        "message_ids": [r["message_id"] for r in results],
         "messages": messages,
-        "count": len(messages),
-        "result_size_estimate": resp.get("resultSizeEstimate", len(messages)),
+        "results": results,
+        "count": len(results),
+        "order": "oldest_first",
+        "result_size_estimate": resp.get("resultSizeEstimate", len(results)),
     }
 
 

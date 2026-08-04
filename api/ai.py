@@ -24,6 +24,11 @@ from blueprint_history import (
     normalize_agent_id,
     start_new_conversation,
 )
+from blueprint_plan import (
+    parse_blueprint_plan,
+    prepare_blueprint_response,
+    strip_plan_json,
+)
 from execution_gate import check_blueprint_chat_gate, record_allowed_action
 from http_auth import resolve_user_id
 from supabase_rest import client_id_from_user_id
@@ -52,13 +57,13 @@ PHASE 1 AGENTS: aria (sales/outreach — leads, follow-ups, Gmail) or nova (cust
 
 When the user describes what they want to automate:
 1. If their request CANNOT be built using only the primitives above, respond conversationally explaining what is not supported yet and suggest a nearby alternative using available primitives. Do NOT output JSON.
-2. If it CAN be built, respond with a brief friendly summary (2-3 sentences), then output a JSON block on its own line wrapped in ```json fences:
+2. If it CAN be built, respond with a brief friendly summary (2-3 sentences in plain English — no step codes, no template variables, no param names), then output a JSON block on its own line wrapped in ```json fences. The JSON is for the execution engine only; the user never sees it.
 
 ```json
 {{
   "supported": true,
   "title": "Short workflow name",
-  "summary": "What this workflow accomplishes",
+  "summary": "What this workflow accomplishes, including that it processes one item per run",
   "agent": "aria" or "nova",
   "steps": [
     {{
@@ -77,12 +82,17 @@ Rules:
 - For steps that send email (GM-03, GM-04), include params: {{ "to", "subject", "body" }} with realistic draft content.
 - For draft email (GM-05), include params: {{ "to", "subject", "body" }}.
 - For search (GM-07), include structured params like {{ "from", "subject", "after", "before", "has_attachment", "query", "max_results" }}.
+- Inter-step templates MUST use this exact shape: {{{{step_N.output.field}}}} or nested paths like {{{{step_1.output.results.0.message_id}}}}. Never invent other template syntax.
+- The workflow engine does NOT fan out over arrays — each step runs once. After GM-07/GM-01, always bind later steps to the first result only, e.g. message_id: "{{{{step_1.output.results.0.message_id}}}}".
+- Search results are ordered oldest-first for fairness (process the oldest match first).
+- For franchise / enquiry inbox workflows (or similar labelling loops), GM-07 query MUST exclude already-processed mail, e.g. query: (franchise OR franchising OR "become a franchisee" OR "franchise opportunity") -label:"Franchise Enquiry"
+- Franchise Enquiry Auto-Response (and similar): prefer nova; title like "Franchise Enquiry Auto-Response"; summary must state plainly that it processes one enquiry per run (not real-time / not all-at-once). Typical flow: GM-07 search → GM-02 read first result → GM-03/GM-04 acknowledgement (approval) → GM-06 label → GS-02 log row → GM-05 follow-up draft.
 - For read message (GM-02) use {{ "message_id" }}; for get thread (GM-08) use {{ "thread_id" }}; for label (GM-06) use {{ "message_id", "add_labels", "remove_labels" }}.
 - For Sheets steps, always include params.url (Google Sheets URL). GS-02 needs row/row_data; GS-03 needs row + row_data; GS-06 needs row; GS-07 needs cell (A1) + value.
 - For calendar: GC-01 needs time_min/time_max; GC-02 needs optional time range; GC-03/GC-06 need title, start, end (ISO); GC-06 also needs attendees[]; GC-04/GC-05 need event_id.
 - Prefer 2–6 steps. Be practical, not generic.
 - Tone: warm, concise, colleague-like — not a form or checklist.
-- Never mention internal codes to the user in prose; codes belong only in JSON."""
+- Never mention internal codes, template variables, or raw JSON fields to the user in prose; codes belong only in the JSON block."""
 
 
 def _response_text(response) -> str:
@@ -153,6 +163,28 @@ class handler(BaseHTTPRequestHandler):
         if payload.get("error") == "invalid_agent":
             self._json(400, {"detail": "agent_id must be one of aria, nova, finn, zara, cleo"})
             return
+        # Never leak raw execution JSON into the chat UI; attach plan separately when present.
+        safe_messages = []
+        latest_plan = None
+        for msg in payload.get("messages") or []:
+            raw = str(msg.get("content") or "")
+            plan = parse_blueprint_plan(raw) if msg.get("role") == "assistant" else None
+            if plan:
+                user_content, enriched, _err = prepare_blueprint_response(raw)
+                entry = dict(msg)
+                entry["content"] = user_content
+                if enriched:
+                    entry["plan"] = enriched
+                    latest_plan = enriched
+                safe_messages.append(entry)
+            else:
+                entry = dict(msg)
+                if msg.get("role") == "assistant":
+                    entry["content"] = strip_plan_json(raw) or raw
+                safe_messages.append(entry)
+        payload["messages"] = safe_messages
+        if latest_plan:
+            payload["plan"] = latest_plan
         self._json(200, payload)
 
     def _blueprint_new(self):
@@ -262,15 +294,25 @@ class handler(BaseHTTPRequestHandler):
                 system=system,
                 messages=claude_messages,
             )
-            content = _response_text(response)
+            raw_content = _response_text(response)
+            # Persist the full model output (incl. execution JSON) for Claude continuity.
+            # Return only user-facing text + a separate plan field for approve/create.
+            user_content, plan, plan_err = prepare_blueprint_response(raw_content)
+            if plan_err and not plan:
+                user_content = (
+                    strip_plan_json(raw_content)
+                    or "I couldn't build that workflow yet — "
+                    + plan_err
+                    + ". Try rephrasing or ask for something Gmail, Sheets, or Calendar can do."
+                )
 
-            if conversation_id and persist_client_id and content:
+            if conversation_id and persist_client_id and raw_content:
                 _, asst_err = append_message(
                     conversation_id=conversation_id,
                     user_id=user_id,
                     agent_id=agent_id,
                     role="assistant",
-                    content=content,
+                    content=raw_content,
                     client_id=persist_client_id,
                 )
                 if asst_err:
@@ -279,15 +321,15 @@ class handler(BaseHTTPRequestHandler):
             if not gate.free_preview:
                 record_allowed_action(gate.client_id, "blueprint_chat")
             record_api_call(user_id)
-            self._json(
-                200,
-                {
-                    "content": content,
-                    "conversation_id": conversation_id or None,
-                    "agent_id": agent_id,
-                    "free_preview": gate.free_preview,
-                },
-            )
+            payload = {
+                "content": user_content,
+                "conversation_id": conversation_id or None,
+                "agent_id": agent_id,
+                "free_preview": gate.free_preview,
+            }
+            if plan:
+                payload["plan"] = plan
+            self._json(200, payload)
         except anthropic.APIError as exc:
             _log(f"chat Anthropic APIError: {exc}")
             self._json(502, {"detail": str(exc)})
