@@ -379,6 +379,10 @@ a:hover { color: var(--text); }
 .blueprint-plan-header { margin-bottom: 16px; }
 .blueprint-plan-header h3 { font-size: 16px; font-weight: 700; margin-bottom: 4px; }
 .blueprint-plan-header p { font-size: 13px; color: var(--text2); line-height: 1.5; }
+.blueprint-summary-body { font-size: 14px; color: var(--text); line-height: 1.65; white-space: pre-wrap; margin-bottom: 18px; }
+.blueprint-summary-body ol { margin: 10px 0 0; padding-left: 1.25em; }
+.blueprint-summary-body li { margin: 6px 0; }
+.blueprint-summary-callout { color: #B45309; font-weight: 600; }
 .blueprint-steps { display: flex; flex-direction: column; gap: 10px; margin-bottom: 18px; }
 .blueprint-step {
   display: grid; grid-template-columns: 36px 1fr auto; gap: 12px; align-items: start;
@@ -2945,13 +2949,13 @@ PHASE 1 AGENTS: aria (sales/outreach — leads, follow-ups, Gmail) or nova (cust
 
 When the user describes what they want to automate:
 1. If their request CANNOT be built using only the primitives above, respond conversationally explaining what is not supported yet and suggest a nearby alternative using available primitives. Do NOT output JSON.
-2. If it CAN be built, respond with a brief friendly summary (2-3 sentences), then output a JSON block on its own line wrapped in \`\`\`json fences:
+2. If it CAN be built, respond with a brief friendly summary (2-3 sentences in plain English — no step codes, no template variables), then output a JSON block on its own line wrapped in \`\`\`json fences. The JSON is for the execution engine only; the user never sees it.
 
 \`\`\`json
 {
   "supported": true,
   "title": "Short workflow name",
-  "summary": "What this workflow accomplishes",
+  "summary": "What this workflow accomplishes, including that it processes one item per run",
   "agent": "aria" or "nova",
   "steps": [
     {
@@ -2970,12 +2974,15 @@ Rules:
 - For steps that send email (GM-03, GM-04), include params: { "to", "subject", "body" } with realistic draft content.
 - For draft email (GM-05), include params: { "to", "subject", "body" }.
 - For search (GM-07), include structured params like { "from", "subject", "after", "before", "has_attachment", "query", "max_results" }.
+- Inter-step templates MUST use {{step_N.output.field}} or nested paths like {{step_1.output.results.0.message_id}}. The engine does NOT fan out over arrays — bind later steps to the first result only.
+- Search results are oldest-first. After GM-07, use message_id: "{{step_1.output.results.0.message_id}}".
+- For franchise / enquiry inbox workflows, GM-07 query MUST exclude already-processed mail, e.g. (franchise OR franchising OR "become a franchisee" OR "franchise opportunity") -label:"Franchise Enquiry". Prefer nova; summary must state one enquiry per run.
 - For read message (GM-02) use { "message_id" }; for get thread (GM-08) use { "thread_id" }; for label (GM-06) use { "message_id", "add_labels", "remove_labels" }.
 - For Sheets steps, always include params.url (Google Sheets URL). GS-02 needs row/row_data; GS-03 needs row + row_data; GS-06 needs row; GS-07 needs cell (A1) + value.
 - For calendar: GC-01 needs time_min/time_max; GC-02 needs optional time range; GC-03/GC-06 need title, start, end (ISO); GC-06 also needs attendees[]; GC-04/GC-05 need event_id.
 - Prefer 2–6 steps. Be practical, not generic.
 - Tone: warm, concise, colleague-like — not a form or checklist.
-- Never mention internal codes to the user in prose; codes belong only in JSON.`;
+- Never mention internal codes, template variables, or raw JSON fields to the user in prose; codes belong only in the JSON block.`;
 }
 
 const BLUEPRINT_PROMPT = buildBlueprintSystemPrompt();
@@ -3415,7 +3422,9 @@ async function callClaude(system, messages, maxTokens = 1200, opts = {}) {
   backendAvailable = true;
   const data = await safeJson(res, {});
   if (data.conversation_id) blueprintConversationId = data.conversation_id;
-  return data.content || '';
+  const content = data.content || '';
+  if (opts.returnFull) return { content, plan: data.plan || null };
+  return content;
 }
 
 function parseJSON(text) {
@@ -3520,7 +3529,14 @@ async function renderDashboard() {
   const approvalCards = [
     ...pendingWf.map(a => {
       const agent = deployedAgents.get(a.agent_id);
-      const payload = typeof a.payload === 'string' ? a.payload : formatApprovalPayload(a.payload, a.primitive_code);
+      const labelMeta = {
+        description: a.summary,
+        summary: a.summary,
+        action_name: a.action_name,
+        integration: a.integration,
+        code: a.primitive_code,
+      };
+      const payload = typeof a.payload === 'string' ? a.payload : formatApprovalPayload(a.payload, a.primitive_code, labelMeta);
       return approvalCard({
         id: 'wf-' + a.id,
         agentTag: (agent?.name || a.agent_id) + ' · ' + (a.action_name || a.integration || 'Workflow'),
@@ -3528,7 +3544,7 @@ async function renderDashboard() {
         title: a.summary || a.action_name || 'Workflow action awaiting approval',
         to: (a.payload && (a.payload.to || a.payload.email)) || '—',
         channel: a.integration || '—',
-        trigger: (a.primitive_code || '') + (a.step_number != null ? ' · Step ' + a.step_number : ''),
+        trigger: plainApprovalLabel(labelMeta),
         draft: payload,
         approveFn: "approveWorkflowApproval('" + a.id + "')",
         denyFn: "rejectWorkflowApproval('" + a.id + "')",
@@ -4113,6 +4129,53 @@ function renderBuild() {
   loadBlueprintHistory(blueprintSelectedAgent);
 }
 
+function stripBlueprintPlanJson(text) {
+  let raw = String(text || '');
+  raw = raw.replace(/```(?:json)?\s*[\s\S]*?```/gi, '');
+  raw = raw.replace(/\{[\s\S]*"supported"[\s\S]*\}/g, '');
+  return raw.replace(/\n{3,}/g, '\n\n').trim();
+}
+
+function blueprintStepCallout(step) {
+  const code = String(step.code || '').toUpperCase();
+  if (code === 'GM-03' || code === 'GM-04') return ' (needs your approval)';
+  if (code === 'GS-06' || code === 'GC-05' || code === 'GC-06') return ' (needs your approval)';
+  if (code === 'GS-02' || code === 'GS-03' || code === 'GS-07') {
+    const url = String(step.params?.url || step.params?.sheet_url || '');
+    if (!/docs\.google\.com\/spreadsheets/i.test(url)) return ' (needs your spreadsheet link)';
+  }
+  return '';
+}
+
+function buildBlueprintSummaryHtml(plan) {
+  const agent = deployedAgents.get(plan.agent);
+  const agentLabel = agent ? agent.name : (plan.agent === 'nova' ? 'Nova' : 'Aria');
+  const title = plan.title || 'Workflow plan';
+  const steps = Array.isArray(plan.steps) ? plan.steps : [];
+  const items = steps.map(s => {
+    let desc = String(s.description || s.name || 'Complete this step').trim();
+    desc = desc.replace(/\b(?:GM|GS|GC)-\d{2}\b/g, '').replace(/\{\{[^}]+\}\}/g, '');
+    desc = desc.replace(/\s{2,}/g, ' ').replace(/^[\s\-–—:]+/, '');
+    if (desc) desc = desc.charAt(0).toUpperCase() + desc.slice(1);
+    const callout = blueprintStepCallout(s);
+    const calloutHtml = callout
+      ? `<span class="blueprint-summary-callout">${esc(callout)}</span>`
+      : '';
+    return `<li>${esc(desc)}${calloutHtml}</li>`;
+  }).join('');
+  const footer = 'I\'ll process one matching item at a time. If several come in, I\'ll work through them one per run.';
+  return `
+    <div class="blueprint-plan-header">
+      <h3>${esc(title)} <span style="font-weight:500;color:var(--text2)">(via ${esc(agentLabel)})</span></h3>
+      ${plan.summary ? `<p>${esc(String(plan.summary).replace(/\b(?:GM|GS|GC)-\d{2}\b/g, '').replace(/\{\{[^}]+\}\}/g, '').trim())}</p>` : ''}
+    </div>
+    <div class="blueprint-summary-body">
+      <div>Here's what I'll do:</div>
+      <ol>${items}</ol>
+      <p style="margin-top:14px;color:var(--text2)">${esc(footer)}</p>
+    </div>`;
+}
+
 async function loadBlueprintHistory(agentId) {
   const aid = (agentId || blueprintSelectedAgent || 'aria').toLowerCase();
   const box = document.getElementById('build-messages');
@@ -4120,8 +4183,9 @@ async function loadBlueprintHistory(agentId) {
   if (!getAuthBearerToken()) {
     blueprintHistory = [];
     blueprintConversationId = null;
+    blueprintPlan = null;
     box.innerHTML = '';
-    addBuildMsg('assistant', 'Hi — tell me what you\'d like to automate. I\'ll map it to a workflow using Gmail, Google Sheets, and Calendar, then show you the plan before anything runs.');
+    addBuildMsg('assistant', 'Hi — tell me what you\'d like to automate. I\'ll map it to a workflow using Gmail, Sheets, and Calendar, then show you the plan before anything runs.');
     return;
   }
   if (blueprintHistoryLoading) return;
@@ -4137,15 +4201,34 @@ async function loadBlueprintHistory(agentId) {
       content: String(m.content || ''),
     }));
     box.innerHTML = '';
+    blueprintPlan = null;
     if (!blueprintHistory.length) {
-      addBuildMsg('assistant', 'Hi — tell me what you\'d like to automate. I\'ll map it to a workflow using Gmail, Google Sheets, and Calendar, then show you the plan before anything runs.');
+      addBuildMsg('assistant', 'Hi — tell me what you\'d like to automate. I\'ll map it to a workflow using Gmail, Sheets, and Calendar, then show you the plan before anything runs.');
     } else {
-      blueprintHistory.forEach(m => addBuildMsg(m.role, m.content));
+      let restorePlan = null;
+      msgs.forEach(m => {
+        const role = m.role === 'assistant' ? 'assistant' : 'user';
+        if (role === 'assistant' && m.plan) {
+          restorePlan = m.plan;
+          // Shown via the review card, not as a text bubble.
+          return;
+        }
+        if (role === 'assistant') restorePlan = null;
+        addBuildMsg(role, String(m.content || ''));
+      });
+      if (restorePlan) {
+        restorePlan.steps = enrichBlueprintSteps(restorePlan.steps || []);
+        const err = validateBlueprintPlan(restorePlan);
+        if (!err) {
+          blueprintPlan = restorePlan;
+          renderBlueprintPlanReview(restorePlan);
+        }
+      }
     }
   } catch (e) {
     console.warn('[blueprint] history load failed:', e);
     if (!box.children.length) {
-      addBuildMsg('assistant', 'Hi — tell me what you\'d like to automate. I\'ll map it to a workflow using Gmail, Google Sheets, and Calendar, then show you the plan before anything runs.');
+      addBuildMsg('assistant', 'Hi — tell me what you\'d like to automate. I\'ll map it to a workflow using Gmail, Sheets, and Calendar, then show you the plan before anything runs.');
     }
   } finally {
     blueprintHistoryLoading = false;
@@ -4228,12 +4311,13 @@ async function sendBuild() {
 
   if (btn) btn.disabled = true;
   try {
-    const reply = await callClaude(buildBlueprintSystemPrompt(), blueprintHistory, 2200, {
+    const result = await callClaude(buildBlueprintSystemPrompt(), blueprintHistory, 2200, {
       agent_id: blueprintSelectedAgent,
       conversation_id: blueprintConversationId,
+      returnFull: true,
     });
     document.getElementById('build-typing')?.remove();
-    await handleBlueprintReply(reply);
+    await handleBlueprintReply(result.content || '', result.plan || null);
   } catch (e) {
     document.getElementById('build-typing')?.remove();
     // Roll back optimistic user turn if the server rejected (e.g. free preview).
@@ -4248,45 +4332,35 @@ async function sendBuild() {
   }
 }
 
-async function handleBlueprintReply(reply) {
-  blueprintHistory.push({ role: 'assistant', content: reply });
-  const plan = parseBlueprintPlan(reply);
-  const prose = reply.replace(/```(?:json)?[\s\S]*?```/g, '').trim();
-
-  if (!plan) {
-    if (prose) addBuildMsg('assistant', prose);
+async function handleBlueprintReply(reply, serverPlan) {
+  // Client history stores user-facing text only — never raw execution JSON.
+  const displayText = stripBlueprintPlanJson(reply);
+  let plan = serverPlan || parseBlueprintPlan(reply);
+  if (plan) {
+    plan.agent = (plan.agent || blueprintSelectedAgent || 'aria').toLowerCase();
+    plan.steps = enrichBlueprintSteps(plan.steps);
+    const err = validateBlueprintPlan(plan);
+    if (err) {
+      const msg = displayText || ('I couldn\'t build that workflow yet — ' + err + '. Try rephrasing or ask for something Gmail, Sheets, or Calendar can do.');
+      blueprintHistory.push({ role: 'assistant', content: msg });
+      addBuildMsg('assistant', msg);
+      return;
+    }
+    blueprintPlan = plan;
+    // Persist display text for local history; render the card once (no duplicate bubble).
+    blueprintHistory.push({ role: 'assistant', content: displayText || (plan.title || 'Workflow plan') });
+    renderBlueprintPlanReview(plan);
     return;
   }
 
-  plan.agent = (plan.agent || blueprintSelectedAgent || 'aria').toLowerCase();
-  plan.steps = enrichBlueprintSteps(plan.steps);
-  const err = validateBlueprintPlan(plan);
-  if (err) {
-    addBuildMsg('assistant', 'I couldn\'t build that workflow yet — ' + err + '. Try rephrasing or ask for something Gmail, Sheets, or Calendar can do.');
-    return;
-  }
-
-  blueprintPlan = plan;
-  if (prose) addBuildMsg('assistant', prose);
-  renderBlueprintPlanReview(plan);
+  blueprintHistory.push({ role: 'assistant', content: displayText || reply });
+  if (displayText || reply) addBuildMsg('assistant', displayText || reply);
 }
 
 function renderBlueprintPlanReview(plan) {
   const box = document.getElementById('build-messages');
   if (!box) return;
-  const agent = deployedAgents.get(plan.agent);
-  const agentLabel = agent ? agent.name : (plan.agent === 'nova' ? 'Nova' : 'Aria');
-
-  const stepsHtml = plan.steps.map(s => `
-    <div class="blueprint-step${s.requires_approval ? ' approval-required' : ''}">
-      <div class="step-num">${s.step}</div>
-      <div>
-        <div class="step-title">${esc(s.name)}</div>
-        <div class="step-meta">${esc(s.code)} · ${esc(s.integration)}</div>
-        <div class="step-desc">${esc(s.description)}</div>
-      </div>
-      <span class="step-badge ${s.requires_approval ? 'approval' : 'auto'}">${s.requires_approval ? 'Needs approval' : 'Automatic'}</span>
-    </div>`).join('');
+  document.getElementById('blueprint-plan-review')?.remove();
 
   const wrap = document.createElement('div');
   wrap.className = 'chat-msg';
@@ -4295,11 +4369,7 @@ function renderBlueprintPlanReview(plan) {
     <div class="chat-avatar">Q</div>
     <div class="chat-bubble wide">
       <div class="blueprint-plan">
-        <div class="blueprint-plan-header">
-          <h3>${esc(plan.title || 'Workflow plan')}</h3>
-          <p>${esc(plan.summary || '')} · Assigned to <strong>${esc(agentLabel)}</strong></p>
-        </div>
-        <div class="blueprint-steps">${stepsHtml}</div>
+        ${buildBlueprintSummaryHtml(plan)}
         <div class="blueprint-schedule">
           <label for="blueprint-schedule-freq">Run schedule</label>
           <div class="blueprint-schedule-row">
@@ -4326,8 +4396,9 @@ function renderBlueprintPlanReview(plan) {
           <p class="blueprint-schedule-hint">Times are UTC. Recurring workflows run automatically via the scheduler.</p>
         </div>
         <div class="blueprint-plan-actions">
-          <button class="btn-primary" onclick="deployBlueprintPlan()">Approve and deploy</button>
+          <button class="btn-primary" onclick="deployBlueprintPlan()">Approve</button>
           <button class="btn-ghost" onclick="editBlueprintPlan()">Edit</button>
+          <button class="btn-ghost" onclick="cancelBlueprintPlan()">Cancel</button>
         </div>
       </div>
     </div>`;
@@ -4376,6 +4447,12 @@ function editBlueprintPlan() {
   blueprintPlan = null;
   addBuildMsg('assistant', 'No problem — describe what you\'d like to change and I\'ll revise the plan.');
   document.getElementById('build-input')?.focus();
+}
+
+function cancelBlueprintPlan() {
+  document.getElementById('blueprint-plan-review')?.remove();
+  blueprintPlan = null;
+  addBuildMsg('assistant', 'Cancelled — that plan won\'t be deployed. Tell me whenever you want to try something else.');
 }
 
 async function deployBlueprintPlan() {
@@ -4485,6 +4562,10 @@ async function runWorkflow(workflowId) {
       toast('Approval needed — check your dashboard');
       return;
     }
+    if (data.status === 'completed_empty') {
+      toast(data.detail || 'Nothing to process this run', 'success');
+      return;
+    }
     if (data.status === 'completed') {
       toast('Workflow completed', 'success');
     }
@@ -4522,15 +4603,94 @@ async function createWorkflowApproval(workflow, step) {
   });
 }
 
-function formatApprovalPayload(payload, code) {
+/** Mirror of api_lib/blueprint_plan.py sanitize / approval label helpers. */
+const STEP_CODE_RE = /\b(?:GM|GS|GC)-\d{2}\b/g;
+const TEMPLATE_VAR_RE = /\{\{[^}]+\}\}/g;
+const CALENDAR_FIELD_LABELS = {
+  title: 'Title', summary: 'Title', start: 'Starts', end: 'Ends',
+  start_time: 'Starts', end_time: 'Ends', attendees: 'Attendees', to: 'Attendees',
+  location: 'Location', description: 'Details', event_id: 'Event',
+};
+
+function sanitizeUserFacingText(text) {
+  let s = text == null ? '' : String(text);
+  s = s.replace(STEP_CODE_RE, '').replace(TEMPLATE_VAR_RE, '');
+  s = s.replace(/\s{2,}/g, ' ').replace(/^[\s\-–—:]+|[\s\-–—:]+$/g, '').trim();
+  return s;
+}
+
+function capitalizeSentence(text) {
+  if (!text) return text;
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+function plainApprovalLabel(opts) {
+  const o = opts || {};
+  const code = String(o.code || o.primitive_code || '').toUpperCase();
+  const meta = ACTION_REGISTRY[code] || {};
+  for (const c of [o.description, o.summary]) {
+    const label = capitalizeSentence(sanitizeUserFacingText(c));
+    if (label) return label;
+  }
+  for (const c of [o.action_name, o.name, meta.name]) {
+    const label = capitalizeSentence(sanitizeUserFacingText(c));
+    if (label) return label;
+  }
+  return genericRunSentence({
+    integration: o.integration || meta.integration,
+    action_name: null,
+    code,
+  });
+}
+
+function genericRunSentence(opts) {
+  const o = opts || {};
+  const code = String(o.code || '').toUpperCase();
+  const meta = ACTION_REGISTRY[code] || {};
+  const agent = sanitizeUserFacingText(o.integration || meta.integration || '');
+  const action = sanitizeUserFacingText(o.action_name || meta.name || '');
+  if (agent && action) return 'This step will run: ' + agent + ' · ' + action;
+  if (action) return 'This step will run: ' + action;
+  if (agent) return 'This step will run via ' + agent;
+  return 'This step needs your approval before it runs.';
+}
+
+function formatCalendarApprovalPayload(payload) {
+  const lines = [];
+  const seen = {};
+  Object.keys(CALENDAR_FIELD_LABELS).forEach(key => {
+    if (!(key in payload) || seen[key]) return;
+    seen[key] = true;
+    const val = sanitizeUserFacingText(payload[key]);
+    if (!val) return;
+    lines.push(CALENDAR_FIELD_LABELS[key] + ': ' + val);
+  });
+  return lines.join('\n');
+}
+
+function formatApprovalPayload(payload, code, meta) {
+  meta = meta || {};
   if (!payload || !Object.keys(payload).length) return 'No preview available';
-  if (code === 'GM-03' || code === 'GM-04') {
-    return `To: ${payload.to || '—'}\nSubject: ${payload.subject || '—'}\n\n${payload.body || ''}`;
+  const codeU = String(code || '').toUpperCase();
+  if (codeU === 'GM-03' || codeU === 'GM-04') {
+    return 'To: ' + (sanitizeUserFacingText(payload.to) || '—')
+      + '\nSubject: ' + (sanitizeUserFacingText(payload.subject) || '—')
+      + '\n\n' + (sanitizeUserFacingText(payload.body) || '');
   }
-  if (code.startsWith('GC-')) {
-    return Object.entries(payload).map(([k, v]) => `${k}: ${v}`).join('\n');
+  if (codeU.startsWith('GC-')) {
+    const calendarText = formatCalendarApprovalPayload(payload);
+    if (calendarText) return calendarText;
   }
-  return JSON.stringify(payload, null, 2);
+  // Generic-safe fallback — never JSON.stringify in user-visible approval UI.
+  for (const c of [meta.description, meta.summary]) {
+    const label = capitalizeSentence(sanitizeUserFacingText(c));
+    if (label) return label;
+  }
+  return genericRunSentence({
+    integration: meta.integration,
+    action_name: meta.action_name,
+    code: codeU,
+  });
 }
 
 async function expireStaleApprovals() {

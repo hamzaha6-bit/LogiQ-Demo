@@ -42,7 +42,12 @@ from sheets_service import (
     write_row,
 )
 from supabase_rest import client_id_from_user_id, rest_get, rest_patch, rest_post
-from workflow_context import empty_context, resolved_params_copy, set_step_output
+from workflow_context import (
+    empty_context,
+    is_missing_upstream_id,
+    resolve_params_with_meta,
+    set_step_output,
+)
 from workflow_scheduler import compute_next_run, parse_schedule
 
 
@@ -412,6 +417,27 @@ def _finish_workflow_schedule(wf: Dict[str, Any], wid: str) -> None:
     _update_workflow_run_times(wid, last_run_at=_now_iso(), next_run_at=next_iso)
 
 
+def _finish_empty_run(
+    *,
+    wf: Dict[str, Any],
+    wid: str,
+    run_id: str,
+    context: Dict[str, Any],
+    step_num: int,
+    detail: str,
+) -> Tuple[int, Dict[str, Any]]:
+    """Clean exit when a prior search/list produced nothing to process."""
+    _save_run(run_id, context=context, status="completed", completed=True)
+    _finish_workflow_schedule(wf, wid)
+    return 200, {
+        "status": "completed_empty",
+        "workflow_id": wid,
+        "workflow_run_id": run_id,
+        "step": step_num,
+        "detail": detail,
+    }
+
+
 def _run_steps(
     *,
     wf: Dict[str, Any],
@@ -433,7 +459,19 @@ def _run_steps(
         elif step_num <= start_after_step:
             continue
 
-        resolved = resolved_params_copy(step.get("params") or {}, context)
+        resolved, had_empty_ref = resolve_params_with_meta(step.get("params") or {}, context)
+        code = (step.get("code") or "").strip().upper()
+
+        # Engine does not fan-out over arrays; empty upstream ids → clean no-op exit.
+        if is_missing_upstream_id(code, resolved if isinstance(resolved, dict) else {}, had_empty_ref=had_empty_ref):
+            return _finish_empty_run(
+                wf=wf,
+                wid=wid,
+                run_id=run_id,
+                context=context,
+                step_num=step_num,
+                detail="Nothing to process — prior search returned no matches",
+            )
 
         if step.get("requires_approval"):
             _create_approval(
@@ -495,6 +533,17 @@ def _run_steps(
                 "status": "completed",
             },
         )
+
+        # After an empty Gmail search/list, stop before downstream steps error on null ids.
+        if code in ("GM-01", "GM-07") and int((output or {}).get("count") or 0) == 0:
+            return _finish_empty_run(
+                wf=wf,
+                wid=wid,
+                run_id=run_id,
+                context=context,
+                step_num=step_num,
+                detail="No matching messages",
+            )
 
     _save_run(run_id, context=context, status="completed", completed=True)
     _finish_workflow_schedule(wf, wid)

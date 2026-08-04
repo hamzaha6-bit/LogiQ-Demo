@@ -67,7 +67,9 @@ def test_gm07_search_builds_query_and_lists():
             user_id="u1", agent_id="aria", agent_name="Aria",
         )
     assert out["count"] == 2
-    assert out["message_ids"] == ["m1", "m2"]
+    assert out["message_ids"] == ["m2", "m1"]  # oldest-first (Gmail list is newest-first)
+    assert out["results"][0]["message_id"] == "m2"
+    assert out["order"] == "oldest_first"
     assert "from:billing@acme.com" in out["built_query"]
     assert "subject:invoice" in out["built_query"]
 

@@ -26,11 +26,11 @@ def test_resolve_simple_field():
     assert resolved["body"] == "Invoice INV-42 is overdue."
 
 
-def test_unresolved_template_left_as_is():
+def test_unresolved_template_resolves_empty():
     ctx = empty_context()
     warnings = []
     resolved = resolve_params({"to": "{{step_9.output.email}}"}, ctx, warnings)
-    assert resolved["to"] == "{{step_9.output.email}}"
+    assert resolved["to"] == ""
     assert warnings
 
 
@@ -39,3 +39,10 @@ def test_resolve_nested_rows():
     set_step_output(ctx, 1, {"rows": [{"email": "first@example.com"}]})
     resolved = resolve_params({"to": "{{step_1.output.rows.0.email}}"}, ctx)
     assert resolved["to"] == "first@example.com"
+
+
+def test_resolve_results_zero_message_id():
+    ctx = empty_context()
+    set_step_output(ctx, 1, {"results": [{"message_id": "m-old"}, {"message_id": "m-new"}]})
+    resolved = resolve_params({"message_id": "{{step_1.output.results.0.message_id}}"}, ctx)
+    assert resolved["message_id"] == "m-old"
