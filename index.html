@@ -3535,7 +3535,7 @@ async function renderDashboard() {
         title: a.summary || a.action_name || 'Workflow action awaiting approval',
         to: (a.payload && (a.payload.to || a.payload.email)) || '—',
         channel: a.integration || '—',
-        trigger: (a.primitive_code || '') + (a.step_number != null ? ' · Step ' + a.step_number : ''),
+        trigger: plainApprovalLabel(labelMeta),
         draft: payload,
         approveFn: "approveWorkflowApproval('" + a.id + "')",
         denyFn: "rejectWorkflowApproval('" + a.id + "')",
