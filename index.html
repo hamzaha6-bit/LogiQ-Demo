@@ -3520,7 +3520,14 @@ async function renderDashboard() {
   const approvalCards = [
     ...pendingWf.map(a => {
       const agent = deployedAgents.get(a.agent_id);
-      const payload = typeof a.payload === 'string' ? a.payload : formatApprovalPayload(a.payload, a.primitive_code);
+      const labelMeta = {
+        description: a.summary,
+        summary: a.summary,
+        action_name: a.action_name,
+        integration: a.integration,
+        code: a.primitive_code,
+      };
+      const payload = typeof a.payload === 'string' ? a.payload : formatApprovalPayload(a.payload, a.primitive_code, labelMeta);
       return approvalCard({
         id: 'wf-' + a.id,
         agentTag: (agent?.name || a.agent_id) + ' · ' + (a.action_name || a.integration || 'Workflow'),
@@ -4522,15 +4529,94 @@ async function createWorkflowApproval(workflow, step) {
   });
 }
 
-function formatApprovalPayload(payload, code) {
+/** Mirror of api_lib/blueprint_plan.py sanitize / approval label helpers. */
+const STEP_CODE_RE = /\b(?:GM|GS|GC)-\d{2}\b/g;
+const TEMPLATE_VAR_RE = /\{\{[^}]+\}\}/g;
+const CALENDAR_FIELD_LABELS = {
+  title: 'Title', summary: 'Title', start: 'Starts', end: 'Ends',
+  start_time: 'Starts', end_time: 'Ends', attendees: 'Attendees', to: 'Attendees',
+  location: 'Location', description: 'Details', event_id: 'Event',
+};
+
+function sanitizeUserFacingText(text) {
+  let s = text == null ? '' : String(text);
+  s = s.replace(STEP_CODE_RE, '').replace(TEMPLATE_VAR_RE, '');
+  s = s.replace(/\s{2,}/g, ' ').replace(/^[\s\-–—:]+|[\s\-–—:]+$/g, '').trim();
+  return s;
+}
+
+function capitalizeSentence(text) {
+  if (!text) return text;
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+function plainApprovalLabel(opts) {
+  const o = opts || {};
+  const code = String(o.code || o.primitive_code || '').toUpperCase();
+  const meta = ACTION_REGISTRY[code] || {};
+  for (const c of [o.description, o.summary]) {
+    const label = capitalizeSentence(sanitizeUserFacingText(c));
+    if (label) return label;
+  }
+  for (const c of [o.action_name, o.name, meta.name]) {
+    const label = capitalizeSentence(sanitizeUserFacingText(c));
+    if (label) return label;
+  }
+  return genericRunSentence({
+    integration: o.integration || meta.integration,
+    action_name: null,
+    code,
+  });
+}
+
+function genericRunSentence(opts) {
+  const o = opts || {};
+  const code = String(o.code || '').toUpperCase();
+  const meta = ACTION_REGISTRY[code] || {};
+  const agent = sanitizeUserFacingText(o.integration || meta.integration || '');
+  const action = sanitizeUserFacingText(o.action_name || meta.name || '');
+  if (agent && action) return 'This step will run: ' + agent + ' · ' + action;
+  if (action) return 'This step will run: ' + action;
+  if (agent) return 'This step will run via ' + agent;
+  return 'This step needs your approval before it runs.';
+}
+
+function formatCalendarApprovalPayload(payload) {
+  const lines = [];
+  const seen = {};
+  Object.keys(CALENDAR_FIELD_LABELS).forEach(key => {
+    if (!(key in payload) || seen[key]) return;
+    seen[key] = true;
+    const val = sanitizeUserFacingText(payload[key]);
+    if (!val) return;
+    lines.push(CALENDAR_FIELD_LABELS[key] + ': ' + val);
+  });
+  return lines.join('\n');
+}
+
+function formatApprovalPayload(payload, code, meta) {
+  meta = meta || {};
   if (!payload || !Object.keys(payload).length) return 'No preview available';
-  if (code === 'GM-03' || code === 'GM-04') {
-    return `To: ${payload.to || '—'}\nSubject: ${payload.subject || '—'}\n\n${payload.body || ''}`;
+  const codeU = String(code || '').toUpperCase();
+  if (codeU === 'GM-03' || codeU === 'GM-04') {
+    return 'To: ' + (sanitizeUserFacingText(payload.to) || '—')
+      + '\nSubject: ' + (sanitizeUserFacingText(payload.subject) || '—')
+      + '\n\n' + (sanitizeUserFacingText(payload.body) || '');
   }
-  if (code.startsWith('GC-')) {
-    return Object.entries(payload).map(([k, v]) => `${k}: ${v}`).join('\n');
+  if (codeU.startsWith('GC-')) {
+    const calendarText = formatCalendarApprovalPayload(payload);
+    if (calendarText) return calendarText;
   }
-  return JSON.stringify(payload, null, 2);
+  // Generic-safe fallback — never JSON.stringify in user-visible approval UI.
+  for (const c of [meta.description, meta.summary]) {
+    const label = capitalizeSentence(sanitizeUserFacingText(c));
+    if (label) return label;
+  }
+  return genericRunSentence({
+    integration: meta.integration,
+    action_name: meta.action_name,
+    code: codeU,
+  });
 }
 
 async function expireStaleApprovals() {
