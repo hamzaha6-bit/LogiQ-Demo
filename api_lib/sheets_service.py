@@ -436,6 +436,157 @@ def _col_letter(n: int) -> str:
     return "".join(reversed(letters))
 
 
+def _a1_sheet_range(sheet_title: str, cell_range: str) -> str:
+    """Build a quoted A1 range for a sheet tab (handles spaces / apostrophes)."""
+    escaped = (sheet_title or "").replace("'", "''")
+    return f"'{escaped}'!{cell_range}"
+
+
+def _resolve_sheet_title(
+    service: Any,
+    spreadsheet_id: str,
+    sheet_name: Optional[str],
+) -> str:
+    """Return target tab title. Default = first sheet; named sheet must exist (loud fail)."""
+    meta = (
+        service.spreadsheets()
+        .get(spreadsheetId=spreadsheet_id, fields="sheets.properties")
+        .execute()
+    )
+    sheets = meta.get("sheets") or []
+    if not sheets:
+        raise SheetsError("Spreadsheet has no sheets")
+    wanted = (sheet_name or "").strip()
+    if wanted:
+        for sheet in sheets:
+            title = str((sheet.get("properties") or {}).get("title") or "")
+            if title == wanted:
+                return title
+        available = [
+            str((s.get("properties") or {}).get("title") or "")
+            for s in sheets
+            if (s.get("properties") or {}).get("title")
+        ]
+        raise SheetsError(
+            f"Sheet {wanted!r} not found"
+            + (f" (available: {', '.join(available)})" if available else "")
+        )
+    first = (sheets[0].get("properties") or {}).get("title")
+    if not first:
+        raise SheetsError("Could not resolve first sheet title")
+    return str(first)
+
+
+def _coerce_bool(value: Any, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    s = str(value).strip().lower()
+    if s in ("1", "true", "yes", "y", "on"):
+        return True
+    if s in ("0", "false", "no", "n", "off", ""):
+        return False
+    return default
+
+
+def _normalize_bulk_columns(
+    rows: List[Dict[str, Any]],
+    columns: Optional[List[Any]],
+) -> List[str]:
+    if columns:
+        out = [str(c).strip() for c in columns if str(c).strip()]
+        if out:
+            return out
+    if not rows:
+        return []
+    seen: List[str] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        for key in row.keys():
+            name = str(key).strip()
+            if name and name not in seen:
+                seen.append(name)
+    return seen
+
+
+def write_rows(
+    url: str,
+    user_id: str,
+    rows: List[Dict[str, Any]],
+    columns: Optional[List[Any]] = None,
+    *,
+    sheet_name: Optional[str] = None,
+    clear_first: Any = False,
+    spreadsheet_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Bulk-write N rows to a sheet tab in one API update.
+
+    Intentionally bypasses schema lock / sheet_connections — for unlocked
+    output tabs whose schema comes from input columns (e.g. picklist).
+    Distinct from write_row (GS-02), which appends one CRM row against locked schema.
+    """
+    _require_sheets(user_id)
+    sid = (spreadsheet_id or "").strip() or parse_spreadsheet_id(url or "")
+    if not sid:
+        raise SheetsError("Invalid Google Sheets URL or spreadsheet_id")
+    if not isinstance(rows, list):
+        raise SheetsError("rows must be a list of objects")
+    for i, row in enumerate(rows):
+        if not isinstance(row, dict):
+            raise SheetsError(f"rows[{i}] must be an object")
+    column_names = _normalize_bulk_columns(rows, columns)
+    if not column_names:
+        raise SheetsError("columns required (or inferable from rows)")
+
+    service = get_sheets_service(user_id)
+    title = _resolve_sheet_title(service, sid, sheet_name)
+    cleared = False
+    if _coerce_bool(clear_first, False):
+        service.spreadsheets().values().clear(
+            spreadsheetId=sid,
+            range=_a1_sheet_range(title, "A:ZZ"),
+        ).execute()
+        cleared = True
+
+    matrix: List[List[str]] = [column_names]
+    for row in rows:
+        matrix.append(
+            ["" if row.get(col) is None else str(row.get(col, "")) for col in column_names]
+        )
+    end_col = _col_letter(len(column_names))
+    end_row = len(matrix)
+    a1 = _a1_sheet_range(title, f"A1:{end_col}{end_row}")
+    result = (
+        service.spreadsheets()
+        .values()
+        .update(
+            spreadsheetId=sid,
+            range=a1,
+            valueInputOption="USER_ENTERED",
+            body={"values": matrix},
+        )
+        .execute()
+    )
+    if not result.get("updatedRange") and not result.get("updatedCells") and not result.get("updatedRows"):
+        raise SheetsError("Sheets bulk write returned no update confirmation")
+    return {
+        "success": True,
+        "spreadsheet_id": sid,
+        "sheet_name": title,
+        "columns": column_names,
+        "row_count": len(rows),
+        "cleared": cleared,
+        "updated_range": result.get("updatedRange"),
+        "updated_rows": result.get("updatedRows"),
+        "updated_cells": result.get("updatedCells"),
+        "schema_lock": False,
+    }
+
+
 def poll(url: str, agent_id: str, user_id: str) -> Dict[str, Any]:
     agent_key = agent_id.lower().strip()
     spreadsheet_id = parse_spreadsheet_id(url)
