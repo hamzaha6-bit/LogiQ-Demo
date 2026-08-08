@@ -41,6 +41,7 @@ from sheets_service import (
     update_row,
     write_cell,
     write_row,
+    write_rows,
 )
 from supabase_rest import client_id_from_user_id, rest_get, rest_patch, rest_post
 from workflow_context import (
@@ -332,6 +333,41 @@ def _execute_sheets_step(
             if not url:
                 raise StepExecutionError("GS-07 requires a sheet url param")
             return write_cell(url, sheet_agent, user_id, params.get("cell") or "", params.get("value"))
+        if code == "GS-08":
+            spreadsheet_id = (params.get("spreadsheet_id") or "").strip()
+            if not url and not spreadsheet_id:
+                raise StepExecutionError("GS-08 requires a sheet url or spreadsheet_id")
+            rows = params.get("rows")
+            columns = params.get("columns")
+            nested = (
+                params.get("data")
+                or params.get("table")
+                or params.get("values")
+                or params.get("output")
+            )
+            if isinstance(nested, dict):
+                if rows is None:
+                    rows = nested.get("rows")
+                if columns is None:
+                    columns = nested.get("columns")
+            if not isinstance(rows, list):
+                raise StepExecutionError("GS-08 requires rows list (or {rows, columns} from prior step)")
+            clear_raw = (
+                params.get("clear_first")
+                if "clear_first" in params
+                else params.get("clear")
+                if "clear" in params
+                else params.get("clear_then_write")
+            )
+            return write_rows(
+                url,
+                user_id,
+                rows,
+                columns,
+                sheet_name=params.get("sheet_name") or params.get("sheet") or None,
+                clear_first=clear_raw,
+                spreadsheet_id=spreadsheet_id or None,
+            )
     except StepExecutionError:
         raise
     except SchemaMismatchError as exc:
