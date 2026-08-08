@@ -1,4 +1,4 @@
-"""LogiQ action primitive registry — Gmail (GM), Google Sheets (GS), Google Calendar (GC)."""
+"""LogiQ action primitive registry — Gmail (GM), Google Sheets (GS), Google Calendar (GC), transforms (XF)."""
 
 from typing import Any, Dict, List, Optional
 
@@ -24,15 +24,81 @@ ACTION_REGISTRY: Dict[str, Dict[str, Any]] = {
     "GC-04": {"integration": "Google Calendar", "name": "Update event", "requires_approval": False},
     "GC-05": {"integration": "Google Calendar", "name": "Cancel event", "requires_approval": True},
     "GC-06": {"integration": "Google Calendar", "name": "Send calendar invite", "requires_approval": True},
+    # In-memory transforms (Pound Fabrics picklist MVP piece 1). Input/output: {rows, columns}.
+    "XF-01": {
+        "integration": "Transform",
+        "name": "Filter by status and ID range",
+        "requires_approval": False,
+        "params": {
+            "rows": "list of row objects (or from prior GS-01/XF output)",
+            "columns": "column name list",
+            "status_column": "status field name (e.g. Financial Status)",
+            "status_value": "required equality value (e.g. paid); case-insensitive by default",
+            "id_column": "numeric ID column name",
+            "min_id": "inclusive lower bound",
+            "max_id": "inclusive upper bound",
+        },
+    },
+    "XF-02": {
+        "integration": "Transform",
+        "name": "Group-aware drop",
+        "requires_approval": False,
+        "params": {
+            "rows": "list of row objects",
+            "columns": "column name list",
+            "group_column": "group key (e.g. Name / order number)",
+            "match_column": "column to test (e.g. Lineitem name)",
+            "op": "equals | contains (default contains; case-insensitive by default)",
+            "value": "match value (e.g. Express Shipping)",
+            "condition": "optional {column, op, value, case_sensitive} object",
+        },
+    },
+    "XF-03": {
+        "integration": "Transform",
+        "name": "Column subset",
+        "requires_approval": False,
+        "params": {
+            "rows": "list of row objects",
+            "columns": "full column name list",
+            "keep": "ordered list of column names to keep (aliases: keep_columns, select, column_list)",
+        },
+    },
+    "XF-04": {
+        "integration": "Transform",
+        "name": "Sort primary then secondary",
+        "requires_approval": False,
+        "params": {
+            "rows": "list of row objects",
+            "columns": "column name list",
+            "primary": "primary sort column (ascending)",
+            "secondary": "secondary sort column (ascending)",
+            "group_column": "optional; used for group_boundaries metadata",
+        },
+    },
+    "XF-05": {
+        "integration": "Transform",
+        "name": "Aggregate by two keys",
+        "requires_approval": False,
+        "params": {
+            "rows": "list of row objects",
+            "columns": "column name list",
+            "sku_column": "first key column (e.g. Lineitem sku)",
+            "qty_column": "second key column (e.g. Lineitem quantity)",
+            "format_string": "summary template, e.g. \"{qty}m x {count}\"",
+            "summary_column": "output column name for formatted string (default Summary)",
+        },
+    },
 }
 
 # Only these codes have real implementations in workflow_runner._execute_step.
 # Phase 1 tracks add codes here as each action is verified working.
 # Tracks A/B/C: all 21 Gmail, Sheets, and Calendar codes use real API calls.
+# XF-01..05: pure in-memory transforms (no Sheets API).
 REAL_CODES = frozenset({
     "GS-01", "GS-02", "GS-03", "GS-04", "GS-05", "GS-06", "GS-07",
     "GM-01", "GM-02", "GM-03", "GM-04", "GM-05", "GM-06", "GM-07", "GM-08",
     "GC-01", "GC-02", "GC-03", "GC-04", "GC-05", "GC-06",
+    "XF-01", "XF-02", "XF-03", "XF-04", "XF-05",
 })
 
 IRREVERSIBLE_CODES = frozenset({"GM-03", "GM-04", "GC-05", "GC-06", "GS-06"})
