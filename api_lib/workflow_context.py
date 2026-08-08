@@ -74,29 +74,47 @@ def _normalize_alt_templates(value: str) -> str:
     return _ALT_TEMPLATE_RE.sub(repl, value)
 
 
-def _resolve_string(value: str, context: Context, warnings: List[str]) -> Tuple[str, bool]:
-    """Returns (resolved_string, had_empty_or_missing_ref)."""
+def _lookup_template(match: re.Match[str], context: Context, warnings: List[str]) -> Tuple[Any, bool]:
+    """Resolve one {{step_N.output...}} match to a raw value. Returns (value, empty_ref)."""
+    step_num = match.group(1)
+    field_path = match.group(2)
+    output = get_step_output(context, step_num)
+    if output is None:
+        warnings.append(f"Unresolved template {match.group(0)}: step {step_num} has no output")
+        return None, True
+    if not field_path:
+        return output, output == "" or output == []
+    resolved = _get_path(output, field_path.split("."))
+    if resolved is None:
+        warnings.append(f"Unresolved template {match.group(0)}: field not found")
+        return None, True
+    if resolved == "" or resolved == []:
+        return resolved, True
+    return resolved, False
+
+
+def _resolve_string(value: str, context: Context, warnings: List[str]) -> Tuple[Any, bool]:
+    """Resolve templates in a string.
+
+    When the entire string is a single template (e.g. \"{{step_1.output.rows}}\"),
+    return the raw object so XF transforms can receive list/dict payloads from
+    prior GS-01/XF steps. Interpolated templates still stringify.
+    """
     text = _normalize_alt_templates(value)
     empty_ref = False
+    whole = _TEMPLATE_RE.fullmatch(text.strip())
+    if whole:
+        resolved, was_empty = _lookup_template(whole, context, warnings)
+        return resolved if not was_empty or resolved is not None else ("" if resolved is None else resolved), was_empty
 
     def repl(match: re.Match[str]) -> str:
         nonlocal empty_ref
-        step_num = match.group(1)
-        field_path = match.group(2)
-        output = get_step_output(context, step_num)
-        if output is None:
-            warnings.append(f"Unresolved template {match.group(0)}: step {step_num} has no output")
+        resolved, was_empty = _lookup_template(match, context, warnings)
+        if was_empty:
             empty_ref = True
-            return ""
-        if not field_path:
-            return str(output)
-        resolved = _get_path(output, field_path.split("."))
         if resolved is None:
-            warnings.append(f"Unresolved template {match.group(0)}: field not found")
-            empty_ref = True
             return ""
         if resolved == "" or resolved == []:
-            empty_ref = True
             return ""
         return str(resolved)
 

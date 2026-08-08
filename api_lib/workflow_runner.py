@@ -30,6 +30,7 @@ try:
 except ImportError:  # pragma: no cover - googleapiclient always present in prod
     class HttpError(Exception):
         pass
+from sheet_transforms import TransformError, execute_transform
 from sheets_service import (
     SchemaMismatchError,
     SheetsError,
@@ -213,6 +214,9 @@ def _execute_step(
     if normalized.startswith("GS-"):
         return _execute_sheets_step(normalized, params, user_id=user_id, agent_id=agent_id)
 
+    if normalized.startswith("XF-"):
+        return _execute_transform_step(normalized, params)
+
     if normalized in ("GM-03", "GM-04"):
         to = (params.get("to") or "").strip()
         subject = (params.get("subject") or "").strip()
@@ -338,6 +342,16 @@ def _execute_sheets_step(
         raise StepExecutionError(f"{code} failed: {exc}") from exc
 
     raise StepExecutionError(f"Unhandled Sheets action {code}")
+
+
+def _execute_transform_step(code: str, params: Dict[str, Any]) -> Dict[str, Any]:
+    """Pure in-memory XF-* transforms. No Sheets API / OAuth."""
+    try:
+        return execute_transform(code, params or {})
+    except TransformError as exc:
+        raise StepExecutionError(str(exc)) from exc
+    except Exception as exc:
+        raise StepExecutionError(f"{code} failed: {exc}") from exc
 
 
 def _execute_calendar_step(code: str, params: Dict[str, Any], *, user_id: str) -> Dict[str, Any]:
