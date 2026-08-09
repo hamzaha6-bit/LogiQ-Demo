@@ -122,8 +122,8 @@ ACTION_REGISTRY: Dict[str, Dict[str, Any]] = {
             "group_column": "group key for keep_groups_intact / group_boundaries (e.g. Name)",
             "picklist_prefix": "optional; default 'Picklist' → 'Picklist 1'..N",
             "exception_sheet_name": "optional; default 'Exceptions'",
-            "template_sheet_name": "optional; when set, always delete managed outputs then duplicate (no addSheet)",
-            "exceptions_template_sheet_name": "optional; exceptions tab template (defaults to template_sheet_name)",
+            "template_sheet_name": "optional; when set, always delete managed outputs then duplicate (no addSheet); hard-fail if name is a managed title",
+            "exceptions_template_sheet_name": "optional; exceptions tab template (defaults to template_sheet_name); hard-fail if name is a managed title",
         },
     },
     # Picklist formatting via batchUpdate (Pound Fabrics picklist MVP piece 5).
