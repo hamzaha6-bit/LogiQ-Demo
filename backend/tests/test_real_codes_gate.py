@@ -24,7 +24,7 @@ from workflow_runner import StepExecutionError, _execute_step  # noqa: E402
 def test_real_codes_contains_core_and_xf_actions():
     expected = {
         *(f"GM-{i:02d}" for i in range(1, 9)),
-        *(f"GS-{i:02d}" for i in range(1, 11)),
+        *(f"GS-{i:02d}" for i in range(1, 12)),
         *(f"GC-{i:02d}" for i in range(1, 7)),
         *(f"XF-{i:02d}" for i in range(1, 6)),
     }
@@ -34,7 +34,7 @@ def test_real_codes_contains_core_and_xf_actions():
 def test_registry_for_prompt_exposes_only_real_codes():
     codes = {p["code"] for p in registry_for_prompt()}
     assert codes == set(REAL_CODES)
-    assert len(codes) == 29
+    assert len(codes) == 30
 
 
 def test_validate_plan_steps_rejects_unknown_code():

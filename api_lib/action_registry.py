@@ -217,7 +217,7 @@ ACTION_REGISTRY: Dict[str, Dict[str, Any]] = {
 # XF-01..05: pure in-memory transforms (no Sheets API).
 REAL_CODES = frozenset({
     "GS-01", "GS-02", "GS-03", "GS-04", "GS-05", "GS-06", "GS-07", "GS-08", "GS-09",
-    "GS-10",
+    "GS-10", "GS-11",
     "GM-01", "GM-02", "GM-03", "GM-04", "GM-05", "GM-06", "GM-07", "GM-08",
     "GC-01", "GC-02", "GC-03", "GC-04", "GC-05", "GC-06",
     "XF-01", "XF-02", "XF-03", "XF-04", "XF-05",
