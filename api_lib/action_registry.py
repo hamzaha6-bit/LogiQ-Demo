@@ -104,6 +104,41 @@ ACTION_REGISTRY: Dict[str, Dict[str, Any]] = {
             "sheet_name": "required new tab title (aliases: title, name)",
         },
     },
+    # Dedicated emit action (Pound Fabrics picklist MVP piece 4) — not generic engine branching.
+    # Naming: "Picklist 1"..N + "Exceptions" (prefixes configurable).
+    "GS-10": {
+        "integration": "Google Sheets",
+        "name": "Emit picklist tabs",
+        "requires_approval": False,
+        "params": {
+            "url": "Google Sheets URL (or spreadsheet_id); same workbook as GS-05",
+            "rows": "list of row objects (or {rows, columns} from prior XF/GS step)",
+            "columns": "column name list",
+            "exception_field": "required; blank/whitespace/absent → Exceptions tab (e.g. Lineitem sku)",
+            "target_rows_per_tab": "primary; derives N dynamically (volume-based)",
+            "tab_count": "optional override; exact picklist tab count when set",
+            "keep_groups_intact": "default true; do not split a group across tabs (tabs may be uneven)",
+            "group_column": "group key for keep_groups_intact / group_boundaries (e.g. Name)",
+            "picklist_prefix": "optional; default 'Picklist' → 'Picklist 1'..N",
+            "exception_sheet_name": "optional; default 'Exceptions'",
+        },
+    },
+    # Picklist formatting via batchUpdate (Pound Fabrics picklist MVP piece 5).
+    "GS-11": {
+        "integration": "Google Sheets",
+        "name": "Format picklist sheet",
+        "requires_approval": False,
+        "params": {
+            "url": "Google Sheets URL (or spreadsheet_id)",
+            "sheet_name": "target tab title (or apply to each tab from prior GS-10)",
+            "bold_columns": "column name list to bold (header + data)",
+            "borders": "optional bool/object; apply cell borders when true",
+            "group_boundaries": "0-based data-row starts (excl. header); from XF/GS-10 metadata",
+            "group_column": "optional; recompute boundaries from sheet rows when boundaries omitted",
+            "band_colors": "optional [colorA, colorB] hex or {red,green,blue} for per-group banding",
+            "print_setup": "optional {margins, orientation, paper_size}; see GS-11 flags if unsupported",
+        },
+    },
     "GC-01": {"integration": "Google Calendar", "name": "Check availability", "requires_approval": False},
     "GC-02": {"integration": "Google Calendar", "name": "List events", "requires_approval": False},
     "GC-03": {"integration": "Google Calendar", "name": "Create event", "requires_approval": False},
@@ -182,6 +217,7 @@ ACTION_REGISTRY: Dict[str, Dict[str, Any]] = {
 # XF-01..05: pure in-memory transforms (no Sheets API).
 REAL_CODES = frozenset({
     "GS-01", "GS-02", "GS-03", "GS-04", "GS-05", "GS-06", "GS-07", "GS-08", "GS-09",
+    "GS-10",
     "GM-01", "GM-02", "GM-03", "GM-04", "GM-05", "GM-06", "GM-07", "GM-08",
     "GC-01", "GC-02", "GC-03", "GC-04", "GC-05", "GC-06",
     "XF-01", "XF-02", "XF-03", "XF-04", "XF-05",

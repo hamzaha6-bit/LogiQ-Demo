@@ -14,8 +14,12 @@ _STEP_CODE_RE = re.compile(r"\b(?:GM|GS|GC)-\d{2}\b")
 _TEMPLATE_VAR_RE = re.compile(r"\{\{[^}]+\}\}")
 
 # Codes that write externally or send — call out in the summary even if not irreversible.
-_USER_APPROVAL_CODES = IRREVERSIBLE_CODES | {"GS-02", "GS-03", "GS-07", "GS-08", "GS-09"}
-_SHEET_WRITE_CODES = frozenset({"GS-02", "GS-03", "GS-06", "GS-07", "GS-08", "GS-09"})
+_USER_APPROVAL_CODES = IRREVERSIBLE_CODES | {
+    "GS-02", "GS-03", "GS-07", "GS-08", "GS-09", "GS-10",
+}
+_SHEET_WRITE_CODES = frozenset({
+    "GS-02", "GS-03", "GS-06", "GS-07", "GS-08", "GS-09", "GS-10",
+})
 _EMAIL_SEND_CODES = frozenset({"GM-03", "GM-04"})
 
 
