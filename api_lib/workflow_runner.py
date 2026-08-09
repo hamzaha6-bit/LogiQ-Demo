@@ -38,6 +38,7 @@ from sheets_service import (
     create_sheet,
     delete_row,
     emit_picklist,
+    format_picklist,
     poll,
     read_sheet,
     update_row,
@@ -440,6 +441,16 @@ def _execute_sheets_step(
             if not url and not spreadsheet_id:
                 raise StepExecutionError("GS-10 requires a sheet url or spreadsheet_id")
             return emit_picklist(
+                url,
+                user_id,
+                params,
+                spreadsheet_id=spreadsheet_id or None,
+            )
+        if code == "GS-11":
+            spreadsheet_id = (params.get("spreadsheet_id") or "").strip()
+            if not url and not spreadsheet_id:
+                raise StepExecutionError("GS-11 requires a sheet url or spreadsheet_id")
+            return format_picklist(
                 url,
                 user_id,
                 params,

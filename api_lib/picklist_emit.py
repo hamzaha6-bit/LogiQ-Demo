@@ -134,6 +134,20 @@ def is_managed_picklist_title(title: str, *, prefix: str = "Picklist") -> bool:
     return m.group(1) == base and m.group(2).isdigit() and int(m.group(2)) >= 1
 
 
+def is_managed_output_title(
+    title: str,
+    *,
+    prefix: str = "Picklist",
+    exception_sheet_name: str = "Exceptions",
+) -> bool:
+    """True for reserved managed output titles: '{prefix} N' or exception sheet name."""
+    t = (title or "").strip()
+    if not t:
+        return False
+    exc = (exception_sheet_name or "Exceptions").strip() or "Exceptions"
+    return t == exc or is_managed_picklist_title(t, prefix=prefix)
+
+
 def _contiguous_groups(rows: Sequence[Row], group_column: str) -> List[List[Row]]:
     """Split into contiguous runs by group_column (blank keys are singletons)."""
     if not rows:

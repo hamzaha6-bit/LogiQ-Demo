@@ -1002,12 +1002,15 @@ def emit_picklist(
     """GS-10: route exceptions + volume-balance picklist tabs (idempotent).
 
     Managed tab names: '{picklist_prefix} 1'..N and exception_sheet_name
-    (default Exceptions). Template tabs must not use those managed names.
+    (default Exceptions). Template tabs must not use those managed names —
+    reserved template names hard-fail before any managed-tab delete.
 
     Template mode (template_sheet_name set):
     - Always delete known managed outputs, then DuplicateSheetRequest recreate.
     - Never reuse prior blank-created tabs; never fall back to addSheet.
     - Missing template hard-fails.
+    - Template / exceptions_template named like a managed output hard-fails
+      (never silently delete the template).
     - Optional exceptions_template_sheet_name; else exceptions share the picklist template.
 
     Blank mode (no template): create missing tabs via addSheet; clear+write;
@@ -1015,6 +1018,7 @@ def emit_picklist(
     """
     from picklist_emit import (  # local import avoids cycles in tests
         EmitError,
+        is_managed_output_title,
         is_managed_picklist_title,
         parse_emit_params,
     )
@@ -1068,6 +1072,26 @@ def emit_picklist(
     if plan["exceptions"] is not None:
         needed.append(plan["exceptions"])
     needed_titles = {p["sheet_name"] for p in needed}
+
+    def _reject_reserved_template(name: Optional[str], *, param: str) -> None:
+        """Hard-fail before any managed-tab delete if a template uses a reserved name."""
+        if not name:
+            return
+        if is_managed_output_title(
+            name, prefix=prefix, exception_sheet_name=exc_name
+        ):
+            raise SheetsError(
+                f"{param} {name!r} matches a reserved managed output title "
+                f"('{prefix} N' or {exc_name!r}). Rename the template tab so "
+                "GS-10 will not delete it during managed cleanup."
+            )
+
+    # Loud fail before Sheets mutations — never silently delete a misnamed template.
+    _reject_reserved_template(template_name, param="template_sheet_name")
+    if exc_template_name != template_name:
+        _reject_reserved_template(
+            exc_template_name, param="exceptions_template_sheet_name"
+        )
 
     service = get_sheets_service(user_id)
     existing = _list_sheet_properties(service, sid)
@@ -1203,4 +1227,178 @@ def emit_picklist(
             if len(written) == 1
             else None
         ),
+    }
+
+
+def format_picklist(
+    url: str,
+    user_id: str,
+    params: Dict[str, Any],
+    *,
+    spreadsheet_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """GS-11: param-driven picklist formatting via spreadsheets.batchUpdate.
+
+    Applies bold columns, borders, freeze header, and per-group alternating
+    backgrounds using group_boundaries metadata (not naive every-other-row banding).
+
+    Print/page setup is not applied here — when outputs were created via GS-09/10
+    template duplicate, print layout is expected to come from the template tab.
+    print_setup params remain accepted and flagged (print_setup_supported=false).
+
+    FLAGS (also returned on the result):
+    - GridRange indexing is 0-based; data boundary i → grid row i+1 (header at 0).
+      Indices break if rows are inserted between emit and format.
+    - Sheets API v4 has no pageSetup/pageMargins on SheetProperties; print_setup
+      params are accepted and flagged as unsupported (not silently applied).
+    """
+    from picklist_format import (  # local import for testability
+        FormatError,
+        build_format_requests,
+        resolve_boundaries_from_rows,
+    )
+
+    sid = (spreadsheet_id or "").strip() or parse_spreadsheet_id(url or "")
+    if not sid:
+        raise SheetsError("Invalid Google Sheets URL or spreadsheet_id")
+
+    # Target tabs: explicit sheet_name / sheet_names, or tabs from prior GS-10.
+    sheet_names: List[str] = []
+    raw_names = params.get("sheet_names") or params.get("tabs")
+    if isinstance(raw_names, list):
+        for item in raw_names:
+            if isinstance(item, dict):
+                title = str(item.get("sheet_name") or item.get("title") or "").strip()
+            else:
+                title = str(item or "").strip()
+            if title:
+                sheet_names.append(title)
+    single = (
+        params.get("sheet_name")
+        if "sheet_name" in params
+        else params.get("sheet")
+        if "sheet" in params
+        else params.get("title")
+    )
+    if single and not sheet_names:
+        text = str(single).strip()
+        if text:
+            sheet_names = [text]
+    if not sheet_names:
+        raise SheetsError("GS-11 requires sheet_name (or sheet_names / tabs from GS-10)")
+
+    _require_sheets(user_id)
+
+    bold_columns = params.get("bold_columns") or params.get("bold") or []
+    if isinstance(bold_columns, str):
+        bold_columns = [bold_columns]
+    if not isinstance(bold_columns, list):
+        raise SheetsError("bold_columns must be a list of column names")
+
+    borders = params.get("borders") if "borders" in params else True
+    band_colors = params.get("band_colors") or params.get("banding_colors")
+    print_setup = params.get("print_setup") or params.get("page_setup") or params.get("print")
+    freeze_header = _coerce_bool(
+        params.get("freeze_header") if "freeze_header" in params else True,
+        True,
+    )
+    group_column = (
+        params.get("group_column") or params.get("group_key") or ""
+    )
+    provided_boundaries = params.get("group_boundaries")
+    # Per-tab boundaries from GS-10 tabs metadata.
+    tab_meta = {}
+    if isinstance(raw_names, list):
+        for item in raw_names:
+            if isinstance(item, dict) and item.get("sheet_name"):
+                tab_meta[str(item["sheet_name"])] = item
+
+    service = get_sheets_service(user_id)
+    formatted: List[Dict[str, Any]] = []
+    all_flags: Dict[str, Any] = {}
+
+    for title in sheet_names:
+        resolved_title, sheet_id = _resolve_sheet_meta(service, sid, title)
+        # Read current values to know row/column extents (and optional boundary recompute).
+        values = (
+            service.spreadsheets()
+            .values()
+            .get(spreadsheetId=sid, range=_a1_sheet_range(resolved_title, "A:ZZ"))
+            .execute()
+            .get("values")
+            or []
+        )
+        if values:
+            columns = [str(h) for h in values[0]]
+            data_rows = []
+            for raw in values[1:]:
+                row = {
+                    columns[i]: (raw[i] if i < len(raw) else "")
+                    for i in range(len(columns))
+                    if columns[i]
+                }
+                data_rows.append(row)
+        else:
+            columns = list(params.get("columns") or [])
+            data_rows = []
+
+        meta = tab_meta.get(title) or {}
+        boundaries = provided_boundaries
+        if boundaries is None and meta.get("group_boundaries") is not None:
+            boundaries = meta.get("group_boundaries")
+        try:
+            bounds = resolve_boundaries_from_rows(
+                data_rows,
+                str(group_column or meta.get("group_column") or ""),
+                boundaries,
+            )
+            requests, flags = build_format_requests(
+                sheet_id=sheet_id,
+                columns=columns or ["A"],
+                row_count=len(data_rows),
+                bold_columns=bold_columns,
+                borders=borders,
+                group_boundaries=bounds,
+                band_colors=band_colors,
+                freeze_header=freeze_header,
+                print_setup=print_setup if isinstance(print_setup, dict) else (
+                    {"requested": True} if print_setup else None
+                ),
+            )
+        except FormatError as exc:
+            raise SheetsError(str(exc)) from exc
+
+        if requests:
+            result = (
+                service.spreadsheets()
+                .batchUpdate(spreadsheetId=sid, body={"requests": requests})
+                .execute()
+            )
+            if result.get("replies") is None:
+                raise SheetsError("Sheets format batchUpdate returned no confirmation")
+        else:
+            result = {"replies": []}
+
+        all_flags = flags
+        formatted.append(
+            {
+                "sheet_name": resolved_title,
+                "sheet_id": sheet_id,
+                "row_count": len(data_rows),
+                "columns": columns,
+                "group_boundaries": bounds,
+                "request_count": len(requests),
+                "requests": requests,
+            }
+        )
+
+    return {
+        "success": True,
+        "spreadsheet_id": sid,
+        "sheets": formatted,
+        "sheet_name": formatted[0]["sheet_name"] if len(formatted) == 1 else None,
+        "group_boundaries": formatted[0]["group_boundaries"] if len(formatted) == 1 else None,
+        "request_count": sum(s["request_count"] for s in formatted),
+        "flags": all_flags,
+        "schema_lock": False,
     }

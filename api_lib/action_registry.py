@@ -122,8 +122,25 @@ ACTION_REGISTRY: Dict[str, Dict[str, Any]] = {
             "group_column": "group key for keep_groups_intact / group_boundaries (e.g. Name)",
             "picklist_prefix": "optional; default 'Picklist' → 'Picklist 1'..N",
             "exception_sheet_name": "optional; default 'Exceptions'",
-            "template_sheet_name": "optional; when set, always delete managed outputs then duplicate (no addSheet)",
-            "exceptions_template_sheet_name": "optional; exceptions tab template (defaults to template_sheet_name)",
+            "template_sheet_name": "optional; when set, always delete managed outputs then duplicate (no addSheet); hard-fail if name is a managed title",
+            "exceptions_template_sheet_name": "optional; exceptions tab template (defaults to template_sheet_name); hard-fail if name is a managed title",
+        },
+    },
+    # Picklist formatting via batchUpdate (Pound Fabrics picklist MVP piece 5).
+    # Print/page layout: inherit via GS-09/10 template duplicate; GS-11 does not set margins.
+    "GS-11": {
+        "integration": "Google Sheets",
+        "name": "Format picklist sheet",
+        "requires_approval": False,
+        "params": {
+            "url": "Google Sheets URL (or spreadsheet_id)",
+            "sheet_name": "target tab title (or apply to each tab from prior GS-10)",
+            "bold_columns": "column name list to bold (header + data)",
+            "borders": "optional bool/object; apply cell borders when true",
+            "group_boundaries": "0-based data-row starts (excl. header); from XF/GS-10 metadata",
+            "group_column": "optional; recompute boundaries from sheet rows when boundaries omitted",
+            "band_colors": "optional [colorA, colorB] hex or {red,green,blue} for per-group banding",
+            "print_setup": "accepted but not applied (print_setup_supported=false); use template tab for print layout",
         },
     },
     "GC-01": {"integration": "Google Calendar", "name": "Check availability", "requires_approval": False},
@@ -204,7 +221,7 @@ ACTION_REGISTRY: Dict[str, Dict[str, Any]] = {
 # XF-01..05: pure in-memory transforms (no Sheets API).
 REAL_CODES = frozenset({
     "GS-01", "GS-02", "GS-03", "GS-04", "GS-05", "GS-06", "GS-07", "GS-08", "GS-09",
-    "GS-10",
+    "GS-10", "GS-11",
     "GM-01", "GM-02", "GM-03", "GM-04", "GM-05", "GM-06", "GM-07", "GM-08",
     "GC-01", "GC-02", "GC-03", "GC-04", "GC-05", "GC-06",
     "XF-01", "XF-02", "XF-03", "XF-04", "XF-05",
