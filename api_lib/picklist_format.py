@@ -10,6 +10,9 @@ GridRange notes (FLAG):
 Print setup notes (FLAG):
 - Official SheetProperties has no pageSetup / pageMargins fields.
 - We do not emit fake updateSheetProperties print requests.
+- Empirically, tabs created via GS-09/GS-10 DuplicateSheetRequest inherit the
+  source tab's UI print/page layout; GS-11 still only applies bold/banding/
+  freeze/borders and keeps print_setup_supported=false when print_setup is passed.
 """
 
 from __future__ import annotations
@@ -32,7 +35,9 @@ _DEFAULT_BAND_B = {"red": 1.0, "green": 1.0, "blue": 1.0}
 _PRINT_SETUP_FLAG = (
     "Sheets API v4 SheetProperties has no pageSetup/pageMargins fields; "
     "print margins/orientation/paper size cannot be applied via batchUpdate. "
-    "Use Google Apps Script or the Sheets UI for print layout."
+    "Prefer inheriting print layout from a GS-09/GS-10 template duplicate; "
+    "otherwise set print layout in the Sheets UI or Apps Script. "
+    "This flag does not claim the API guarantees margin inheritance."
 )
 
 _GRID_INDEX_FLAG = (

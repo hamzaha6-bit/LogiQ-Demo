@@ -419,11 +419,22 @@ def _execute_sheets_step(
             create_name = sheet_name or (str(params.get("name") or "").strip() or None)
             if not create_name:
                 raise StepExecutionError("GS-09 requires sheet_name (or title/name)")
+            template_raw = (
+                params.get("template_sheet_name")
+                if "template_sheet_name" in params
+                else params.get("template")
+                if "template" in params
+                else params.get("from_template")
+            )
+            template_name = (
+                str(template_raw).strip() if template_raw is not None else ""
+            ) or None
             return create_sheet(
                 url,
                 user_id,
                 create_name,
                 spreadsheet_id=spreadsheet_id or None,
+                template_sheet_name=template_name,
             )
         if code == "GS-10":
             spreadsheet_id = (params.get("spreadsheet_id") or "").strip()

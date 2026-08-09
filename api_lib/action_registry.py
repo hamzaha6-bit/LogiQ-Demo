@@ -102,6 +102,7 @@ ACTION_REGISTRY: Dict[str, Dict[str, Any]] = {
         "params": {
             "url": "Google Sheets URL (or spreadsheet_id)",
             "sheet_name": "required new tab title (aliases: title, name)",
+            "template_sheet_name": "optional; duplicate this tab (hard-fail if missing; no addSheet fallback)",
         },
     },
     # Dedicated emit action (Pound Fabrics picklist MVP piece 4) — not generic engine branching.
@@ -121,9 +122,12 @@ ACTION_REGISTRY: Dict[str, Dict[str, Any]] = {
             "group_column": "group key for keep_groups_intact / group_boundaries (e.g. Name)",
             "picklist_prefix": "optional; default 'Picklist' → 'Picklist 1'..N",
             "exception_sheet_name": "optional; default 'Exceptions'",
+            "template_sheet_name": "optional; when set, always delete managed outputs then duplicate (no addSheet)",
+            "exceptions_template_sheet_name": "optional; exceptions tab template (defaults to template_sheet_name)",
         },
     },
     # Picklist formatting via batchUpdate (Pound Fabrics picklist MVP piece 5).
+    # Print/page layout: inherit via GS-09/10 template duplicate; GS-11 does not set margins.
     "GS-11": {
         "integration": "Google Sheets",
         "name": "Format picklist sheet",
@@ -136,7 +140,7 @@ ACTION_REGISTRY: Dict[str, Dict[str, Any]] = {
             "group_boundaries": "0-based data-row starts (excl. header); from XF/GS-10 metadata",
             "group_column": "optional; recompute boundaries from sheet rows when boundaries omitted",
             "band_colors": "optional [colorA, colorB] hex or {red,green,blue} for per-group banding",
-            "print_setup": "optional {margins, orientation, paper_size}; see GS-11 flags if unsupported",
+            "print_setup": "accepted but not applied (print_setup_supported=false); use template tab for print layout",
         },
     },
     "GC-01": {"integration": "Google Calendar", "name": "Check availability", "requires_approval": False},
