@@ -1558,8 +1558,37 @@ input[type=file].hidden-input { display: none; }
 
 <script>
 // ═══ 1. STATE ═══
-const API_BASE = (window.location.protocol === 'file:' || !window.location.hostname)
-  ? 'http://127.0.0.1:8000' : '';
+const LOCAL_API_BASE_CANDIDATES = [
+  'http://127.0.0.1:8001',
+  'http://localhost:8001',
+  'http://127.0.0.1:8000',
+  'http://localhost:8000',
+];
+
+function normalizeApiBase(raw) {
+  const value = String(raw || '').trim().replace(/\/+$/, '');
+  return value;
+}
+
+function resolveExplicitApiBase() {
+  const params = new URLSearchParams(window.location.search || '');
+  const fromQuery = normalizeApiBase(params.get('api_base'));
+  if (fromQuery) return fromQuery;
+  try {
+    return normalizeApiBase(localStorage.getItem('logiq_api_base'));
+  } catch (e) {
+    return '';
+  }
+}
+
+function localApiBaseCandidates() {
+  const explicit = resolveExplicitApiBase();
+  const ordered = [explicit, ...LOCAL_API_BASE_CANDIDATES].filter(Boolean);
+  return [...new Set(ordered.map(normalizeApiBase).filter(Boolean))];
+}
+
+let API_BASE = (window.location.protocol === 'file:' || !window.location.hostname)
+  ? (resolveExplicitApiBase() || LOCAL_API_BASE_CANDIDATES[0]) : '';
 const MARKETING_SITE_URL = 'https://logiqops.co.uk';
 const PRODUCTION_APP_HOST = 'app.logiqops.co.uk';
 let backendAvailable = false;
@@ -2914,20 +2943,31 @@ const ACTION_REGISTRY = {
   'GS-05': { integration:'Google Sheets', name:'Connect sheet', requires_approval:false },
   'GS-06': { integration:'Google Sheets', name:'Delete row', requires_approval:true },
   'GS-07': { integration:'Google Sheets', name:'Write cell', requires_approval:false },
+  'GS-08': { integration:'Google Sheets', name:'Bulk write rows', requires_approval:false },
+  'GS-09': { integration:'Google Sheets', name:'Create sheet tab', requires_approval:false },
+  'GS-10': { integration:'Google Sheets', name:'Emit picklist tabs', requires_approval:false },
+  'GS-11': { integration:'Google Sheets', name:'Format picklist sheet', requires_approval:false },
   'GC-01': { integration:'Google Calendar', name:'Check availability', requires_approval:false },
   'GC-02': { integration:'Google Calendar', name:'List events', requires_approval:false },
   'GC-03': { integration:'Google Calendar', name:'Create event', requires_approval:false },
   'GC-04': { integration:'Google Calendar', name:'Update event', requires_approval:false },
   'GC-05': { integration:'Google Calendar', name:'Cancel event', requires_approval:true },
   'GC-06': { integration:'Google Calendar', name:'Send calendar invite', requires_approval:true },
+  'XF-01': { integration:'Transform', name:'Filter by status and ID range', requires_approval:false },
+  'XF-02': { integration:'Transform', name:'Group-aware drop', requires_approval:false },
+  'XF-03': { integration:'Transform', name:'Column subset', requires_approval:false },
+  'XF-04': { integration:'Transform', name:'Sort primary then secondary', requires_approval:false },
+  'XF-05': { integration:'Transform', name:'Aggregate by two keys', requires_approval:false },
 };
 
 /** Only these codes have real workflow_runner implementations today. */
 const REAL_CODES = new Set([
-  'GS-01', 'GS-02', 'GS-03', 'GS-04', 'GS-05', 'GS-06', 'GS-07',
+  'GS-01', 'GS-02', 'GS-03', 'GS-04', 'GS-05', 'GS-06', 'GS-07', 'GS-08', 'GS-09', 'GS-10', 'GS-11',
   'GM-01', 'GM-02', 'GM-03', 'GM-04', 'GM-05', 'GM-06', 'GM-07', 'GM-08',
   'GC-01', 'GC-02', 'GC-03', 'GC-04', 'GC-05', 'GC-06',
+  'XF-01', 'XF-02', 'XF-03', 'XF-04', 'XF-05',
 ]);
+
 
 const IRREVERSIBLE_PRIMITIVES = new Set(['GM-03','GM-04','GC-05','GC-06','GS-06']);
 
@@ -2979,6 +3019,8 @@ Rules:
 - For franchise / enquiry inbox workflows, GM-07 query MUST exclude already-processed mail, e.g. (franchise OR franchising OR "become a franchisee" OR "franchise opportunity") -label:"Franchise Enquiry". Prefer nova; summary must state one enquiry per run.
 - For read message (GM-02) use { "message_id" }; for get thread (GM-08) use { "thread_id" }; for label (GM-06) use { "message_id", "add_labels", "remove_labels" }.
 - For Sheets steps, always include params.url (Google Sheets URL). GS-02 needs row/row_data; GS-03 needs row + row_data; GS-06 needs row; GS-07 needs cell (A1) + value.
+- Formatting-only Google Sheets requests are supported with GS-11. If the user asks to bold a quantity column, add borders around each SKU group, or alternate background colors by group, produce a GS-11 step with params.url, sheet_name, bold_columns, borders, and either group_boundaries or group_column plus band_colors.
+- If the user says the sheet is already connected and only wants formatting, do not reject it as unsupported just because no row edits are needed; plan it as a GS-11 workflow and note that it needs the spreadsheet link and target tab name.
 - For calendar: GC-01 needs time_min/time_max; GC-02 needs optional time range; GC-03/GC-06 need title, start, end (ISO); GC-06 also needs attendees[]; GC-04/GC-05 need event_id.
 - Prefer 2–6 steps. Be practical, not generic.
 - Tone: warm, concise, colleague-like — not a form or checklist.
@@ -3155,18 +3197,23 @@ function renderNavAgents() {
 
 // ═══ 3. API & KEYS ═══
 async function checkHealth() {
+  const fileMode = window.location.protocol === 'file:' || !window.location.hostname;
+  const candidates = fileMode ? localApiBaseCandidates() : [API_BASE];
   try {
-    const res = await fetch(API_BASE + '/api/health', { signal: AbortSignal.timeout(4000) });
-    const ct = res.headers.get('content-type') || '';
-    if (res.ok && ct.includes('application/json')) {
+    for (const base of candidates) {
+      const res = await fetch(base + '/api/health', { signal: AbortSignal.timeout(4000) });
+      const ct = res.headers.get('content-type') || '';
+      if (!res.ok || !ct.includes('application/json')) continue;
       const data = await safeJson(res, {});
+      API_BASE = base;
       backendReachable = true;
       backendAvailable = true;
       const dot = document.getElementById('backend-dot');
       const label = document.getElementById('backend-label');
       if (dot) { dot.style.opacity = '1'; dot.style.background = 'var(--ok)'; }
       if (label) label.textContent = data.anthropic_configured ? 'API connected' : 'API up — key missing';
-      if (window.location.protocol === 'file:') {
+      if (fileMode) {
+        try { localStorage.setItem('logiq_api_base', API_BASE); } catch (e) {}
         toast('Connected to backend at ' + API_BASE);
       }
       return true;
@@ -3180,8 +3227,8 @@ async function checkHealth() {
   const label = document.getElementById('backend-label');
   if (dot) dot.style.background = 'var(--warn)';
   if (label) label.textContent = 'Demo mode';
-  if (window.location.protocol === 'file:') {
-    toast('Start the server: py -m uvicorn main:app --port 8000 — then open http://localhost:8000');
+  if (fileMode) {
+    toast('Start the server on 8001 or 8000, or open the app through the backend URL');
   }
   return false;
 }
@@ -3208,7 +3255,7 @@ function showBanner(focusId) {
 }
 async function requireAI() {
   if (await ensureBackendReachable()) return true;
-  toast('Backend unavailable — start the server at http://localhost:8000');
+  toast('Backend unavailable — start the server on http://localhost:8001 or http://localhost:8000');
   return false;
 }
 function requireSupabase() {
