@@ -72,11 +72,69 @@ def test_gs09_creates_sheet_via_addSheet():
 
     assert out["success"] is True
     assert out["created"] is True
+    assert out["created_via"] == "addSheet"
     assert out["sheet_name"] == "Picklist 1"
     assert out["sheet_id"] == 7
     assert out["schema_lock"] is False
     body = spreadsheets.batchUpdate.call_args.kwargs["body"]
     assert body["requests"][0]["addSheet"]["properties"]["title"] == "Picklist 1"
+
+
+def test_gs09_duplicates_template_with_newSheetName():
+    service, spreadsheets = _mock_service(titles=("Sheet1", "Picklist Template"))
+    spreadsheets.batchUpdate.return_value.execute.return_value = {
+        "replies": [
+            {
+                "duplicateSheet": {
+                    "properties": {"sheetId": 42, "title": "Picklist 1"}
+                }
+            }
+        ]
+    }
+    with patch("sheets_service._require_sheets"), \
+         patch("sheets_service.get_sheets_service", return_value=service):
+        out = _execute_step(
+            "GS-09",
+            {
+                "url": SHEET_URL,
+                "sheet_name": "Picklist 1",
+                "template_sheet_name": "Picklist Template",
+            },
+            user_id="u1",
+            agent_id="aria",
+            agent_name="Aria",
+        )
+
+    assert out["success"] is True
+    assert out["created_via"] == "duplicate"
+    assert out["template_sheet_name"] == "Picklist Template"
+    assert out["sheet_id"] == 42
+    body = spreadsheets.batchUpdate.call_args.kwargs["body"]
+    dup = body["requests"][0]["duplicateSheet"]
+    assert dup["sourceSheetId"] == 1  # second tab in mock meta
+    assert dup["newSheetName"] == "Picklist 1"
+    assert "addSheet" not in body["requests"][0]
+
+
+def test_gs09_template_missing_hard_fails_no_addSheet():
+    service, spreadsheets = _mock_service(titles=("Sheet1",))
+    with patch("sheets_service._require_sheets"), \
+         patch("sheets_service.get_sheets_service", return_value=service):
+        with pytest.raises(StepExecutionError) as exc:
+            _execute_step(
+                "GS-09",
+                {
+                    "url": SHEET_URL,
+                    "sheet_name": "Picklist 1",
+                    "template_sheet_name": "Missing Template",
+                },
+                user_id="u1",
+                agent_id="aria",
+                agent_name="Aria",
+            )
+    assert "Missing Template" in str(exc.value)
+    assert "not found" in str(exc.value).lower()
+    spreadsheets.batchUpdate.assert_not_called()
 
 
 def test_gs09_accepts_title_alias():

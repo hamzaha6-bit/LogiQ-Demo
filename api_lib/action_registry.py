@@ -102,6 +102,28 @@ ACTION_REGISTRY: Dict[str, Dict[str, Any]] = {
         "params": {
             "url": "Google Sheets URL (or spreadsheet_id)",
             "sheet_name": "required new tab title (aliases: title, name)",
+            "template_sheet_name": "optional; duplicate this tab (hard-fail if missing; no addSheet fallback)",
+        },
+    },
+    # Dedicated emit action (Pound Fabrics picklist MVP piece 4) — not generic engine branching.
+    # Naming: "Picklist 1"..N + "Exceptions" (prefixes configurable).
+    "GS-10": {
+        "integration": "Google Sheets",
+        "name": "Emit picklist tabs",
+        "requires_approval": False,
+        "params": {
+            "url": "Google Sheets URL (or spreadsheet_id); same workbook as GS-05",
+            "rows": "list of row objects (or {rows, columns} from prior XF/GS step)",
+            "columns": "column name list",
+            "exception_field": "required; blank/whitespace/absent → Exceptions tab (e.g. Lineitem sku)",
+            "target_rows_per_tab": "primary; derives N dynamically (volume-based)",
+            "tab_count": "optional override; exact picklist tab count when set",
+            "keep_groups_intact": "default true; do not split a group across tabs (tabs may be uneven)",
+            "group_column": "group key for keep_groups_intact / group_boundaries (e.g. Name)",
+            "picklist_prefix": "optional; default 'Picklist' → 'Picklist 1'..N",
+            "exception_sheet_name": "optional; default 'Exceptions'",
+            "template_sheet_name": "optional; when set, always delete managed outputs then duplicate (no addSheet)",
+            "exceptions_template_sheet_name": "optional; exceptions tab template (defaults to template_sheet_name)",
         },
     },
     "GC-01": {"integration": "Google Calendar", "name": "Check availability", "requires_approval": False},
@@ -182,6 +204,7 @@ ACTION_REGISTRY: Dict[str, Dict[str, Any]] = {
 # XF-01..05: pure in-memory transforms (no Sheets API).
 REAL_CODES = frozenset({
     "GS-01", "GS-02", "GS-03", "GS-04", "GS-05", "GS-06", "GS-07", "GS-08", "GS-09",
+    "GS-10",
     "GM-01", "GM-02", "GM-03", "GM-04", "GM-05", "GM-06", "GM-07", "GM-08",
     "GC-01", "GC-02", "GC-03", "GC-04", "GC-05", "GC-06",
     "XF-01", "XF-02", "XF-03", "XF-04", "XF-05",

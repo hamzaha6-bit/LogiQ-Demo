@@ -706,14 +706,67 @@ def write_rows(
     }
 
 
+def _duplicate_sheet_request(
+    service: Any,
+    spreadsheet_id: str,
+    *,
+    source_sheet_id: int,
+    new_sheet_name: str,
+) -> Dict[str, Any]:
+    """Duplicate a tab via DuplicateSheetRequest.
+
+    Always passes newSheetName so the API does not invent 'Copy of …' orphans.
+    Empirically, duplicated tabs inherit UI print/page layout from the source;
+    Sheets API v4 does not expose pageSetup/pageMargins to set or verify that.
+    """
+    title = (new_sheet_name or "").strip()
+    if not title:
+        raise SheetsError("newSheetName is required when duplicating a tab")
+    result = (
+        service.spreadsheets()
+        .batchUpdate(
+            spreadsheetId=spreadsheet_id,
+            body={
+                "requests": [
+                    {
+                        "duplicateSheet": {
+                            "sourceSheetId": int(source_sheet_id),
+                            "newSheetName": title,
+                        }
+                    }
+                ]
+            },
+        )
+        .execute()
+    )
+    replies = result.get("replies") or []
+    if not replies:
+        raise SheetsError("Sheets duplicateSheet returned no confirmation")
+    props = ((replies[0] or {}).get("duplicateSheet") or {}).get("properties") or {}
+    created_title = str(props.get("title") or title)
+    sheet_id = props.get("sheetId")
+    if sheet_id is None:
+        raise SheetsError("Sheets duplicateSheet returned no sheetId")
+    return {
+        "sheet_name": created_title,
+        "sheet_id": int(sheet_id),
+    }
+
+
 def create_sheet(
     url: str,
     user_id: str,
     sheet_name: str,
     *,
     spreadsheet_id: Optional[str] = None,
+    template_sheet_name: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Create a new tab via spreadsheets.batchUpdate addSheet (GS-09).
+    """Create a new tab (GS-09).
+
+    Modes:
+    - Blank: spreadsheets.batchUpdate addSheet (default when no template).
+    - Template: DuplicateSheetRequest from template_sheet_name with newSheetName.
+      Missing template hard-fails — no silent fallback to addSheet.
 
     Output tabs are unlocked — does not write sheet_connections / schema lock.
     Missing/blank title fails loudly; duplicate title fails loudly (no silent reuse).
@@ -725,19 +778,37 @@ def create_sheet(
     title = (sheet_name or "").strip()
     if not title:
         raise SheetsError("sheet_name is required to create a tab")
+    template = (template_sheet_name or "").strip() or None
     service = get_sheets_service(user_id)
-    meta = (
-        service.spreadsheets()
-        .get(spreadsheetId=sid, fields="sheets.properties")
-        .execute()
-    )
-    existing = [
-        str((s.get("properties") or {}).get("title") or "")
-        for s in (meta.get("sheets") or [])
-        if (s.get("properties") or {}).get("title")
-    ]
+    existing_props = _list_sheet_properties(service, sid)
+    existing = [p["title"] for p in existing_props]
+    by_title = {p["title"]: p["sheetId"] for p in existing_props}
     if title in existing:
         raise SheetsError(f"Sheet {title!r} already exists")
+
+    if template:
+        if template not in by_title:
+            available = ", ".join(existing) if existing else "(none)"
+            raise SheetsError(
+                f"Template sheet {template!r} not found (available: {available})"
+            )
+        dup = _duplicate_sheet_request(
+            service,
+            sid,
+            source_sheet_id=by_title[template],
+            new_sheet_name=title,
+        )
+        return {
+            "success": True,
+            "spreadsheet_id": sid,
+            "sheet_name": dup["sheet_name"],
+            "sheet_id": dup["sheet_id"],
+            "created": True,
+            "created_via": "duplicate",
+            "template_sheet_name": template,
+            "schema_lock": False,
+        }
+
     result = (
         service.spreadsheets()
         .batchUpdate(
@@ -768,6 +839,7 @@ def create_sheet(
         "sheet_name": created_title,
         "sheet_id": int(sheet_id),
         "created": True,
+        "created_via": "addSheet",
         "schema_lock": False,
     }
 
@@ -862,4 +934,273 @@ def connection_status(user_id: str, agent_id: str, url: str) -> Dict[str, Any]:
         "schema": conn.get("locked_schema"),
         "schema_mismatch": conn.get("schema_mismatch"),
         "poll_cursor": conn.get("poll_cursor", 1),
+    }
+
+
+def _list_sheet_properties(service: Any, spreadsheet_id: str) -> List[Dict[str, Any]]:
+    meta = (
+        service.spreadsheets()
+        .get(spreadsheetId=spreadsheet_id, fields="sheets.properties")
+        .execute()
+    )
+    out: List[Dict[str, Any]] = []
+    for sheet in meta.get("sheets") or []:
+        props = sheet.get("properties") or {}
+        title = str(props.get("title") or "")
+        sheet_id = props.get("sheetId")
+        if not title or sheet_id is None:
+            continue
+        out.append({"title": title, "sheetId": int(sheet_id)})
+    return out
+
+
+def _delete_sheets_by_ids(
+    service: Any,
+    spreadsheet_id: str,
+    sheet_ids: List[int],
+) -> int:
+    """Delete sheets by id. Refuses to delete every sheet in the spreadsheet."""
+    if not sheet_ids:
+        return 0
+    existing = _list_sheet_properties(service, spreadsheet_id)
+    if len(existing) <= len(sheet_ids):
+        # Keep at least one tab — clear survivors instead of deleting the last sheet.
+        keep_id = None
+        for props in existing:
+            if props["sheetId"] in sheet_ids:
+                keep_id = props["sheetId"]
+                break
+        to_delete = [sid for sid in sheet_ids if sid != keep_id]
+        if keep_id is not None:
+            keep_title = next(
+                (p["title"] for p in existing if p["sheetId"] == keep_id), None
+            )
+            if keep_title:
+                service.spreadsheets().values().clear(
+                    spreadsheetId=spreadsheet_id,
+                    range=_a1_sheet_range(keep_title, "A:ZZ"),
+                ).execute()
+        sheet_ids = to_delete
+    if not sheet_ids:
+        return 0
+    service.spreadsheets().batchUpdate(
+        spreadsheetId=spreadsheet_id,
+        body={
+            "requests": [{"deleteSheet": {"sheetId": sid}} for sid in sheet_ids],
+        },
+    ).execute()
+    return len(sheet_ids)
+
+
+def emit_picklist(
+    url: str,
+    user_id: str,
+    params: Dict[str, Any],
+    *,
+    spreadsheet_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """GS-10: route exceptions + volume-balance picklist tabs (idempotent).
+
+    Managed tab names: '{picklist_prefix} 1'..N and exception_sheet_name
+    (default Exceptions). Template tabs must not use those managed names.
+
+    Template mode (template_sheet_name set):
+    - Always delete known managed outputs, then DuplicateSheetRequest recreate.
+    - Never reuse prior blank-created tabs; never fall back to addSheet.
+    - Missing template hard-fails.
+    - Optional exceptions_template_sheet_name; else exceptions share the picklist template.
+
+    Blank mode (no template): create missing tabs via addSheet; clear+write;
+    delete only orphan managed titles not needed this run.
+    """
+    from picklist_emit import (  # local import avoids cycles in tests
+        EmitError,
+        is_managed_picklist_title,
+        parse_emit_params,
+    )
+
+    _require_sheets(user_id)
+    sid = (spreadsheet_id or "").strip() or parse_spreadsheet_id(url or "")
+    if not sid:
+        raise SheetsError("Invalid Google Sheets URL or spreadsheet_id")
+
+    try:
+        plan = parse_emit_params(params or {})
+    except EmitError as exc:
+        raise SheetsError(str(exc)) from exc
+
+    raw = params or {}
+    template_name = (
+        str(
+            raw.get("template_sheet_name")
+            if "template_sheet_name" in raw
+            else raw.get("template")
+            if "template" in raw
+            else raw.get("from_template")
+            or ""
+        ).strip()
+        or None
+    )
+    exc_template_name = (
+        str(
+            raw.get("exceptions_template_sheet_name")
+            if "exceptions_template_sheet_name" in raw
+            else raw.get("exception_template_sheet_name")
+            if "exception_template_sheet_name" in raw
+            else raw.get("exceptions_template")
+            or ""
+        ).strip()
+        or None
+    )
+    # Shared template is fine when exceptions_template omitted.
+    if template_name and not exc_template_name:
+        exc_template_name = template_name
+    # exceptions-only template without picklist template is unsupported — hard fail.
+    if exc_template_name and not template_name:
+        raise SheetsError(
+            "exceptions_template_sheet_name requires template_sheet_name "
+            "(or omit both for blank addSheet create)"
+        )
+
+    prefix = plan["picklist_prefix"]
+    exc_name = plan["exception_sheet_name"]
+    needed: List[Dict[str, Any]] = list(plan["picklists"])
+    if plan["exceptions"] is not None:
+        needed.append(plan["exceptions"])
+    needed_titles = {p["sheet_name"] for p in needed}
+
+    service = get_sheets_service(user_id)
+    existing = _list_sheet_properties(service, sid)
+    by_title = {p["title"]: p["sheetId"] for p in existing}
+
+    use_template = bool(template_name)
+    if use_template:
+        # Validate templates exist *before* deleting managed outputs.
+        if template_name not in by_title:
+            available = ", ".join(by_title) if by_title else "(none)"
+            raise SheetsError(
+                f"Template sheet {template_name!r} not found (available: {available})"
+            )
+        if exc_template_name and exc_template_name not in by_title:
+            available = ", ".join(by_title) if by_title else "(none)"
+            raise SheetsError(
+                f"Exceptions template sheet {exc_template_name!r} not found "
+                f"(available: {available})"
+            )
+        # Always delete + reduplicate managed outputs (idempotent recreate).
+        managed_ids: List[int] = []
+        for props in existing:
+            title = props["title"]
+            if is_managed_picklist_title(title, prefix=prefix) or title == exc_name:
+                managed_ids.append(props["sheetId"])
+        deleted = _delete_sheets_by_ids(service, sid, managed_ids)
+    else:
+        # Blank mode: remove managed titles not needed this run only.
+        orphan_ids: List[int] = []
+        for props in existing:
+            title = props["title"]
+            managed = is_managed_picklist_title(title, prefix=prefix) or title == exc_name
+            if managed and title not in needed_titles:
+                orphan_ids.append(props["sheetId"])
+        deleted = _delete_sheets_by_ids(service, sid, orphan_ids)
+
+    # Refresh after deletes.
+    existing = _list_sheet_properties(service, sid)
+    by_title = {p["title"]: p["sheetId"] for p in existing}
+
+    written: List[Dict[str, Any]] = []
+    created_titles: List[str] = []
+    cleared_titles: List[str] = []
+    created_via = "duplicate" if use_template else "addSheet"
+
+    for part in needed:
+        title = part["sheet_name"]
+        rows = part["rows"]
+        columns = part["columns"]
+        if use_template:
+            # Recreate every managed tab from template — never reuse / never addSheet.
+            if title in by_title:
+                # Should not happen after managed delete; refuse rather than reuse.
+                raise SheetsError(
+                    f"Managed sheet {title!r} still exists after template cleanup; "
+                    "refusing to reuse (expected delete + reduplicate)"
+                )
+            src_title = (
+                exc_template_name
+                if part["kind"] == "exceptions"
+                else template_name
+            )
+            assert src_title is not None
+            if src_title not in by_title:
+                available = ", ".join(by_title) if by_title else "(none)"
+                raise SheetsError(
+                    f"Template sheet {src_title!r} not found (available: {available})"
+                )
+            dup = _duplicate_sheet_request(
+                service,
+                sid,
+                source_sheet_id=by_title[src_title],
+                new_sheet_name=title,
+            )
+            created_titles.append(title)
+            by_title[title] = int(dup["sheet_id"])
+        elif title not in by_title:
+            created = create_sheet(url, user_id, title, spreadsheet_id=sid)
+            created_titles.append(title)
+            by_title[title] = int(created["sheet_id"])
+        # Always clear then write so re-runs replace prior contents / template sample rows.
+        write_out = write_rows(
+            url,
+            user_id,
+            rows,
+            columns,
+            sheet_name=title,
+            clear_first=True,
+            spreadsheet_id=sid,
+        )
+        cleared_titles.append(title)
+        written.append(
+            {
+                "sheet_name": title,
+                "kind": part["kind"],
+                "index": part.get("index"),
+                "row_count": part["row_count"],
+                "group_boundaries": part.get("group_boundaries") or [],
+                "group_column": part.get("group_column"),
+                "sheet_id": by_title[title],
+                "updated_range": write_out.get("updated_range"),
+            }
+        )
+
+    return {
+        "success": True,
+        "spreadsheet_id": sid,
+        "tabs": written,
+        "picklist_tabs": [t for t in written if t["kind"] == "picklist"],
+        "exception_tab": next((t for t in written if t["kind"] == "exceptions"), None),
+        "tab_count": plan["tab_count"],
+        "good_row_count": plan["good_row_count"],
+        "exception_row_count": plan["exception_row_count"],
+        "columns": plan["columns"],
+        "group_column": plan["group_column"],
+        "keep_groups_intact": plan["keep_groups_intact"],
+        "target_rows_per_tab": plan["target_rows_per_tab"],
+        "tab_count_override": plan["tab_count_override"],
+        "picklist_prefix": prefix,
+        "exception_sheet_name": exc_name,
+        "template_sheet_name": template_name,
+        "exceptions_template_sheet_name": (
+            exc_template_name if use_template else None
+        ),
+        "created_via": created_via if needed else None,
+        "deleted_orphan_tabs": deleted,
+        "created_tabs": created_titles,
+        "cleared_tabs": cleared_titles,
+        "schema_lock": False,
+        # Flatten group_boundaries for the first picklist when useful for GS-11 chaining.
+        "group_boundaries": (
+            (written[0].get("group_boundaries") if written else None)
+            if len(written) == 1
+            else None
+        ),
     }
