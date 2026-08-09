@@ -50,37 +50,64 @@ def _sheets_meta(*titles: str):
 def _mock_service(*, titles=("Sheet1",)):
     service = MagicMock()
     spreadsheets = service.spreadsheets.return_value
-    # Mutable meta so create/delete can be simulated via side effects if needed.
-    state = {"titles": list(titles)}
+    # Stable sheetIds (like the real API) — not positional indices.
+    state = {
+        "sheets": [{"id": i + 1, "title": t} for i, t in enumerate(titles)],
+        "next_id": len(titles) + 1,
+        "titles": None,  # alias updated below for assertions
+    }
+
+    def _sync_titles():
+        state["titles"] = [s["title"] for s in state["sheets"]]
+
+    _sync_titles()
 
     def _get(**_kwargs):
         m = MagicMock()
-        m.execute.return_value = _sheets_meta(*state["titles"])
+        m.execute.return_value = {
+            "sheets": [
+                {"properties": {"sheetId": s["id"], "title": s["title"]}}
+                for s in state["sheets"]
+            ]
+        }
         return m
 
     def _batch_update(**kwargs):
         body = kwargs.get("body") or {}
-        for req in body.get("requests") or []:
-            if "addSheet" in req:
-                title = req["addSheet"]["properties"]["title"]
-                state["titles"].append(title)
-            if "deleteSheet" in req:
-                sid = req["deleteSheet"]["sheetId"]
-                # sheetId is 1-based index in our meta helper
-                idx = sid - 1
-                if 0 <= idx < len(state["titles"]):
-                    state["titles"].pop(idx)
-        m = MagicMock()
-        # addSheet reply
         replies = []
         for req in body.get("requests") or []:
             if "addSheet" in req:
                 title = req["addSheet"]["properties"]["title"]
+                sid = state["next_id"]
+                state["next_id"] += 1
+                state["sheets"].append({"id": sid, "title": title})
                 replies.append(
-                    {"addSheet": {"properties": {"sheetId": len(state["titles"]), "title": title}}}
+                    {"addSheet": {"properties": {"sheetId": sid, "title": title}}}
                 )
+            elif "duplicateSheet" in req:
+                title = req["duplicateSheet"]["newSheetName"]
+                assert "newSheetName" in req["duplicateSheet"]
+                assert "sourceSheetId" in req["duplicateSheet"]
+                src = req["duplicateSheet"]["sourceSheetId"]
+                assert any(s["id"] == src for s in state["sheets"])
+                sid = state["next_id"]
+                state["next_id"] += 1
+                state["sheets"].append({"id": sid, "title": title})
+                replies.append(
+                    {
+                        "duplicateSheet": {
+                            "properties": {"sheetId": sid, "title": title}
+                        }
+                    }
+                )
+            elif "deleteSheet" in req:
+                sid = req["deleteSheet"]["sheetId"]
+                state["sheets"] = [s for s in state["sheets"] if s["id"] != sid]
+                replies.append({})
             else:
                 replies.append({})
+        _sync_titles()
+        m = MagicMock()
         m.execute.return_value = {"replies": replies}
         return m
 
@@ -341,3 +368,145 @@ def test_gs10_requires_url():
             agent_id="aria",
             agent_name="Aria",
         )
+
+
+def _collect_batch_requests(spreadsheets):
+    reqs = []
+    for call in spreadsheets.batchUpdate.call_args_list:
+        body = call.kwargs.get("body") or {}
+        reqs.extend(body.get("requests") or [])
+    return reqs
+
+
+def test_gs10_template_mode_duplicate_payload_includes_newSheetName(fixture_rows):
+    rows = [r for r in fixture_rows["rows"] if str(r.get("Lineitem sku") or "").strip()][:3]
+    service, spreadsheets, state = _mock_service(
+        titles=("Sheet1", "Picklist Template")
+    )
+    with patch("sheets_service._require_sheets"), \
+         patch("sheets_service.get_sheets_service", return_value=service):
+        out = _execute_step(
+            "GS-10",
+            {
+                "url": SHEET_URL,
+                "rows": rows,
+                "columns": fixture_rows["columns"],
+                "exception_field": "Lineitem sku",
+                "tab_count": 1,
+                "keep_groups_intact": False,
+                "template_sheet_name": "Picklist Template",
+            },
+            user_id="u1",
+            agent_id="aria",
+            agent_name="Aria",
+        )
+    assert out["success"] is True
+    assert out["created_via"] == "duplicate"
+    assert out["template_sheet_name"] == "Picklist Template"
+    reqs = _collect_batch_requests(spreadsheets)
+    dups = [r["duplicateSheet"] for r in reqs if "duplicateSheet" in r]
+    assert dups, "expected DuplicateSheetRequest"
+    for dup in dups:
+        assert "newSheetName" in dup
+        assert "sourceSheetId" in dup
+        assert dup["newSheetName"].startswith("Picklist ")
+    assert not any("addSheet" in r for r in reqs)
+
+
+def test_gs10_template_missing_hard_fails_no_addSheet(fixture_rows):
+    rows = [r for r in fixture_rows["rows"] if str(r.get("Lineitem sku") or "").strip()][:2]
+    service, spreadsheets, state = _mock_service(titles=("Sheet1", "Picklist 1"))
+    with patch("sheets_service._require_sheets"), \
+         patch("sheets_service.get_sheets_service", return_value=service):
+        with pytest.raises(StepExecutionError) as exc:
+            _execute_step(
+                "GS-10",
+                {
+                    "url": SHEET_URL,
+                    "rows": rows,
+                    "columns": fixture_rows["columns"],
+                    "exception_field": "Lineitem sku",
+                    "tab_count": 1,
+                    "keep_groups_intact": False,
+                    "template_sheet_name": "Picklist Template",
+                },
+                user_id="u1",
+                agent_id="aria",
+                agent_name="Aria",
+            )
+    assert "Picklist Template" in str(exc.value)
+    assert "not found" in str(exc.value).lower()
+    reqs = _collect_batch_requests(spreadsheets)
+    assert not any("addSheet" in r for r in reqs)
+    assert not any("duplicateSheet" in r for r in reqs)
+    assert not any("deleteSheet" in r for r in reqs)
+
+
+def test_gs10_template_always_deletes_managed_then_reduplicates(fixture_rows):
+    rows = [r for r in fixture_rows["rows"] if str(r.get("Lineitem sku") or "").strip()][:4]
+    # Prior blank-created Picklist tabs must be deleted and recreated from template.
+    service, spreadsheets, state = _mock_service(
+        titles=("Sheet1", "Picklist Template", "Picklist 1", "Picklist 2", "Exceptions")
+    )
+    with patch("sheets_service._require_sheets"), \
+         patch("sheets_service.get_sheets_service", return_value=service):
+        out = _execute_step(
+            "GS-10",
+            {
+                "url": SHEET_URL,
+                "rows": rows,
+                "columns": fixture_rows["columns"],
+                "exception_field": "Lineitem sku",
+                "tab_count": 1,
+                "keep_groups_intact": False,
+                "template_sheet_name": "Picklist Template",
+            },
+            user_id="u1",
+            agent_id="aria",
+            agent_name="Aria",
+        )
+    assert out["created_via"] == "duplicate"
+    assert out["deleted_orphan_tabs"] >= 1
+    reqs = _collect_batch_requests(spreadsheets)
+    assert any("deleteSheet" in r for r in reqs)
+    dups = [r["duplicateSheet"] for r in reqs if "duplicateSheet" in r]
+    assert any(d["newSheetName"] == "Picklist 1" for d in dups)
+    assert not any("addSheet" in r for r in reqs)
+    # Template tab must survive; managed outputs recreated.
+    assert "Picklist Template" in state["titles"]
+    assert "Picklist 1" in state["titles"]
+
+
+def test_gs10_no_addSheet_fallback_when_template_configured(fixture_rows):
+    rows = list(fixture_rows["rows"][:4])
+    rows[0]["Lineitem sku"] = ""
+    service, spreadsheets, state = _mock_service(
+        titles=("Sheet1", "Picklist Template", "Exceptions Template")
+    )
+    with patch("sheets_service._require_sheets"), \
+         patch("sheets_service.get_sheets_service", return_value=service):
+        out = _execute_step(
+            "GS-10",
+            {
+                "url": SHEET_URL,
+                "rows": rows,
+                "columns": fixture_rows["columns"],
+                "exception_field": "Lineitem sku",
+                "target_rows_per_tab": 50,
+                "keep_groups_intact": True,
+                "group_column": "Name",
+                "template_sheet_name": "Picklist Template",
+                "exceptions_template_sheet_name": "Exceptions Template",
+            },
+            user_id="u1",
+            agent_id="aria",
+            agent_name="Aria",
+        )
+    assert out["exception_tab"] is not None
+    assert out["exceptions_template_sheet_name"] == "Exceptions Template"
+    reqs = _collect_batch_requests(spreadsheets)
+    assert not any("addSheet" in r for r in reqs)
+    dups = [r["duplicateSheet"] for r in reqs if "duplicateSheet" in r]
+    names = {d["newSheetName"] for d in dups}
+    assert "Exceptions" in names
+    assert any(n.startswith("Picklist ") for n in names)
