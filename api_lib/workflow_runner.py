@@ -35,6 +35,7 @@ from sheets_service import (
     SchemaMismatchError,
     SheetsError,
     connect,
+    create_sheet,
     delete_row,
     poll,
     read_sheet,
@@ -289,6 +290,23 @@ def _execute_gmail_step(
     raise StepExecutionError(f"Unhandled Gmail action {code}")
 
 
+def _sheet_name_param(params: Dict[str, Any]) -> Optional[str]:
+    """Optional tab title from step params (aliases: sheet_name, sheet, title, source_sheet_name)."""
+    raw = (
+        params.get("sheet_name")
+        if "sheet_name" in params
+        else params.get("sheet")
+        if "sheet" in params
+        else params.get("title")
+        if "title" in params
+        else params.get("source_sheet_name")
+    )
+    if raw is None:
+        return None
+    text = str(raw).strip()
+    return text or None
+
+
 def _execute_sheets_step(
     code: str,
     params: Dict[str, Any],
@@ -298,41 +316,64 @@ def _execute_sheets_step(
 ) -> Dict[str, Any]:
     url = (params.get("url") or params.get("sheet_url") or "").strip()
     sheet_agent = (params.get("agent") or agent_id or "aria").strip()
+    sheet_name = _sheet_name_param(params)
     try:
         if code == "GS-01":
             if not url:
                 raise StepExecutionError("GS-01 requires a sheet url param")
-            return read_sheet(url, sheet_agent, user_id)
+            return read_sheet(url, sheet_agent, user_id, sheet_name=sheet_name)
         if code == "GS-02":
             if not url:
                 raise StepExecutionError("GS-02 requires a sheet url param")
             row_data = params.get("row") or params.get("row_data") or params.get("data") or {}
             if not isinstance(row_data, dict) or not row_data:
                 raise StepExecutionError("GS-02 requires row/row_data object")
-            return write_row(url, sheet_agent, user_id, {str(k): str(v) for k, v in row_data.items()})
+            return write_row(
+                url,
+                sheet_agent,
+                user_id,
+                {str(k): str(v) for k, v in row_data.items()},
+                sheet_name=sheet_name,
+            )
         if code == "GS-03":
             if not url:
                 raise StepExecutionError("GS-03 requires a sheet url param")
             row_data = params.get("row_data") or params.get("data") or {}
             if not isinstance(row_data, dict) or not row_data:
                 raise StepExecutionError("GS-03 requires row_data object")
-            return update_row(url, sheet_agent, user_id, params.get("row"), {str(k): str(v) for k, v in row_data.items()})
+            return update_row(
+                url,
+                sheet_agent,
+                user_id,
+                params.get("row"),
+                {str(k): str(v) for k, v in row_data.items()},
+                sheet_name=sheet_name,
+            )
         if code == "GS-04":
             if not url:
                 raise StepExecutionError("GS-04 requires a sheet url param")
-            return poll(url, sheet_agent, user_id)
+            return poll(url, sheet_agent, user_id, sheet_name=sheet_name)
         if code == "GS-05":
             if not url:
                 raise StepExecutionError("GS-05 requires a sheet url param")
-            return connect(url, sheet_agent, user_id)
+            return connect(url, sheet_agent, user_id, sheet_name=sheet_name)
         if code == "GS-06":
             if not url:
                 raise StepExecutionError("GS-06 requires a sheet url param")
-            return delete_row(url, sheet_agent, user_id, params.get("row"))
+            return delete_row(
+                url, sheet_agent, user_id, params.get("row"), sheet_name=sheet_name
+            )
         if code == "GS-07":
             if not url:
                 raise StepExecutionError("GS-07 requires a sheet url param")
-            return write_cell(url, sheet_agent, user_id, params.get("cell") or "", params.get("value"))
+            return write_cell(
+                url,
+                sheet_agent,
+                user_id,
+                params.get("cell") or "",
+                params.get("value"),
+                sheet_name=sheet_name,
+            )
         if code == "GS-08":
             spreadsheet_id = (params.get("spreadsheet_id") or "").strip()
             if not url and not spreadsheet_id:
@@ -364,8 +405,22 @@ def _execute_sheets_step(
                 user_id,
                 rows,
                 columns,
-                sheet_name=params.get("sheet_name") or params.get("sheet") or None,
+                sheet_name=sheet_name,
                 clear_first=clear_raw,
+                spreadsheet_id=spreadsheet_id or None,
+            )
+        if code == "GS-09":
+            spreadsheet_id = (params.get("spreadsheet_id") or "").strip()
+            if not url and not spreadsheet_id:
+                raise StepExecutionError("GS-09 requires a sheet url or spreadsheet_id")
+            # GS-09 creates an output tab — title is required (no first-tab default).
+            create_name = sheet_name or (str(params.get("name") or "").strip() or None)
+            if not create_name:
+                raise StepExecutionError("GS-09 requires sheet_name (or title/name)")
+            return create_sheet(
+                url,
+                user_id,
+                create_name,
                 spreadsheet_id=spreadsheet_id or None,
             )
     except StepExecutionError:

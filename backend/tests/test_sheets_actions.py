@@ -36,6 +36,8 @@ def _conn():
 
 def test_connect_fails_when_rest_post_returns_no_row():
     with patch("sheets_service._require_sheets"), \
+         patch("sheets_service.get_sheets_service", return_value=MagicMock()), \
+         patch("sheets_service._resolve_sheet_title", return_value="Sheet1"), \
          patch("sheets_service._fetch_values", return_value=[["Name", "Email"], ["Ada", "a@x.com"]]), \
          patch("sheets_service.rest_post_with_error", return_value=(None, "HTTP 500: boom")):
         with pytest.raises(SheetsError) as exc:
@@ -45,13 +47,18 @@ def test_connect_fails_when_rest_post_returns_no_row():
 
 def test_gs05_connect_success_requires_connection_id():
     with patch("sheets_service._require_sheets"), \
+         patch("sheets_service.get_sheets_service", return_value=MagicMock()), \
+         patch("sheets_service._resolve_sheet_title", return_value="Sheet1"), \
          patch("sheets_service._fetch_values", return_value=[["Name"], ["Ada"]]), \
-         patch("sheets_service.rest_post_with_error", return_value=({"id": "c1"}, "")):
+         patch("sheets_service.rest_post_with_error", return_value=({"id": "c1"}, "")) as mock_post:
         out = _execute_step(
             "GS-05", {"url": SHEET_URL}, user_id="u1", agent_id="aria", agent_name="Aria"
         )
     assert out["success"] is True
     assert out["connection_id"] == "c1"
+    assert out["source_sheet_name"] == "Sheet1"
+    payload = mock_post.call_args.args[1]
+    assert payload["source_sheet_name"] == "Sheet1"
 
 
 # ── GS-02 append verifies API confirmation ──────────────────────────────────
@@ -133,7 +140,7 @@ def test_gs07_write_cell():
 def test_gs06_delete_row():
     service = MagicMock()
     service.spreadsheets().get().execute.return_value = {
-        "sheets": [{"properties": {"sheetId": 0}}]
+        "sheets": [{"properties": {"sheetId": 0, "title": "Sheet1"}}]
     }
     service.spreadsheets().batchUpdate().execute.return_value = {"replies": [{}]}
     with patch("sheets_service._require_sheets"), \
@@ -146,6 +153,7 @@ def test_gs06_delete_row():
         )
     assert out["deleted"] is True
     assert out["row"] == 4
+    assert out["sheet_name"] == "Sheet1"
 
 
 def test_gs06_refuses_header_row():

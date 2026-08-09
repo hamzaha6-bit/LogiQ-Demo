@@ -11,13 +11,75 @@ ACTION_REGISTRY: Dict[str, Dict[str, Any]] = {
     "GM-06": {"integration": "Gmail", "name": "Label message", "requires_approval": False},
     "GM-07": {"integration": "Gmail", "name": "Search inbox", "requires_approval": False},
     "GM-08": {"integration": "Gmail", "name": "Get thread", "requires_approval": False},
-    "GS-01": {"integration": "Google Sheets", "name": "Read sheet", "requires_approval": False},
-    "GS-02": {"integration": "Google Sheets", "name": "Append row", "requires_approval": False},
-    "GS-03": {"integration": "Google Sheets", "name": "Update row", "requires_approval": False},
-    "GS-04": {"integration": "Google Sheets", "name": "Poll for new rows", "requires_approval": False},
-    "GS-05": {"integration": "Google Sheets", "name": "Connect sheet", "requires_approval": False},
-    "GS-06": {"integration": "Google Sheets", "name": "Delete row", "requires_approval": True},
-    "GS-07": {"integration": "Google Sheets", "name": "Write cell", "requires_approval": False},
+    "GS-01": {
+        "integration": "Google Sheets",
+        "name": "Read sheet",
+        "requires_approval": False,
+        "params": {
+            "url": "Google Sheets URL",
+            "sheet_name": "optional tab title; default connection source_sheet_name or first sheet; missing name fails loudly",
+        },
+    },
+    "GS-02": {
+        "integration": "Google Sheets",
+        "name": "Append row",
+        "requires_approval": False,
+        "params": {
+            "url": "Google Sheets URL",
+            "row": "row object",
+            "sheet_name": "optional tab title; default connection source tab or first sheet",
+        },
+    },
+    "GS-03": {
+        "integration": "Google Sheets",
+        "name": "Update row",
+        "requires_approval": False,
+        "params": {
+            "url": "Google Sheets URL",
+            "row": "1-based row number (>=2)",
+            "row_data": "row object",
+            "sheet_name": "optional tab title; default connection source tab or first sheet",
+        },
+    },
+    "GS-04": {
+        "integration": "Google Sheets",
+        "name": "Poll for new rows",
+        "requires_approval": False,
+        "params": {
+            "url": "Google Sheets URL",
+            "sheet_name": "optional tab title; default connection source tab or first sheet",
+        },
+    },
+    "GS-05": {
+        "integration": "Google Sheets",
+        "name": "Connect sheet",
+        "requires_approval": False,
+        "params": {
+            "url": "Google Sheets URL",
+            "sheet_name": "optional source tab to lock (stored as source_sheet_name); default first sheet",
+        },
+    },
+    "GS-06": {
+        "integration": "Google Sheets",
+        "name": "Delete row",
+        "requires_approval": True,
+        "params": {
+            "url": "Google Sheets URL",
+            "row": "1-based row number (>=2)",
+            "sheet_name": "optional tab title; default connection source tab or first sheet",
+        },
+    },
+    "GS-07": {
+        "integration": "Google Sheets",
+        "name": "Write cell",
+        "requires_approval": False,
+        "params": {
+            "url": "Google Sheets URL",
+            "cell": "A1 notation",
+            "value": "cell value",
+            "sheet_name": "optional tab title; default connection source tab or first sheet",
+        },
+    },
     # Bulk write to unlocked output tabs (Pound Fabrics picklist MVP piece 2).
     # Distinct from GS-02 (single-row CRM append against locked schema).
     "GS-08": {
@@ -30,6 +92,16 @@ ACTION_REGISTRY: Dict[str, Dict[str, Any]] = {
             "columns": "column name list for the output schema",
             "sheet_name": "optional tab title; default first sheet; missing name fails loudly",
             "clear_first": "optional; clear tab then write (default false / opt-in)",
+        },
+    },
+    # Create output tab (Pound Fabrics picklist MVP piece 3). Not a schema-locked connection.
+    "GS-09": {
+        "integration": "Google Sheets",
+        "name": "Create sheet tab",
+        "requires_approval": False,
+        "params": {
+            "url": "Google Sheets URL (or spreadsheet_id)",
+            "sheet_name": "required new tab title (aliases: title, name)",
         },
     },
     "GC-01": {"integration": "Google Calendar", "name": "Check availability", "requires_approval": False},
@@ -109,7 +181,7 @@ ACTION_REGISTRY: Dict[str, Dict[str, Any]] = {
 # Tracks A/B/C: all 21 Gmail, Sheets, and Calendar codes use real API calls.
 # XF-01..05: pure in-memory transforms (no Sheets API).
 REAL_CODES = frozenset({
-    "GS-01", "GS-02", "GS-03", "GS-04", "GS-05", "GS-06", "GS-07", "GS-08",
+    "GS-01", "GS-02", "GS-03", "GS-04", "GS-05", "GS-06", "GS-07", "GS-08", "GS-09",
     "GM-01", "GM-02", "GM-03", "GM-04", "GM-05", "GM-06", "GM-07", "GM-08",
     "GC-01", "GC-02", "GC-03", "GC-04", "GC-05", "GC-06",
     "XF-01", "XF-02", "XF-03", "XF-04", "XF-05",

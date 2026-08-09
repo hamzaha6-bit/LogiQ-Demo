@@ -110,6 +110,7 @@ CREATE TABLE IF NOT EXISTS sheet_connections (
   agent_id text NOT NULL,
   spreadsheet_id text NOT NULL,
   sheet_url text NOT NULL,
+  source_sheet_name text,
   locked_schema jsonb NOT NULL,
   poll_cursor int DEFAULT 1,
   status text DEFAULT 'active',

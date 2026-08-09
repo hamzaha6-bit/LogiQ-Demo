@@ -99,15 +99,108 @@ def build_schema(columns: List[str], sample_rows: List[Dict[str, str]]) -> Dict[
     }
 
 
-def _fetch_values(user_id: str, spreadsheet_id: str) -> List[List[str]]:
+def _a1_sheet_range(sheet_title: str, cell_range: str) -> str:
+    """Build a quoted A1 range for a sheet tab (handles spaces / apostrophes)."""
+    escaped = (sheet_title or "").replace("'", "''")
+    return f"'{escaped}'!{cell_range}"
+
+
+def _resolve_sheet_meta(
+    service: Any,
+    spreadsheet_id: str,
+    sheet_name: Optional[str],
+) -> Tuple[str, int]:
+    """Return (title, sheetId). Default = first sheet; named sheet must exist (loud fail)."""
+    meta = (
+        service.spreadsheets()
+        .get(spreadsheetId=spreadsheet_id, fields="sheets.properties")
+        .execute()
+    )
+    sheets = meta.get("sheets") or []
+    if not sheets:
+        raise SheetsError("Spreadsheet has no sheets")
+    wanted = (sheet_name or "").strip()
+    if wanted:
+        for sheet in sheets:
+            props = sheet.get("properties") or {}
+            title = str(props.get("title") or "")
+            if title == wanted:
+                sheet_id = props.get("sheetId")
+                if sheet_id is None:
+                    raise SheetsError(f"Could not resolve sheetId for {wanted!r}")
+                return title, int(sheet_id)
+        available = [
+            str((s.get("properties") or {}).get("title") or "")
+            for s in sheets
+            if (s.get("properties") or {}).get("title")
+        ]
+        raise SheetsError(
+            f"Sheet {wanted!r} not found"
+            + (f" (available: {', '.join(available)})" if available else "")
+        )
+    props = sheets[0].get("properties") or {}
+    first = props.get("title")
+    sheet_id = props.get("sheetId")
+    if not first:
+        raise SheetsError("Could not resolve first sheet title")
+    if sheet_id is None:
+        raise SheetsError("Could not resolve first sheetId")
+    return str(first), int(sheet_id)
+
+
+def _resolve_sheet_title(
+    service: Any,
+    spreadsheet_id: str,
+    sheet_name: Optional[str],
+) -> str:
+    """Return target tab title. Default = first sheet; named sheet must exist (loud fail)."""
+    title, _sheet_id = _resolve_sheet_meta(service, spreadsheet_id, sheet_name)
+    return title
+
+
+def _effective_sheet_name(
+    conn: Optional[Dict[str, Any]],
+    sheet_name: Optional[str] = None,
+) -> Optional[str]:
+    """Param override wins; else connection source tab; else None (= first tab)."""
+    override = (sheet_name or "").strip()
+    if override:
+        return override
+    if conn:
+        stored = (conn.get("source_sheet_name") or "").strip()
+        if stored:
+            return stored
+    return None
+
+
+def _fetch_values(
+    user_id: str,
+    spreadsheet_id: str,
+    sheet_name: Optional[str] = None,
+) -> List[List[str]]:
+    """Fetch A:ZZ for a tab. None/blank sheet_name → first tab (unqualified A:ZZ)."""
     service = get_sheets_service(user_id)
+    wanted = (sheet_name or "").strip()
+    if wanted:
+        title = _resolve_sheet_title(service, spreadsheet_id, wanted)
+        range_a1 = _a1_sheet_range(title, "A:ZZ")
+    else:
+        range_a1 = "A:ZZ"
     result = (
         service.spreadsheets()
         .values()
-        .get(spreadsheetId=spreadsheet_id, range="A:ZZ")
+        .get(spreadsheetId=spreadsheet_id, range=range_a1)
         .execute()
     )
     return result.get("values", [])
+
+
+def _qualified_range(sheet_title: Optional[str], cell_range: str) -> str:
+    """Qualify A1 with tab title when known; bare range = Sheets API first-tab default."""
+    wanted = (sheet_title or "").strip()
+    if wanted:
+        return _a1_sheet_range(wanted, cell_range)
+    return cell_range
 
 
 def get_connection(user_id: str, agent_id: str, spreadsheet_id: str) -> Optional[Dict[str, Any]]:
@@ -159,13 +252,24 @@ def _require_sheets(user_id: str) -> None:
         raise SheetsError("Re-authorise Google for Sheets access")
 
 
-def connect(url: str, agent_id: str, user_id: str) -> Dict[str, Any]:
+def connect(
+    url: str,
+    agent_id: str,
+    user_id: str,
+    sheet_name: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Connect/lock a *source* tab. Output tabs use GS-08/GS-09 with explicit sheet_name."""
     _require_sheets(user_id)
     spreadsheet_id = parse_spreadsheet_id(url)
     if not spreadsheet_id:
         raise SheetsError("Invalid Google Sheets URL")
     agent_key = agent_id.lower().strip()
-    values = _fetch_values(user_id, spreadsheet_id)
+    # Resolve source tab first so missing names fail before any DB write.
+    # Title resolve owns the Sheets service lookup (keeps tests patch-friendly).
+    source_title = _resolve_sheet_title(
+        get_sheets_service(user_id), spreadsheet_id, sheet_name
+    )
+    values = _fetch_values(user_id, spreadsheet_id, source_title)
     rows, columns = _rows_from_values(values)
     if not columns:
         raise SheetsError("Sheet has no header row")
@@ -177,6 +281,7 @@ def connect(url: str, agent_id: str, user_id: str) -> Dict[str, Any]:
             "agent_id": agent_key,
             "spreadsheet_id": spreadsheet_id,
             "sheet_url": url.strip(),
+            "source_sheet_name": source_title,
             "locked_schema": locked_schema,
             "poll_cursor": 1,
             "status": "active",
@@ -193,13 +298,20 @@ def connect(url: str, agent_id: str, user_id: str) -> Dict[str, Any]:
         "row_count": len(rows),
         "columns": columns,
         "spreadsheet_id": spreadsheet_id,
+        "sheet_name": source_title,
+        "source_sheet_name": source_title,
         "schema": locked_schema,
         "status": "active",
         "connection_id": row["id"],
     }
 
 
-def read_sheet(url: str, agent_id: str, user_id: str) -> Dict[str, Any]:
+def read_sheet(
+    url: str,
+    agent_id: str,
+    user_id: str,
+    sheet_name: Optional[str] = None,
+) -> Dict[str, Any]:
     _require_sheets(user_id)
     spreadsheet_id = parse_spreadsheet_id(url)
     if not spreadsheet_id:
@@ -212,14 +324,28 @@ def read_sheet(url: str, agent_id: str, user_id: str) -> Dict[str, Any]:
             "Sheet schema changed — workflow paused",
             conn.get("schema_mismatch") or {},
         )
-    values = _fetch_values(user_id, spreadsheet_id)
+    target = _effective_sheet_name(conn, sheet_name)
+    if target:
+        service = get_sheets_service(user_id)
+        title = _resolve_sheet_title(service, spreadsheet_id, target)
+    else:
+        title = None
+    values = _fetch_values(user_id, spreadsheet_id, title)
     rows, columns = _rows_from_values(values)
     locked = conn.get("locked_schema") or {}
     diff = _validate_schema(locked, columns)
     if diff:
         _pause_connection(conn["id"], diff)
         raise SchemaMismatchError("Sheet schema changed — workflow paused", diff)
-    return {"success": True, "rows": rows, "columns": columns, "row_count": len(rows)}
+    out: Dict[str, Any] = {
+        "success": True,
+        "rows": rows,
+        "columns": columns,
+        "row_count": len(rows),
+    }
+    if title:
+        out["sheet_name"] = title
+    return out
 
 
 def write_row(
@@ -227,6 +353,7 @@ def write_row(
     agent_id: str,
     user_id: str,
     row_data: Dict[str, str],
+    sheet_name: Optional[str] = None,
 ) -> Dict[str, Any]:
     _require_sheets(user_id)
     spreadsheet_id = parse_spreadsheet_id(url)
@@ -239,20 +366,26 @@ def write_row(
         raise SchemaMismatchError("Sheet paused due to schema mismatch", conn.get("schema_mismatch") or {})
     locked = conn.get("locked_schema") or {}
     column_names = locked.get("column_names") or [c["name"] for c in locked.get("columns", [])]
-    values = _fetch_values(user_id, spreadsheet_id)
+    target = _effective_sheet_name(conn, sheet_name)
+    if target:
+        service = get_sheets_service(user_id)
+        title = _resolve_sheet_title(service, spreadsheet_id, target)
+    else:
+        service = get_sheets_service(user_id)
+        title = None
+    values = _fetch_values(user_id, spreadsheet_id, title)
     _, columns = _rows_from_values(values)
     diff = _validate_schema(locked, columns)
     if diff:
         _pause_connection(conn["id"], diff)
         raise SchemaMismatchError("Sheet schema changed — write blocked", diff)
     row_values = [str(row_data.get(col, "")) for col in column_names]
-    service = get_sheets_service(user_id)
     result = (
         service.spreadsheets()
         .values()
         .append(
             spreadsheetId=spreadsheet_id,
-            range="A:ZZ",
+            range=_qualified_range(title, "A:ZZ"),
             valueInputOption="USER_ENTERED",
             insertDataOption="INSERT_ROWS",
             body={"values": [row_values]},
@@ -262,12 +395,15 @@ def write_row(
     updates = result.get("updates") or {}
     if not updates.get("updatedRange") and not updates.get("updatedRows"):
         raise SheetsError("Sheets append returned no update confirmation")
-    return {
+    out: Dict[str, Any] = {
         "success": True,
         "written_columns": column_names,
         "updated_range": updates.get("updatedRange"),
         "updated_rows": updates.get("updatedRows", 1),
     }
+    if title:
+        out["sheet_name"] = title
+    return out
 
 
 def update_row(
@@ -276,6 +412,7 @@ def update_row(
     user_id: str,
     row: int,
     row_data: Dict[str, str],
+    sheet_name: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Update a 1-based data row (row 1 = header; data starts at row 2)."""
     _require_sheets(user_id)
@@ -297,7 +434,10 @@ def update_row(
     column_names = locked.get("column_names") or [c["name"] for c in locked.get("columns", [])]
     if not column_names:
         raise SheetsError("Locked schema has no columns")
-    values = _fetch_values(user_id, spreadsheet_id)
+    target = _effective_sheet_name(conn, sheet_name)
+    service = get_sheets_service(user_id)
+    title = _resolve_sheet_title(service, spreadsheet_id, target) if target else None
+    values = _fetch_values(user_id, spreadsheet_id, title)
     _, columns = _rows_from_values(values)
     diff = _validate_schema(locked, columns)
     if diff:
@@ -307,8 +447,7 @@ def update_row(
         raise SheetsError(f"Row {row_num} does not exist (sheet has {len(values)} rows including header)")
     row_values = [str(row_data.get(col, "")) for col in column_names]
     end_col = _col_letter(len(column_names))
-    a1 = f"A{row_num}:{end_col}{row_num}"
-    service = get_sheets_service(user_id)
+    a1 = _qualified_range(title, f"A{row_num}:{end_col}{row_num}")
     result = (
         service.spreadsheets()
         .values()
@@ -322,13 +461,16 @@ def update_row(
     )
     if not result.get("updatedRange") and not result.get("updatedCells"):
         raise SheetsError("Sheets update returned no update confirmation")
-    return {
+    out: Dict[str, Any] = {
         "success": True,
         "row": row_num,
         "updated_range": result.get("updatedRange"),
         "updated_cells": result.get("updatedCells"),
         "written_columns": column_names,
     }
+    if title:
+        out["sheet_name"] = title
+    return out
 
 
 def write_cell(
@@ -337,20 +479,28 @@ def write_cell(
     user_id: str,
     cell: str,
     value: Any,
+    sheet_name: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Write a single cell by A1 notation (e.g. B3)."""
     _require_sheets(user_id)
     spreadsheet_id = parse_spreadsheet_id(url)
     if not spreadsheet_id:
         raise SheetsError("Invalid Google Sheets URL")
-    a1 = (cell or "").strip().upper()
-    if not re.match(r"^[A-Z]+\d+$", a1):
+    a1_cell = (cell or "").strip().upper()
+    if not re.match(r"^[A-Z]+\d+$", a1_cell):
         raise SheetsError("cell must be A1 notation like B3")
-    # Connection optional for write_cell but preferred for schema safety.
+    # Connection optional for write_cell but preferred for schema safety / source tab.
     conn = get_connection(user_id, agent_id, spreadsheet_id)
     if conn and conn.get("status") == "paused_schema_mismatch":
         raise SchemaMismatchError("Sheet paused due to schema mismatch", conn.get("schema_mismatch") or {})
     service = get_sheets_service(user_id)
+    target = _effective_sheet_name(conn, sheet_name)
+    if target:
+        title = _resolve_sheet_title(service, spreadsheet_id, target)
+        a1 = _a1_sheet_range(title, a1_cell)
+    else:
+        title = None
+        a1 = a1_cell
     result = (
         service.spreadsheets()
         .values()
@@ -364,16 +514,25 @@ def write_cell(
     )
     if not result.get("updatedRange") and not result.get("updatedCells"):
         raise SheetsError("Sheets cell write returned no update confirmation")
-    return {
+    out: Dict[str, Any] = {
         "success": True,
-        "cell": a1,
+        "cell": a1_cell,
         "value": "" if value is None else str(value),
         "updated_range": result.get("updatedRange"),
         "updated_cells": result.get("updatedCells"),
     }
+    if title:
+        out["sheet_name"] = title
+    return out
 
 
-def delete_row(url: str, agent_id: str, user_id: str, row: int) -> Dict[str, Any]:
+def delete_row(
+    url: str,
+    agent_id: str,
+    user_id: str,
+    row: int,
+    sheet_name: Optional[str] = None,
+) -> Dict[str, Any]:
     """Delete a 1-based sheet row (including header row 1 — caller should avoid that)."""
     _require_sheets(user_id)
     spreadsheet_id = parse_spreadsheet_id(url)
@@ -389,13 +548,8 @@ def delete_row(url: str, agent_id: str, user_id: str, row: int) -> Dict[str, Any
     if not conn:
         raise SheetsError("Sheet not connected")
     service = get_sheets_service(user_id)
-    meta = service.spreadsheets().get(spreadsheetId=spreadsheet_id).execute()
-    sheets = meta.get("sheets") or []
-    if not sheets:
-        raise SheetsError("Spreadsheet has no sheets")
-    sheet_id = sheets[0].get("properties", {}).get("sheetId")
-    if sheet_id is None:
-        raise SheetsError("Could not resolve sheetId")
+    target = _effective_sheet_name(conn, sheet_name)
+    title, sheet_id = _resolve_sheet_meta(service, spreadsheet_id, target)
     # Sheets API DeleteDimension uses 0-based inclusive start, exclusive end.
     start = row_num - 1
     result = (
@@ -422,7 +576,13 @@ def delete_row(url: str, agent_id: str, user_id: str, row: int) -> Dict[str, Any
     replies = result.get("replies")
     if replies is None:
         raise SheetsError("Sheets delete returned no confirmation")
-    return {"success": True, "row": row_num, "deleted": True, "sheet_id": sheet_id}
+    return {
+        "success": True,
+        "row": row_num,
+        "deleted": True,
+        "sheet_id": sheet_id,
+        "sheet_name": title,
+    }
 
 
 def _col_letter(n: int) -> str:
@@ -434,47 +594,6 @@ def _col_letter(n: int) -> str:
         n, rem = divmod(n - 1, 26)
         letters.append(chr(65 + rem))
     return "".join(reversed(letters))
-
-
-def _a1_sheet_range(sheet_title: str, cell_range: str) -> str:
-    """Build a quoted A1 range for a sheet tab (handles spaces / apostrophes)."""
-    escaped = (sheet_title or "").replace("'", "''")
-    return f"'{escaped}'!{cell_range}"
-
-
-def _resolve_sheet_title(
-    service: Any,
-    spreadsheet_id: str,
-    sheet_name: Optional[str],
-) -> str:
-    """Return target tab title. Default = first sheet; named sheet must exist (loud fail)."""
-    meta = (
-        service.spreadsheets()
-        .get(spreadsheetId=spreadsheet_id, fields="sheets.properties")
-        .execute()
-    )
-    sheets = meta.get("sheets") or []
-    if not sheets:
-        raise SheetsError("Spreadsheet has no sheets")
-    wanted = (sheet_name or "").strip()
-    if wanted:
-        for sheet in sheets:
-            title = str((sheet.get("properties") or {}).get("title") or "")
-            if title == wanted:
-                return title
-        available = [
-            str((s.get("properties") or {}).get("title") or "")
-            for s in sheets
-            if (s.get("properties") or {}).get("title")
-        ]
-        raise SheetsError(
-            f"Sheet {wanted!r} not found"
-            + (f" (available: {', '.join(available)})" if available else "")
-        )
-    first = (sheets[0].get("properties") or {}).get("title")
-    if not first:
-        raise SheetsError("Could not resolve first sheet title")
-    return str(first)
 
 
 def _coerce_bool(value: Any, default: bool = False) -> bool:
@@ -587,7 +706,78 @@ def write_rows(
     }
 
 
-def poll(url: str, agent_id: str, user_id: str) -> Dict[str, Any]:
+def create_sheet(
+    url: str,
+    user_id: str,
+    sheet_name: str,
+    *,
+    spreadsheet_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Create a new tab via spreadsheets.batchUpdate addSheet (GS-09).
+
+    Output tabs are unlocked — does not write sheet_connections / schema lock.
+    Missing/blank title fails loudly; duplicate title fails loudly (no silent reuse).
+    """
+    _require_sheets(user_id)
+    sid = (spreadsheet_id or "").strip() or parse_spreadsheet_id(url or "")
+    if not sid:
+        raise SheetsError("Invalid Google Sheets URL or spreadsheet_id")
+    title = (sheet_name or "").strip()
+    if not title:
+        raise SheetsError("sheet_name is required to create a tab")
+    service = get_sheets_service(user_id)
+    meta = (
+        service.spreadsheets()
+        .get(spreadsheetId=sid, fields="sheets.properties")
+        .execute()
+    )
+    existing = [
+        str((s.get("properties") or {}).get("title") or "")
+        for s in (meta.get("sheets") or [])
+        if (s.get("properties") or {}).get("title")
+    ]
+    if title in existing:
+        raise SheetsError(f"Sheet {title!r} already exists")
+    result = (
+        service.spreadsheets()
+        .batchUpdate(
+            spreadsheetId=sid,
+            body={
+                "requests": [
+                    {
+                        "addSheet": {
+                            "properties": {"title": title},
+                        }
+                    }
+                ]
+            },
+        )
+        .execute()
+    )
+    replies = result.get("replies") or []
+    if not replies:
+        raise SheetsError("Sheets addSheet returned no confirmation")
+    props = ((replies[0] or {}).get("addSheet") or {}).get("properties") or {}
+    created_title = str(props.get("title") or title)
+    sheet_id = props.get("sheetId")
+    if sheet_id is None:
+        raise SheetsError("Sheets addSheet returned no sheetId")
+    return {
+        "success": True,
+        "spreadsheet_id": sid,
+        "sheet_name": created_title,
+        "sheet_id": int(sheet_id),
+        "created": True,
+        "schema_lock": False,
+    }
+
+
+def poll(
+    url: str,
+    agent_id: str,
+    user_id: str,
+    sheet_name: Optional[str] = None,
+) -> Dict[str, Any]:
     agent_key = agent_id.lower().strip()
     spreadsheet_id = parse_spreadsheet_id(url)
     if not spreadsheet_id:
@@ -600,9 +790,25 @@ def poll(url: str, agent_id: str, user_id: str) -> Dict[str, Any]:
             "Sheet schema changed — poll paused",
             conn.get("schema_mismatch") or {},
         )
-    values = _fetch_values(user_id, spreadsheet_id)
+    target = _effective_sheet_name(conn, sheet_name)
+    if target:
+        service = get_sheets_service(user_id)
+        title = _resolve_sheet_title(service, spreadsheet_id, target)
+        values = _fetch_values(user_id, spreadsheet_id, title)
+    else:
+        title = None
+        values = _fetch_values(user_id, spreadsheet_id, None)
     if len(values) < 2:
-        return {"success": True, "rows": [], "new_count": 0, "columns": [], "paused": False}
+        out: Dict[str, Any] = {
+            "success": True,
+            "rows": [],
+            "new_count": 0,
+            "columns": [],
+            "paused": False,
+        }
+        if title:
+            out["sheet_name"] = title
+        return out
     headers = [str(h).strip() for h in values[0]]
     columns = [h for h in headers if h]
     locked = conn.get("locked_schema") or {}
@@ -627,7 +833,7 @@ def poll(url: str, agent_id: str, user_id: str) -> Dict[str, Any]:
     )
     if not ok:
         raise SheetsError("Failed to update poll cursor")
-    return {
+    out = {
         "success": True,
         "paused": False,
         "agent": agent_key,
@@ -637,6 +843,9 @@ def poll(url: str, agent_id: str, user_id: str) -> Dict[str, Any]:
         "columns": columns,
         "poll_cursor": len(values),
     }
+    if title:
+        out["sheet_name"] = title
+    return out
 
 
 def connection_status(user_id: str, agent_id: str, url: str) -> Dict[str, Any]:
@@ -649,6 +858,7 @@ def connection_status(user_id: str, agent_id: str, url: str) -> Dict[str, Any]:
     return {
         "connected": True,
         "status": conn.get("status", "active"),
+        "source_sheet_name": conn.get("source_sheet_name"),
         "schema": conn.get("locked_schema"),
         "schema_mismatch": conn.get("schema_mismatch"),
         "poll_cursor": conn.get("poll_cursor", 1),
