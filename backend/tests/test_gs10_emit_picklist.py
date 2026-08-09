@@ -21,6 +21,7 @@ from picklist_emit import (  # noqa: E402
     EmitError,
     balance_rows,
     build_partitions,
+    is_managed_output_title,
     is_managed_picklist_title,
     parse_emit_params,
     split_exceptions,
@@ -227,6 +228,11 @@ def test_managed_title_helpers():
     assert not is_managed_picklist_title("Picklist")
     assert not is_managed_picklist_title("Orders")
     assert is_managed_picklist_title("PF 2", prefix="PF")
+    assert is_managed_output_title("Exceptions")
+    assert is_managed_output_title("Picklist 1")
+    assert not is_managed_output_title("Picklist Template")
+    assert is_managed_output_title("MyExc", exception_sheet_name="MyExc")
+    assert not is_managed_output_title("Exceptions", exception_sheet_name="Other")
 
 
 def test_keep_groups_requires_group_column():
@@ -510,3 +516,59 @@ def test_gs10_no_addSheet_fallback_when_template_configured(fixture_rows):
     names = {d["newSheetName"] for d in dups}
     assert "Exceptions" in names
     assert any(n.startswith("Picklist ") for n in names)
+
+
+@pytest.mark.parametrize(
+    "template_name,exc_template_name",
+    [
+        ("Exceptions", None),
+        ("Picklist 1", None),
+        ("Picklist Template", "Exceptions"),
+        ("Picklist Template", "Picklist 1"),
+    ],
+)
+def test_gs10_reserved_template_name_hard_fails_before_delete(
+    fixture_rows, template_name, exc_template_name
+):
+    """Template named like a managed output must hard-fail with zero deletes."""
+    rows = [r for r in fixture_rows["rows"] if str(r.get("Lineitem sku") or "").strip()][:2]
+    titles = ["Sheet1", template_name]
+    if exc_template_name and exc_template_name not in titles:
+        titles.append(exc_template_name)
+    # Also plant a managed tab that would be deleted if validation were skipped.
+    if "Picklist 1" not in titles:
+        titles.append("Picklist 1")
+    if "Exceptions" not in titles:
+        titles.append("Exceptions")
+    service, spreadsheets, state = _mock_service(titles=tuple(titles))
+    params = {
+        "url": SHEET_URL,
+        "rows": rows,
+        "columns": fixture_rows["columns"],
+        "exception_field": "Lineitem sku",
+        "tab_count": 1,
+        "keep_groups_intact": False,
+        "template_sheet_name": template_name,
+    }
+    if exc_template_name is not None:
+        params["exceptions_template_sheet_name"] = exc_template_name
+    with patch("sheets_service._require_sheets"), \
+         patch("sheets_service.get_sheets_service", return_value=service):
+        with pytest.raises(StepExecutionError) as exc:
+            _execute_step(
+                "GS-10",
+                params,
+                user_id="u1",
+                agent_id="aria",
+                agent_name="Aria",
+            )
+    msg = str(exc.value).lower()
+    assert "reserved" in msg or "managed" in msg
+    reqs = _collect_batch_requests(spreadsheets)
+    assert not any("deleteSheet" in r for r in reqs)
+    assert not any("duplicateSheet" in r for r in reqs)
+    assert not any("addSheet" in r for r in reqs)
+    spreadsheets.batchUpdate.assert_not_called()
+    # Managed / template tabs must be untouched.
+    assert "Picklist 1" in state["titles"]
+    assert template_name in state["titles"]

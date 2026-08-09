@@ -1002,12 +1002,15 @@ def emit_picklist(
     """GS-10: route exceptions + volume-balance picklist tabs (idempotent).
 
     Managed tab names: '{picklist_prefix} 1'..N and exception_sheet_name
-    (default Exceptions). Template tabs must not use those managed names.
+    (default Exceptions). Template tabs must not use those managed names —
+    reserved template names hard-fail before any managed-tab delete.
 
     Template mode (template_sheet_name set):
     - Always delete known managed outputs, then DuplicateSheetRequest recreate.
     - Never reuse prior blank-created tabs; never fall back to addSheet.
     - Missing template hard-fails.
+    - Template / exceptions_template named like a managed output hard-fails
+      (never silently delete the template).
     - Optional exceptions_template_sheet_name; else exceptions share the picklist template.
 
     Blank mode (no template): create missing tabs via addSheet; clear+write;
@@ -1015,6 +1018,7 @@ def emit_picklist(
     """
     from picklist_emit import (  # local import avoids cycles in tests
         EmitError,
+        is_managed_output_title,
         is_managed_picklist_title,
         parse_emit_params,
     )
@@ -1068,6 +1072,26 @@ def emit_picklist(
     if plan["exceptions"] is not None:
         needed.append(plan["exceptions"])
     needed_titles = {p["sheet_name"] for p in needed}
+
+    def _reject_reserved_template(name: Optional[str], *, param: str) -> None:
+        """Hard-fail before any managed-tab delete if a template uses a reserved name."""
+        if not name:
+            return
+        if is_managed_output_title(
+            name, prefix=prefix, exception_sheet_name=exc_name
+        ):
+            raise SheetsError(
+                f"{param} {name!r} matches a reserved managed output title "
+                f"('{prefix} N' or {exc_name!r}). Rename the template tab so "
+                "GS-10 will not delete it during managed cleanup."
+            )
+
+    # Loud fail before Sheets mutations — never silently delete a misnamed template.
+    _reject_reserved_template(template_name, param="template_sheet_name")
+    if exc_template_name != template_name:
+        _reject_reserved_template(
+            exc_template_name, param="exceptions_template_sheet_name"
+        )
 
     service = get_sheets_service(user_id)
     existing = _list_sheet_properties(service, sid)
