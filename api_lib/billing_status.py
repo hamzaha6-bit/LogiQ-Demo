@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from typing import Any, Dict, Optional, Tuple
 
+from admin_dashboard import user_is_owner
 from entitlements import get_entitlement
 from supabase_rest import client_id_from_user_id
 from usage import get_monthly_usage, get_today_usage
@@ -69,7 +70,50 @@ def _inactive_status() -> Dict[str, Any]:
     }
 
 
+def _owner_active_status() -> Dict[str, Any]:
+    """OWNER_EMAILS bypass — UI treats status=active; 0 limits = unlimited."""
+    return {
+        "plan": "owner",
+        "plan_name": "Owner",
+        "status": "active",
+        "usage": {
+            "actions_this_month": 0,
+            "api_calls_today": 0,
+            "emails_sent_today": 0,
+            "api_calls": 0,
+            "emails_sent": 0,
+        },
+        "limits": {
+            "max_actions_month": 0,
+            "max_api_calls_day": 0,
+            "max_emails_day": 0,
+            "max_agents": 0,
+            "max_workflows": 0,
+        },
+        "percentages": {
+            "actions": 0,
+            "api_calls": 0,
+            "emails": 0,
+        },
+        "spend": {
+            "used_pence": 0,
+            "cap_pence": 0,
+            "percentage": 0,
+        },
+        "current_period_end": None,
+        "current_period_start": None,
+        "next_invoice_at": None,
+        "payment_method_label": None,
+        "stripe_configured": _stripe_configured(),
+        "owner_bypass": True,
+    }
+
+
 def get_billing_status(user_id: str) -> Dict[str, Any]:
+    # Same OWNER_EMAILS bypass as execution_gate — sidebar INACTIVE was blocking demos.
+    if user_is_owner(user_id):
+        return _owner_active_status()
+
     try:
         client_id = client_id_from_user_id(user_id)
     except ValueError:

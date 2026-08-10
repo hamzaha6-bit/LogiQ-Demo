@@ -121,6 +121,20 @@ def test_unauthenticated_returns_401() -> None:
     assert payload == {"detail": "Valid Bearer token required"}
 
 
+@patch("billing_status.user_is_owner", return_value=True)
+@patch("billing_status.client_id_from_user_id", side_effect=ValueError("no client"))
+def test_owner_bypass_returns_active_without_subscription(
+    mock_client_id: MagicMock,
+    mock_owner: MagicMock,
+) -> None:
+    result = get_billing_status(USER_ID)
+    assert result["status"] == "active"
+    assert result["plan"] == "owner"
+    assert result.get("owner_bypass") is True
+    assert result["limits"]["max_agents"] == 0
+    mock_client_id.assert_not_called()
+
+
 @patch("billing_status.get_monthly_usage", return_value={"actions_used": 250, "spend_pence": 0})
 @patch("billing_status.get_entitlement", return_value=ACTIVE_ENTITLEMENT)
 @patch("billing_status.client_id_from_user_id", return_value=CLIENT_ID)
