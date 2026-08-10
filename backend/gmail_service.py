@@ -296,8 +296,15 @@ def _load_user_token_data(user_id: str) -> Optional[Dict[str, Any]]:
 def _save_user_token_data(user_id: str, token_data: Dict[str, Any]) -> bool:
     try:
         from supabase_client import get_url, is_configured, rest_headers
+        from supabase_rest import client_id_from_user_id
 
         if not is_configured() or not user_id:
+            return False
+        # user_integrations.client_id is NOT NULL (migration 001).
+        try:
+            client_id = client_id_from_user_id(user_id)
+        except ValueError as exc:
+            logger.warning("Gmail token save skipped — no client for %s: %s", user_id, exc)
             return False
         import httpx
 
@@ -310,6 +317,7 @@ def _save_user_token_data(user_id: str, token_data: Dict[str, Any]) -> bool:
                 params={"on_conflict": "user_id,integration"},
                 json={
                     "user_id": user_id,
+                    "client_id": client_id,
                     "integration": "gmail",
                     "token_data": encrypt_token_data(token_data),
                 },
