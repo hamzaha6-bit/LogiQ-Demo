@@ -11,7 +11,15 @@ from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 
 from crypto import decrypt_token_data, encrypt_token_data
-from supabase_rest import env, rest_delete, rest_get, rest_patch, rest_post, rest_post_with_error
+from supabase_rest import (
+    client_id_from_user_id,
+    env,
+    rest_delete,
+    rest_get,
+    rest_patch,
+    rest_post,
+    rest_post_with_error,
+)
 
 GMAIL_REDIRECT_URI = env("GMAIL_REDIRECT_URI") or "https://app.logiqops.co.uk/api/auth/gmail/callback"
 
@@ -64,10 +72,17 @@ def load_user_token(user_id: str) -> Optional[dict]:
 
 
 def save_user_token(user_id: str, token_data: dict) -> Tuple[bool, str]:
+    # user_integrations.client_id is NOT NULL (migration 001). Resolve the
+    # real tenant uuid — same pattern as workflow_create for owner/normal users.
+    try:
+        client_id = client_id_from_user_id(user_id)
+    except ValueError as exc:
+        return False, str(exc)
     row, err = rest_post_with_error(
         "user_integrations",
         {
             "user_id": user_id,
+            "client_id": client_id,
             "integration": "gmail",
             "token_data": encrypt_token_data(token_data),
             "connected_at": datetime.now(timezone.utc).isoformat(),
