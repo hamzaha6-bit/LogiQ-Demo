@@ -126,8 +126,33 @@ def test_create_workflow_success(mock_post, mock_gate):
     assert mock_post.call_args[0][0] == "workflows"
     inserted = mock_post.call_args[0][1]
     assert inserted["user_id"] == "user-1"
+    assert inserted["client_id"] == "c1"
     assert inserted["agent_id"] == "aria"
     assert inserted["name"] == "Remind patients"
+
+
+@patch("workflow_create.client_id_from_user_id", return_value="client-real")
+@patch("workflow_create.check_execution_gate")
+@patch("workflow_create.rest_post_with_error")
+def test_create_workflow_resolves_client_id_for_owner_bypass(mock_post, mock_gate, mock_client):
+    from execution_gate import GateResult
+
+    mock_gate.return_value = GateResult(allowed=True, client_id="owner-bypass")
+    mock_post.return_value = ({"id": "wf-owner", "agent_id": "nova"}, "")
+    status, payload = create_workflow_for_user(
+        "owner-1",
+        {
+            "agent_id": "nova",
+            "name": "VPD Stock Duty",
+            "description": "Reads the Stock_Ledger tab",
+            "trigger_description": "Google Sheet linked: https://docs.google.com/spreadsheets/d/x",
+            "steps": [{"step": 1, "code": "GS-01", "name": "Read sheet"}],
+        },
+    )
+    assert status == 200
+    assert payload["workflow"]["id"] == "wf-owner"
+    mock_client.assert_called_once_with("owner-1")
+    assert mock_post.call_args[0][1]["client_id"] == "client-real"
 
 
 @patch("workflow_create.check_execution_gate")
