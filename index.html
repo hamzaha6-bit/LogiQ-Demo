@@ -6229,56 +6229,164 @@ CREATE TABLE IF NOT EXISTS workflow_runs (id uuid DEFAULT gen_random_uuid() PRIM
           integration: "Google Sheets",
           name: "Read sheet",
           requires_approval: false,
+          params: {
+            url: "Google Sheets URL",
+            sheet_name:
+              "optional tab title; default connection source_sheet_name or first sheet; missing name fails loudly",
+          },
+          outputs: {
+            rows: "list of row objects",
+            columns: "column name list",
+            row_count: "number of rows",
+          },
         },
         "GS-02": {
           integration: "Google Sheets",
           name: "Append row",
           requires_approval: false,
+          params: {
+            url: "Google Sheets URL",
+            row: "row object",
+            sheet_name:
+              "optional tab title; default connection source tab or first sheet",
+          },
         },
         "GS-03": {
           integration: "Google Sheets",
           name: "Update row",
           requires_approval: false,
+          params: {
+            url: "Google Sheets URL",
+            row: "1-based row number (>=2)",
+            row_data: "row object",
+            sheet_name:
+              "optional tab title; default connection source tab or first sheet",
+          },
         },
         "GS-04": {
           integration: "Google Sheets",
           name: "Poll for new rows",
           requires_approval: false,
+          params: {
+            url: "Google Sheets URL",
+            sheet_name:
+              "optional tab title; default connection source tab or first sheet",
+          },
         },
         "GS-05": {
           integration: "Google Sheets",
           name: "Connect sheet",
           requires_approval: false,
+          params: {
+            url: "Google Sheets URL",
+            sheet_name:
+              "optional source tab to lock (stored as source_sheet_name); default first sheet",
+          },
         },
         "GS-06": {
           integration: "Google Sheets",
           name: "Delete row",
           requires_approval: true,
+          params: {
+            url: "Google Sheets URL",
+            row: "1-based row number (>=2)",
+            sheet_name:
+              "optional tab title; default connection source tab or first sheet",
+          },
         },
         "GS-07": {
           integration: "Google Sheets",
           name: "Write cell",
           requires_approval: false,
+          params: {
+            url: "Google Sheets URL",
+            cell: "A1 notation",
+            value: "cell value",
+            sheet_name:
+              "optional tab title; default connection source tab or first sheet",
+          },
         },
         "GS-08": {
           integration: "Google Sheets",
           name: "Bulk write rows",
           requires_approval: false,
+          params: {
+            url: "Google Sheets URL (or spreadsheet_id)",
+            rows: "list of row objects (or from prior XF/GS-01 output)",
+            columns: "column name list for the output schema",
+            sheet_name:
+              "optional tab title; default first sheet; missing name fails loudly",
+            clear_first:
+              "optional; clear tab then write (default false / opt-in)",
+          },
         },
         "GS-09": {
           integration: "Google Sheets",
           name: "Create sheet tab",
           requires_approval: false,
+          params: {
+            url: "Google Sheets URL (or spreadsheet_id)",
+            sheet_name: "required new tab title (aliases: title, name)",
+            template_sheet_name:
+              "optional; duplicate this tab (hard-fail if missing; no addSheet fallback)",
+          },
         },
         "GS-10": {
           integration: "Google Sheets",
           name: "Emit picklist tabs",
           requires_approval: false,
+          params: {
+            url: "Google Sheets URL (or spreadsheet_id); same workbook as GS-05",
+            rows: "list of row objects (or {rows, columns} from prior XF/GS step)",
+            columns: "column name list",
+            exception_field:
+              "required; blank/whitespace/absent -> Exceptions tab (e.g. Lineitem sku)",
+            target_rows_per_tab:
+              "primary; derives N dynamically (volume-based)",
+            tab_count: "optional override; exact picklist tab count when set",
+            keep_groups_intact:
+              "default true; do not split a group across tabs (tabs may be uneven)",
+            group_column:
+              "group key for keep_groups_intact / group_boundaries (e.g. Name)",
+            picklist_prefix: "optional; default 'Picklist' -> 'Picklist 1'..N",
+            exception_sheet_name: "optional; default 'Exceptions'",
+            template_sheet_name:
+              "optional; when set, always delete managed outputs then duplicate (no addSheet); hard-fail if name is a managed title",
+            exceptions_template_sheet_name:
+              "optional; exceptions tab template (defaults to template_sheet_name); hard-fail if name is a managed title",
+          },
+          outputs: {
+            managed_titles:
+              'list of ALL tab names created, including the exceptions tab — use for GS-11\'s sheet_names, e.g. "{{step_N.output.managed_titles}}"',
+            picklists:
+              "list of per-tab objects, each with sheet_name, rows, columns, group_boundaries, group_column",
+            exceptions:
+              "single object for the exceptions tab (same shape as a picklist entry), or null if no exceptions",
+            tab_count:
+              "number of picklist tabs created (excludes the exceptions tab)",
+          },
         },
         "GS-11": {
           integration: "Google Sheets",
           name: "Format picklist sheet",
           requires_approval: false,
+          params: {
+            url: "Google Sheets URL (or spreadsheet_id)",
+            sheet_name:
+              "single target tab title — use ONLY when formatting one tab",
+            sheet_names:
+              'list of tab title strings — use this (plural) when formatting multiple tabs from GS-10, e.g. "{{step_N.output.managed_titles}}"',
+            bold_columns: "column name list to bold (header + data)",
+            borders: "optional bool/object; apply cell borders when true",
+            group_boundaries:
+              "0-based data-row starts — ONLY valid for a single tab matching the exact rows just written; do NOT reuse boundaries computed before a GS-10 split across multiple tabs",
+            group_column:
+              "recommended over group_boundaries for multi-tab GS-10 output; recomputes correct per-tab boundaries automatically by re-reading each tab's real content",
+            band_colors:
+              "optional [colorA, colorB] hex or {red,green,blue} for per-group banding",
+            print_setup:
+              "accepted but not applied (print_setup_supported=false); use template tab for print layout",
+          },
         },
         "GC-01": {
           integration: "Google Calendar",
@@ -6314,26 +6422,94 @@ CREATE TABLE IF NOT EXISTS workflow_runs (id uuid DEFAULT gen_random_uuid() PRIM
           integration: "Transform",
           name: "Filter by status and ID range",
           requires_approval: false,
+          params: {
+            rows: "list of row objects (or from prior GS-01/XF output)",
+            columns: "column name list",
+            status_column: "status field name (e.g. Financial Status)",
+            status_value:
+              "required equality value (e.g. paid); case-insensitive by default",
+            id_column: "numeric ID column name",
+            min_id: "inclusive lower bound",
+            max_id: "inclusive upper bound",
+          },
+          outputs: {
+            rows: 'filtered list of row objects — chain into the next step as rows: "{{step_N.output.rows}}"',
+            columns: "column name list, unchanged",
+            row_count: "number of rows remaining",
+          },
         },
         "XF-02": {
           integration: "Transform",
           name: "Group-aware drop",
           requires_approval: false,
+          params: {
+            rows: "list of row objects",
+            columns: "column name list",
+            group_column: "group key (e.g. Name / order number)",
+            match_column: "column to test (e.g. Lineitem name)",
+            op: "equals | contains (default contains; case-insensitive by default)",
+            value: "match value (e.g. Express Shipping)",
+            condition: "optional {column, op, value, case_sensitive} object",
+          },
+          outputs: {
+            rows: 'filtered list of row objects — chain into the next step as rows: "{{step_N.output.rows}}"',
+            columns: "column name list, unchanged",
+            row_count: "number of rows remaining",
+          },
         },
         "XF-03": {
           integration: "Transform",
           name: "Column subset",
           requires_approval: false,
+          params: {
+            rows: "list of row objects",
+            columns: "full column name list",
+            keep: "ordered list of column names to keep (aliases: keep_columns, select, column_list)",
+          },
+          outputs: {
+            rows: 'filtered list of row objects — chain into the next step as rows: "{{step_N.output.rows}}"',
+            columns: "column name list, unchanged",
+            row_count: "number of rows remaining",
+          },
         },
         "XF-04": {
           integration: "Transform",
           name: "Sort primary then secondary",
           requires_approval: false,
+          params: {
+            rows: "list of row objects",
+            columns: "column name list",
+            primary: "primary sort column (ascending)",
+            secondary: "secondary sort column (ascending)",
+            group_column: "optional; used for group_boundaries metadata",
+          },
+          outputs: {
+            rows: 'filtered list of row objects — chain into the next step as rows: "{{step_N.output.rows}}"',
+            columns: "column name list, unchanged",
+            row_count: "number of rows remaining",
+          },
         },
         "XF-05": {
           integration: "Transform",
           name: "Aggregate by two keys",
           requires_approval: false,
+          params: {
+            rows: "list of row objects",
+            columns: "column name list",
+            sku_column: "first key column (e.g. Lineitem sku)",
+            qty_column: "second key column (e.g. Lineitem quantity)",
+            format_string:
+              'REQUIRED summary template, e.g. "{qty}m x {count}" — step fails without this',
+            summary_column:
+              "output column name for formatted string (default Summary)",
+          },
+          outputs: {
+            rows: 'aggregated list of row objects (includes the new summary_column) — chain as rows: "{{step_N.output.rows}}"',
+            columns: "column name list, includes summary_column",
+            row_count: "number of aggregated rows",
+            group_boundaries:
+              "0-based row indices where each SKU group starts — feed into GS-11's group_boundaries if needed",
+          },
         },
       };
 
@@ -6382,13 +6558,24 @@ CREATE TABLE IF NOT EXISTS workflow_runs (id uuid DEFAULT gen_random_uuid() PRIM
       function blueprintRegistryPromptBlock() {
         return Object.entries(ACTION_REGISTRY)
           .filter(([code]) => REAL_CODES.has(code))
-          .map(
-            ([code, m]) =>
-              `${code}: ${m.name} (${m.integration})${m.requires_approval ? " [requires approval]" : ""}`,
-          )
+          .map(([code, m]) => {
+            let block = `${code}: ${m.name} (${m.integration})${m.requires_approval ? " [requires approval]" : ""}`;
+            if (m.params) {
+              const paramLines = Object.entries(m.params)
+                .map(([pname, pdesc]) => `    - ${pname}: ${pdesc}`)
+                .join("\n");
+              block += `\n  params (use these EXACT field names):\n${paramLines}`;
+            }
+            if (m.outputs) {
+              const outputLines = Object.entries(m.outputs)
+                .map(([oname, odesc]) => `    - ${oname}: ${odesc}`)
+                .join("\n");
+              block += `\n  returns (reference these EXACT field names in later steps, e.g. {{step_N.output.<field>}}):\n${outputLines}`;
+            }
+            return block;
+          })
           .join("\n");
       }
-
       function buildBlueprintSystemPrompt() {
         return `You are LogiQ Blueprint — an intelligent colleague who turns plain-English automation ideas into structured workflows.
 
@@ -6429,8 +6616,6 @@ Rules:
 - For franchise / enquiry inbox workflows, GM-07 query MUST exclude already-processed mail, e.g. (franchise OR franchising OR "become a franchisee" OR "franchise opportunity") -label:"Franchise Enquiry". Prefer nova; summary must state one enquiry per run.
 - For read message (GM-02) use { "message_id" }; for get thread (GM-08) use { "thread_id" }; for label (GM-06) use { "message_id", "add_labels", "remove_labels" }.
 - For Sheets steps, always include params.url (Google Sheets URL). GS-02 needs row/row_data; GS-03 needs row + row_data; GS-06 needs row; GS-07 needs cell (A1) + value.
-- Formatting-only Google Sheets requests are supported with GS-11. If the user asks to bold a quantity column, add borders around each SKU group, or alternate background colors by group, produce a GS-11 step with params.url, sheet_name, bold_columns, borders, and either group_boundaries or group_column plus band_colors.
-- If the user says the sheet is already connected and only wants formatting, do not reject it as unsupported just because no row edits are needed; plan it as a GS-11 workflow and note that it needs the spreadsheet link and target tab name.
 - For calendar: GC-01 needs time_min/time_max; GC-02 needs optional time range; GC-03/GC-06 need title, start, end (ISO); GC-06 also needs attendees[]; GC-04/GC-05 need event_id.
 - Prefer 2–6 steps. Be practical, not generic.
 - Tone: warm, concise, colleague-like — not a form or checklist.
