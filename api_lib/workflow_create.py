@@ -8,7 +8,7 @@ from typing import Any, Dict, Optional, Tuple
 
 from action_registry import validate_plan_steps
 from execution_gate import check_execution_gate
-from supabase_rest import rest_post_with_error
+from supabase_rest import client_id_from_user_id, rest_post_with_error
 from workflow_scheduler import initial_next_run, parse_schedule
 
 
@@ -24,6 +24,19 @@ def create_workflow_for_user(user_id: str, body: Dict[str, Any]) -> Tuple[int, D
     gate = check_execution_gate(uid, "workflow_create")
     if not gate.allowed:
         return 403, gate.as_workflow_error_payload()
+
+    # workflows.client_id is NOT NULL (migration 001). Owner bypass uses a
+    # sentinel gate.client_id — resolve the real tenant uuid for the insert.
+    client_id = (gate.client_id or "").strip()
+    if not client_id or client_id == "owner-bypass":
+        try:
+            client_id = client_id_from_user_id(uid)
+        except ValueError as exc:
+            return 403, {
+                "detail": str(exc),
+                "error": "no_client_membership",
+                "message": str(exc),
+            }
 
     agent_id = str(body.get("agent_id") or "").strip().lower()
     if agent_id not in ("aria", "nova"):
@@ -70,6 +83,7 @@ def create_workflow_for_user(user_id: str, body: Dict[str, Any]) -> Tuple[int, D
 
     payload: Dict[str, Any] = {
         "user_id": uid,
+        "client_id": client_id,
         "agent_id": agent_id,
         "name": name,
         "description": description,
