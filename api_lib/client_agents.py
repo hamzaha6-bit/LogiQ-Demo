@@ -5,9 +5,27 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
+from admin_dashboard import user_is_owner
 from entitlements import get_entitlement
 from supabase_rest import client_id_from_user_id, rest_get, rest_patch_filter, rest_post
 from tiers import limits_for, upgrade_tier_for_agents
+
+# Phase-1 agents forced active for OWNER_EMAILS (matches Blueprint deploy gate).
+OWNER_ACTIVE_AGENT_IDS = ("aria", "nova")
+
+
+def _owner_agents_status_payload() -> Dict[str, Any]:
+    """Synthetic active Aria+Nova so owner bypass covers the UI deploy gate."""
+    agents = [{"agent_id": aid, "status": "active"} for aid in OWNER_ACTIVE_AGENT_IDS]
+    return {
+        "plan": "owner",
+        "limit": 0,
+        "active_count": len(OWNER_ACTIVE_AGENT_IDS),
+        "agents": agents,
+        "active_agent_ids": list(OWNER_ACTIVE_AGENT_IDS),
+        "upgrade_tier": None,
+        "owner_bypass": True,
+    }
 
 
 def count_active_agents(client_id: str) -> int:
@@ -66,6 +84,7 @@ def activate_agent_for_user(user_id: str, agent_id: str) -> Tuple[int, Dict[str,
     """
     Activate an agent for the user's client if under tier limit.
     Returns (http_status, payload).
+    OWNER_EMAILS bypass subscription + agent-slot limits (same intent as execution_gate).
     """
     uid = (user_id or "").strip()
     aid = (agent_id or "").strip().lower()
@@ -74,20 +93,39 @@ def activate_agent_for_user(user_id: str, agent_id: str) -> Tuple[int, Dict[str,
     if not aid:
         return 400, {"detail": "agent_id is required"}
 
+    owner = user_is_owner(uid)
+
     try:
         client_id = client_id_from_user_id(uid)
     except ValueError as exc:
+        if owner:
+            # Owner may lack a client row; still allow virtual activation for the UI.
+            return 200, {
+                "activated": True,
+                "agent_id": aid,
+                "already_active": True,
+                "active_count": len(OWNER_ACTIVE_AGENT_IDS),
+                "limit": 0,
+                "plan": "owner",
+                "owner_bypass": True,
+            }
         return 403, {"detail": str(exc), "error": "no_client_membership"}
 
     entitlement = get_entitlement(client_id)
-    if not entitlement or (entitlement.get("status") or "").strip().lower() != "active":
+    if not owner and (
+        not entitlement or (entitlement.get("status") or "").strip().lower() != "active"
+    ):
         return 402, {
             "detail": "Please subscribe to continue using LogiQ.",
             "error": "no_active_subscription",
         }
 
-    limit = _limit_from_entitlement(entitlement)
-    plan = (entitlement.get("plan") or "").strip().lower()
+    limit = 0 if owner else _limit_from_entitlement(entitlement or {})
+    plan = (
+        "owner"
+        if owner
+        else (entitlement.get("plan") or "").strip().lower()
+    )
 
     if is_agent_active(client_id, aid):
         return 200, {
@@ -97,11 +135,12 @@ def activate_agent_for_user(user_id: str, agent_id: str) -> Tuple[int, Dict[str,
             "active_count": count_active_agents(client_id),
             "limit": limit,
             "plan": plan,
+            **({"owner_bypass": True} if owner else {}),
         }
 
     active_count = count_active_agents(client_id)
     # limit > 0 and already at capacity → refuse. limit == 0 → unlimited.
-    if limit > 0 and active_count >= limit:
+    if not owner and limit > 0 and active_count >= limit:
         upgrade = upgrade_tier_for_agents(plan) or "pro"
         upgrade_limit = int(limits_for(upgrade).get("active_agents_limit") or limits_for(upgrade).get("agents") or 0)
         return 403, {
@@ -149,6 +188,7 @@ def activate_agent_for_user(user_id: str, agent_id: str) -> Tuple[int, Dict[str,
         "active_count": count_active_agents(client_id),
         "limit": limit,
         "plan": plan,
+        **({"owner_bypass": True} if owner else {}),
     }
 
 
@@ -182,6 +222,12 @@ def agents_status_for_user(user_id: str) -> Tuple[int, Dict[str, Any]]:
     uid = (user_id or "").strip()
     if not uid:
         return 401, {"detail": "Authentication required", "error": "unauthenticated"}
+
+    # OWNER_EMAILS: treat Aria+Nova as active so Blueprint Approve is not blocked
+    # by the frontend deployedAgents gate (execution_gate already bypasses owners).
+    if user_is_owner(uid):
+        return 200, _owner_agents_status_payload()
+
     try:
         client_id = client_id_from_user_id(uid)
     except ValueError as exc:

@@ -11,6 +11,7 @@ _ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(_ROOT / "api_lib"))
 
 from admin_dashboard import email_is_owner, build_admin_dashboard  # noqa: E402
+from client_agents import activate_agent_for_user, agents_status_for_user  # noqa: E402
 from workflow_create import create_workflow_for_user  # noqa: E402
 from workflow_queries import latest_run_for_user_workflow, list_workflows_for_user  # noqa: E402
 
@@ -145,3 +146,37 @@ def test_create_workflow_insert_failure(mock_post, mock_gate):
     )
     assert status == 502
     assert "Failed" in payload["detail"] or "boom" in payload["detail"]
+
+
+@patch("client_agents.user_is_owner", return_value=True)
+def test_owner_agents_status_forces_aria_nova_active(mock_owner):
+    status, payload = agents_status_for_user("owner-1")
+    assert status == 200
+    assert payload.get("owner_bypass") is True
+    assert set(payload["active_agent_ids"]) == {"aria", "nova"}
+    assert payload["limit"] == 0
+
+
+@patch("client_agents.user_is_owner", return_value=True)
+@patch("client_agents.client_id_from_user_id", side_effect=ValueError("no client"))
+def test_owner_activate_without_client(mock_client, mock_owner):
+    status, payload = activate_agent_for_user("owner-1", "nova")
+    assert status == 200
+    assert payload.get("owner_bypass") is True
+    assert payload["activated"] is True
+
+
+@patch("client_agents.user_is_owner", return_value=True)
+@patch("client_agents.client_id_from_user_id", return_value="c1")
+@patch("client_agents.get_entitlement", return_value=None)
+@patch("client_agents.is_agent_active", return_value=False)
+@patch("client_agents.count_active_agents", return_value=1)
+@patch("client_agents.rest_post", return_value={"id": "row1"})
+def test_owner_activate_without_subscription(
+    mock_post, mock_count, mock_active, mock_ent, mock_client, mock_owner
+):
+    status, payload = activate_agent_for_user("owner-1", "nova")
+    assert status == 200
+    assert payload.get("owner_bypass") is True
+    assert payload["agent_id"] == "nova"
+    mock_post.assert_called_once()
