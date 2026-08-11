@@ -23,9 +23,18 @@ from supabase_rest import (
 
 GMAIL_REDIRECT_URI = env("GMAIL_REDIRECT_URI") or "https://app.logiqops.co.uk/api/auth/gmail/callback"
 
+# Gmail scopes cover all GM-* product actions:
+#   readonly → GM-01 list, GM-02 read, GM-07 search, GM-08 thread
+#   send     → GM-03 send, GM-04 reply
+#   compose  → GM-05 drafts.create (required; send/readonly alone are NOT enough)
+#   modify   → GM-06 labels + drafts/send/read (covers compose + label modify)
+# drafts.create accepts: mail.google.com | gmail.modify | gmail.compose
+# (https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.drafts/create)
 GOOGLE_SCOPES = [
     "https://www.googleapis.com/auth/gmail.send",
     "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/gmail.compose",
+    "https://www.googleapis.com/auth/gmail.modify",
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/calendar.readonly",
     "https://www.googleapis.com/auth/calendar.events",
@@ -33,6 +42,13 @@ GOOGLE_SCOPES = [
 
 SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets"
 CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar.events"
+GMAIL_COMPOSE_SCOPE = "https://www.googleapis.com/auth/gmail.compose"
+GMAIL_MODIFY_SCOPE = "https://www.googleapis.com/auth/gmail.modify"
+GMAIL_FULL_SCOPE = "https://mail.google.com/"
+GMAIL_DRAFT_RECONNECT_MSG = (
+    "Reconnect Google in Settings → Integrations to grant Gmail draft access. "
+    "Disconnect Gmail, then connect again so Google re-prompts for compose/modify scopes."
+)
 
 
 def parse_client_config() -> dict:
@@ -100,9 +116,11 @@ def disconnect_user_token(user_id: str) -> Tuple[bool, str]:
 
 
 def _scopes_in_token(token_data: dict) -> List[str]:
-    scopes = token_data.get("scopes") or []
+    scopes = token_data.get("scopes") or token_data.get("scope") or []
     if isinstance(scopes, str):
-        return [s.strip() for s in scopes.split(",") if s.strip()]
+        # Google may return a space- or comma-separated scope string.
+        parts = scopes.replace(",", " ").split()
+        return [s.strip() for s in parts if s.strip()]
     return list(scopes)
 
 
@@ -112,6 +130,30 @@ def has_scope(user_id: str, scope: str) -> bool:
         return False
     scopes = _scopes_in_token(token_data)
     return scope in scopes or any(scope in s for s in scopes)
+
+
+def has_gmail_draft_scope(user_id: str) -> bool:
+    """True if token can call users.drafts.create."""
+    return (
+        has_scope(user_id, GMAIL_COMPOSE_SCOPE)
+        or has_scope(user_id, GMAIL_MODIFY_SCOPE)
+        or has_scope(user_id, GMAIL_FULL_SCOPE)
+    )
+
+
+def has_gmail_modify_scope(user_id: str) -> bool:
+    """True if token can modify labels / broader mailbox writes."""
+    return has_scope(user_id, GMAIL_MODIFY_SCOPE) or has_scope(user_id, GMAIL_FULL_SCOPE)
+
+
+def is_insufficient_scope_error(exc: BaseException) -> bool:
+    text = str(exc).lower()
+    return (
+        "insufficientpermissions" in text
+        or "insufficient authentication scopes" in text
+        or ("403" in text and "scope" in text)
+        or "request had insufficient authentication scopes" in text
+    )
 
 
 def get_credentials(user_id: str) -> Credentials:
@@ -135,6 +177,8 @@ def check_gmail_health(user_id: str) -> Dict[str, Any]:
         "email": "",
         "sheets_scope": False,
         "calendar_scope": False,
+        "gmail_draft_scope": False,
+        "gmail_modify_scope": False,
         "error": "",
     }
     token_data = load_user_token(user_id)
@@ -148,6 +192,8 @@ def check_gmail_health(user_id: str) -> Dict[str, Any]:
     result["calendar_scope"] = has_scope(user_id, CALENDAR_SCOPE) or has_scope(
         user_id, "calendar.readonly"
     )
+    result["gmail_draft_scope"] = has_gmail_draft_scope(user_id)
+    result["gmail_modify_scope"] = has_gmail_modify_scope(user_id)
     try:
         creds = get_credentials(user_id)
         service = build("gmail", "v1", credentials=creds, cache_discovery=False)
@@ -337,10 +383,61 @@ def read_message(user_id: str, message_id: str) -> Dict[str, Any]:
     }
 
 
+def _require_draft_scope(user_id: str) -> None:
+    if not has_gmail_draft_scope(user_id):
+        raise PermissionError(GMAIL_DRAFT_RECONNECT_MSG)
+
+
+def _render_row_template(template: str, row: Dict[str, Any]) -> str:
+    """Replace {Column Name} placeholders with row values (case-insensitive keys)."""
+    text = template or ""
+    if not text or "{" not in text:
+        return text
+    by_lower = {str(k).strip().lower(): "" if v is None else str(v) for k, v in (row or {}).items()}
+
+    def _repl(match: Any) -> str:
+        key = (match.group(1) or "").strip().lower()
+        if key in by_lower:
+            return by_lower[key]
+        return match.group(0)
+
+    import re
+
+    return re.sub(r"\{([^{}]+)\}", _repl, text)
+
+
+def _row_email(row: Dict[str, Any], to_column: str = "") -> str:
+    if to_column:
+        val = row.get(to_column)
+        if val is None:
+            # case-insensitive column match
+            low = to_column.strip().lower()
+            for k, v in row.items():
+                if str(k).strip().lower() == low:
+                    val = v
+                    break
+        return str(val or "").strip()
+    aliases = (
+        "contact email",
+        "contact_email",
+        "email",
+        "e-mail",
+        "to",
+        "customer email",
+        "customer_email",
+    )
+    by_lower = {str(k).strip().lower(): v for k, v in (row or {}).items()}
+    for alias in aliases:
+        if alias in by_lower and str(by_lower[alias] or "").strip():
+            return str(by_lower[alias]).strip()
+    return ""
+
+
 def create_draft(user_id: str, to: str, subject: str, body: str, from_name: str = "") -> Dict[str, Any]:
     import base64
     from email.mime.text import MIMEText
 
+    _require_draft_scope(user_id)
     creds = get_credentials(user_id)
     health = check_gmail_health(user_id)
     sender = health.get("email") or env("GMAIL_SENDER_EMAIL") or "me"
@@ -358,6 +455,61 @@ def create_draft(user_id: str, to: str, subject: str, body: str, from_name: str 
         "to": to,
         "subject": subject,
         "created": True,
+    }
+
+
+def create_drafts_for_rows(
+    user_id: str,
+    rows: List[Any],
+    *,
+    subject: str = "",
+    body: str = "",
+    to_column: str = "",
+    from_name: str = "",
+) -> Dict[str, Any]:
+    """Create one held draft per row (credit-chase fan-out). Does not send.
+
+    Subject/body are templates with {Column Name} placeholders filled from each row.
+    Email is taken from to_column, or common Contact email / Email columns.
+    Rows may also supply explicit to/subject/body keys that override templates.
+    """
+    if not isinstance(rows, list):
+        raise ValueError("rows must be a list of row objects")
+    _require_draft_scope(user_id)
+
+    drafts: List[Dict[str, Any]] = []
+    errors: List[Dict[str, Any]] = []
+    for idx, raw_row in enumerate(rows):
+        if not isinstance(raw_row, dict):
+            errors.append({"index": idx, "error": "row must be an object"})
+            continue
+        to = str(raw_row.get("to") or "").strip() or _row_email(raw_row, to_column)
+        subj = str(raw_row.get("subject") or "").strip() or _render_row_template(subject, raw_row)
+        body_text = str(raw_row.get("body") or "").strip() or _render_row_template(body, raw_row)
+        if not to or not subj:
+            errors.append({
+                "index": idx,
+                "error": "missing to or subject",
+                "to": to,
+                "subject": subj,
+            })
+            continue
+        try:
+            created = create_draft(user_id, to, subj, body_text, from_name)
+            drafts.append(created)
+        except Exception as exc:
+            if is_insufficient_scope_error(exc):
+                raise PermissionError(GMAIL_DRAFT_RECONNECT_MSG) from exc
+            errors.append({"index": idx, "to": to, "error": str(exc)})
+
+    return {
+        "created": True,
+        "count": len(drafts),
+        "drafts": drafts,
+        "draft_ids": [d.get("draft_id") for d in drafts if d.get("draft_id")],
+        "errors": errors,
+        "error_count": len(errors),
+        "batch": True,
     }
 
 

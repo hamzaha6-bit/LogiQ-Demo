@@ -7,7 +7,23 @@ ACTION_REGISTRY: Dict[str, Dict[str, Any]] = {
     "GM-02": {"integration": "Gmail", "name": "Read message", "requires_approval": False},
     "GM-03": {"integration": "Gmail", "name": "Send email", "requires_approval": True},
     "GM-04": {"integration": "Gmail", "name": "Reply to thread", "requires_approval": True},
-    "GM-05": {"integration": "Gmail", "name": "Draft email", "requires_approval": False},
+    "GM-05": {
+        "integration": "Gmail",
+        "name": "Draft email",
+        "requires_approval": False,
+        "params": {
+            "to": "recipient email (single-draft mode)",
+            "subject": "subject, or {Column} template when using rows",
+            "body": "body, or {Column} template when using rows",
+            "rows": (
+                "optional list of row objects — creates ONE held draft per row "
+                "(credit-chase fan-out). Chain from XF-06 flagged rows via "
+                "{{step_N.output.rows}}. Does not send."
+            ),
+            "to_column": "column name for recipient email when using rows (e.g. Contact email)",
+            "email_column": "alias for to_column",
+        },
+    },
     "GM-06": {"integration": "Gmail", "name": "Label message", "requires_approval": False},
     "GM-07": {"integration": "Gmail", "name": "Search inbox", "requires_approval": False},
     "GM-08": {"integration": "Gmail", "name": "Get thread", "requires_approval": False},

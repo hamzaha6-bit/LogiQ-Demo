@@ -100,10 +100,10 @@ Rules:
 - Every step.code MUST be one of the registered primitives listed above. Do not use any code not in that list.
 - Set requires_approval implicitly from the registry (GM-03, GM-04, GS-06, GC-05, and GC-06 always need approval).
 - For steps that send email (GM-03, GM-04), include params: {{ "to", "subject", "body" }} with realistic draft content.
-- For draft email (GM-05), include params: {{ "to", "subject", "body" }}.
+- For draft email (GM-05), single mode: {{ "to", "subject", "body" }}. For credit-chase / one draft per flagged customer: pass rows from the prior XF-06 step — {{ "rows": "{{{{step_N.output.rows}}}}", "to_column": "Contact email", "subject": "Payment reminder — {{Customer}}", "body": "Hi {{Customer}}, your balance of {{Current balance GBP}} is {{Days overdue}} days overdue." }} using {{Column}} placeholders filled per row. Creates held drafts only (not sent).
 - For search (GM-07), include structured params like {{ "from", "subject", "after", "before", "has_attachment", "query", "max_results" }}.
 - Inter-step templates MUST use this exact shape: {{{{step_N.output.field}}}} or nested paths like {{{{step_1.output.results.0.message_id}}}}. Never invent other template syntax.
-- The workflow engine does NOT fan out over arrays — each step runs once. After GM-07/GM-01, always bind later steps to the first result only, e.g. message_id: "{{{{step_1.output.results.0.message_id}}}}".
+- The workflow engine does NOT fan out over arrays for most steps — each step runs once. Exception: GM-05 with a rows list creates one draft per row. After GM-07/GM-01, still bind later read/label/send steps to the first result only, e.g. message_id: "{{{{step_1.output.results.0.message_id}}}}".
 - Search results are ordered oldest-first for fairness (process the oldest match first).
 - For franchise / enquiry inbox workflows (or similar labelling loops), GM-07 query MUST exclude already-processed mail, e.g. query: (franchise OR franchising OR "become a franchisee" OR "franchise opportunity") -label:"Franchise Enquiry"
 - Franchise Enquiry Auto-Response (and similar): prefer nova; title like "Franchise Enquiry Auto-Response"; summary must state plainly that it processes one enquiry per run (not real-time / not all-at-once). Typical flow: GM-07 search → GM-02 read first result → GM-03/GM-04 acknowledgement (approval) → GM-06 label → GS-02 log row → GM-05 follow-up draft.
@@ -112,7 +112,7 @@ Rules:
 - GS-02 needs row/row_data; GS-03 needs row + row_data; GS-06 needs row; GS-07 needs cell (A1) + value.
 - For calendar: GC-01 needs time_min/time_max; GC-02 needs optional time range; GC-03/GC-06 need title, start, end (ISO); GC-06 also needs attendees[]; GC-04/GC-05 need event_id.
 - XF-01 only filters by a status equality + numeric ID range on columns that ALREADY exist. It cannot compare two columns, do date math, or invent Flagged.
-- For credit-review / over-limit / days-overdue / Flagged logic use XF-06: pass an ORDERED derive list so later columns can reference earlier derived ones in the same step (Over limit → Days overdue → Overdue >30 days → Flagged last). Chain rows/columns from GS-01 via {{{{step_1.output.rows}}}} / {{{{step_1.output.columns}}}}. Optionally set keep_when or filter_column=Flagged + filter_value=yes. Never plan XF-01 with status_column=Flagged unless Flagged already exists on the sheet.
+- For credit-review / over-limit / days-overdue / Flagged logic use XF-06: pass an ORDERED derive list so later columns can reference earlier derived ones in the same step (Over limit → Days overdue → Overdue >30 days → Flagged last). Chain rows/columns from GS-01 via {{{{step_1.output.rows}}}} / {{{{step_1.output.columns}}}}. Optionally set keep_when or filter_column=Flagged + filter_value=yes. Never plan XF-01 with status_column=Flagged unless Flagged already exists on the sheet. When the goal is chase emails for each flagged customer, follow XF-06 with GM-05 batch mode (rows + to_column + subject/body templates) — one held draft per flagged row, not sent.
 - Prefer 2–6 steps. Be practical, not generic.
 - Tone: warm, concise, colleague-like — not a form or checklist.
 - Never mention internal codes, template variables, or raw JSON fields to the user in prose; codes belong only in the JSON block.{bound_block}"""
