@@ -12435,6 +12435,7 @@ Be proactive, concise, use **bold** for emphasis.`;
         <span class="wf-badge ${status.cls}">${esc(status.label)}</span>
       </div>
       <div class="wf-card-actions" onclick="event.stopPropagation()">
+        <button type="button" class="btn-ghost" style="font-size:12px;padding:6px 10px" onclick="runAutomationFromCard('${esc(wf.id)}', this)">Run</button>
         <div id="wf-del-${esc(wf.id)}">
           <button type="button" class="btn-ghost" style="font-size:12px;padding:6px 10px" onclick="confirmDeleteAutomation('${esc(wf.id)}')">Delete</button>
         </div>
@@ -12450,6 +12451,16 @@ Be proactive, concise, use **bold** for emphasis.`;
     <button type="button" class="btn-primary" style="padding:6px 10px;font-size:12px" onclick="deleteAutomation('${esc(id)}')">Confirm</button>
     <button type="button" class="btn-ghost" style="padding:6px 10px;font-size:12px" onclick="cancelDeleteAutomation('${esc(id)}')">Cancel</button>
   </div>`;
+      }
+
+      async function runAutomationFromCard(id, btn) {
+        if (btn) btn.disabled = true;
+        try {
+          await runWorkflow(id);
+          if (currentPage === "automations") await renderAutomations();
+        } finally {
+          if (btn) btn.disabled = false;
+        }
       }
 
       function cancelDeleteAutomation(id) {

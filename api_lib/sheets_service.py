@@ -217,6 +217,33 @@ def get_connection(user_id: str, agent_id: str, spreadsheet_id: str) -> Optional
     return rows[0] if rows else None
 
 
+def _ensure_connection(
+    url: str,
+    agent_id: str,
+    user_id: str,
+    *,
+    spreadsheet_id: Optional[str] = None,
+    sheet_name: Optional[str] = None,
+) -> Tuple[str, Dict[str, Any]]:
+    """Return (spreadsheet_id, conn); auto-run GS-05 connect when OAuth is valid but no lock row yet.
+
+    Settings → Integrations shows Google Sheets "Connected" from Gmail OAuth + sheets
+    scope (user_integrations), not from sheet_connections. Blueprint workflows often
+    start with GS-01 + a sheet URL without a prior GS-05 step — bridge that gap here.
+    """
+    sid = spreadsheet_id or parse_spreadsheet_id(url)
+    if not sid:
+        raise SheetsError("Invalid Google Sheets URL")
+    conn = get_connection(user_id, agent_id, sid)
+    if conn:
+        return sid, conn
+    connect(url, agent_id, user_id, sheet_name=sheet_name)
+    conn = get_connection(user_id, agent_id, sid)
+    if not conn:
+        raise SheetsError("Sheet not connected — call /api/integrations/sheets/connect first")
+    return sid, conn
+
+
 def _validate_schema(locked: Dict[str, Any], columns: List[str]) -> Optional[Dict[str, Any]]:
     locked_names = locked.get("column_names") or [c["name"] for c in locked.get("columns", [])]
     if locked_names == columns:
@@ -313,12 +340,9 @@ def read_sheet(
     sheet_name: Optional[str] = None,
 ) -> Dict[str, Any]:
     _require_sheets(user_id)
-    spreadsheet_id = parse_spreadsheet_id(url)
-    if not spreadsheet_id:
-        raise SheetsError("Invalid Google Sheets URL")
-    conn = get_connection(user_id, agent_id, spreadsheet_id)
-    if not conn:
-        raise SheetsError("Sheet not connected — call /api/integrations/sheets/connect first")
+    spreadsheet_id, conn = _ensure_connection(
+        url, agent_id, user_id, sheet_name=sheet_name
+    )
     if conn.get("status") == "paused_schema_mismatch":
         raise SchemaMismatchError(
             "Sheet schema changed — workflow paused",
@@ -356,12 +380,9 @@ def write_row(
     sheet_name: Optional[str] = None,
 ) -> Dict[str, Any]:
     _require_sheets(user_id)
-    spreadsheet_id = parse_spreadsheet_id(url)
-    if not spreadsheet_id:
-        raise SheetsError("Invalid Google Sheets URL")
-    conn = get_connection(user_id, agent_id, spreadsheet_id)
-    if not conn:
-        raise SheetsError("Sheet not connected")
+    spreadsheet_id, conn = _ensure_connection(
+        url, agent_id, user_id, sheet_name=sheet_name
+    )
     if conn.get("status") == "paused_schema_mismatch":
         raise SchemaMismatchError("Sheet paused due to schema mismatch", conn.get("schema_mismatch") or {})
     locked = conn.get("locked_schema") or {}
@@ -425,9 +446,9 @@ def update_row(
         raise SheetsError("row must be an integer") from exc
     if row_num < 2:
         raise SheetsError("row must be >= 2 (row 1 is the header)")
-    conn = get_connection(user_id, agent_id, spreadsheet_id)
-    if not conn:
-        raise SheetsError("Sheet not connected")
+    spreadsheet_id, conn = _ensure_connection(
+        url, agent_id, user_id, spreadsheet_id=spreadsheet_id, sheet_name=sheet_name
+    )
     if conn.get("status") == "paused_schema_mismatch":
         raise SchemaMismatchError("Sheet paused due to schema mismatch", conn.get("schema_mismatch") or {})
     locked = conn.get("locked_schema") or {}
@@ -544,9 +565,9 @@ def delete_row(
         raise SheetsError("row must be an integer") from exc
     if row_num < 2:
         raise SheetsError("refusing to delete header row (row must be >= 2)")
-    conn = get_connection(user_id, agent_id, spreadsheet_id)
-    if not conn:
-        raise SheetsError("Sheet not connected")
+    spreadsheet_id, conn = _ensure_connection(
+        url, agent_id, user_id, spreadsheet_id=spreadsheet_id, sheet_name=sheet_name
+    )
     service = get_sheets_service(user_id)
     target = _effective_sheet_name(conn, sheet_name)
     title, sheet_id = _resolve_sheet_meta(service, spreadsheet_id, target)
@@ -851,12 +872,10 @@ def poll(
     sheet_name: Optional[str] = None,
 ) -> Dict[str, Any]:
     agent_key = agent_id.lower().strip()
-    spreadsheet_id = parse_spreadsheet_id(url)
-    if not spreadsheet_id:
-        raise SheetsError("Invalid Google Sheets URL")
-    conn = get_connection(user_id, agent_id, spreadsheet_id)
-    if not conn:
-        raise SheetsError("Sheet not connected")
+    _require_sheets(user_id)
+    spreadsheet_id, conn = _ensure_connection(
+        url, agent_id, user_id, sheet_name=sheet_name
+    )
     if conn.get("status") == "paused_schema_mismatch":
         raise SchemaMismatchError(
             "Sheet schema changed — poll paused",
