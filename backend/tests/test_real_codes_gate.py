@@ -26,7 +26,7 @@ def test_real_codes_contains_core_and_xf_actions():
         *(f"GM-{i:02d}" for i in range(1, 9)),
         *(f"GS-{i:02d}" for i in range(1, 12)),
         *(f"GC-{i:02d}" for i in range(1, 7)),
-        *(f"XF-{i:02d}" for i in range(1, 6)),
+        *(f"XF-{i:02d}" for i in range(1, 7)),
     }
     assert REAL_CODES == frozenset(expected)
 
@@ -34,7 +34,9 @@ def test_real_codes_contains_core_and_xf_actions():
 def test_registry_for_prompt_exposes_only_real_codes():
     codes = {p["code"] for p in registry_for_prompt()}
     assert codes == set(REAL_CODES)
-    assert len(codes) == 30
+    assert len(codes) == 31
+    xf06 = next(p for p in registry_for_prompt() if p["code"] == "XF-06")
+    assert "derive" in xf06.get("params", {})
 
 
 def test_validate_plan_steps_rejects_unknown_code():
@@ -83,7 +85,18 @@ def test_create_workflow_still_accepts_real_code(mock_post, mock_gate):
     )
     status, payload = create_workflow_for_user(
         "user-1",
-        {"agent_id": "aria", "steps": [{"step": 1, "code": "GS-01", "params": {"url": "https://x"}}]},
+        {
+            "agent_id": "aria",
+            "steps": [
+                {
+                    "step": 1,
+                    "code": "GS-01",
+                    "params": {
+                        "url": "https://docs.google.com/spreadsheets/d/abc123XYZ/edit",
+                    },
+                }
+            ],
+        },
     )
     assert status == 200
     assert payload["workflow"]["id"] == "wf-1"

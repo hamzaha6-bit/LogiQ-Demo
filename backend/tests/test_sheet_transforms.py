@@ -19,6 +19,7 @@ sys.path.insert(0, str(_ROOT / "api_lib"))
 from sheet_transforms import (  # noqa: E402
     TransformError,
     aggregate_rows,
+    derive_columns,
     drop_groups,
     execute_transform,
     filter_rows,
@@ -331,3 +332,167 @@ def test_shopify_pipeline_filter_drop_project_sort_aggregate(shopify_table):
     assert aggregated["success"] is True
     assert aggregated["row_count"] >= 1
     assert any(r["Summary"].endswith("x 5") or "m x" in r["Summary"] for r in aggregated["rows"])
+
+
+# ── XF-06 Ordered derive + optional filter ───────────────────────────────────
+
+_CREDIT_COLUMNS = [
+    "Customer",
+    "Current balance GBP",
+    "Credit limit GBP",
+    "Oldest unpaid invoice date",
+]
+
+_CREDIT_DERIVE = [
+    {
+        "column": "Over limit",
+        "op": "gt",
+        "left_column": "Current balance GBP",
+        "right_column": "Credit limit GBP",
+    },
+    {
+        "column": "Days overdue",
+        "op": "days_since",
+        "date_column": "Oldest unpaid invoice date",
+    },
+    {
+        "column": "Overdue >30 days",
+        "op": "gt",
+        "left_column": "Days overdue",
+        "right_value": 30,
+    },
+    {
+        "column": "Flagged",
+        "op": "or",
+        "columns": ["Over limit", "Overdue >30 days"],
+    },
+]
+
+
+@pytest.fixture
+def credit_table():
+    # as_of fixed to 2026-08-11 in tests
+    rows = [
+        {
+            "Customer": "OverLimitCo",
+            "Current balance GBP": "12000",
+            "Credit limit GBP": "10000",
+            "Oldest unpaid invoice date": "2026-07-20",  # 22 days — not >30
+        },
+        {
+            "Customer": "OverdueCo",
+            "Current balance GBP": "500",
+            "Credit limit GBP": "5000",
+            "Oldest unpaid invoice date": "2026-06-01",  # 71 days
+        },
+        {
+            "Customer": "BothCo",
+            "Current balance GBP": "£8,500.00",
+            "Credit limit GBP": "8000",
+            "Oldest unpaid invoice date": "01/05/2026",  # 102 days (UK)
+        },
+        {
+            "Customer": "CleanCo",
+            "Current balance GBP": "1000",
+            "Credit limit GBP": "5000",
+            "Oldest unpaid invoice date": "2026-08-01",  # 10 days
+        },
+    ]
+    return {"rows": rows, "columns": list(_CREDIT_COLUMNS)}
+
+
+def test_xf06_credit_review_ordered_derive_and_filter(credit_table):
+    """Flagged must be computed LAST from Over limit OR Overdue >30 — not required on input."""
+    assert "Flagged" not in credit_table["columns"]
+    out = execute_transform(
+        "XF-06",
+        {
+            **credit_table,
+            "derive": _CREDIT_DERIVE,
+            "filter_column": "Flagged",
+            "filter_value": "yes",
+            "as_of": "2026-08-11",
+        },
+    )
+    assert out["success"] is True
+    assert "Flagged" in out["columns"]
+    assert out["derived_columns"] == [
+        "Over limit",
+        "Days overdue",
+        "Overdue >30 days",
+        "Flagged",
+    ]
+    names = {r["Customer"] for r in out["rows"]}
+    assert names == {"OverLimitCo", "OverdueCo", "BothCo"}
+    assert "CleanCo" not in names
+    by = {r["Customer"]: r for r in out["rows"]}
+    assert by["OverLimitCo"]["Over limit"] == "yes"
+    assert by["OverLimitCo"]["Overdue >30 days"] == "no"
+    assert by["OverLimitCo"]["Flagged"] == "yes"
+    assert by["OverdueCo"]["Over limit"] == "no"
+    assert by["OverdueCo"]["Days overdue"] == "71"
+    assert by["OverdueCo"]["Overdue >30 days"] == "yes"
+    assert by["OverdueCo"]["Flagged"] == "yes"
+    assert by["BothCo"]["Over limit"] == "yes"
+    assert by["BothCo"]["Overdue >30 days"] == "yes"
+    assert by["BothCo"]["Flagged"] == "yes"
+
+
+def test_xf06_does_not_require_flagged_on_input(credit_table):
+    out = derive_columns(
+        credit_table["rows"],
+        credit_table["columns"],
+        derive=_CREDIT_DERIVE,
+        as_of="2026-08-11",
+    )
+    assert out["row_count"] == 4
+    assert all(r["Flagged"] in ("yes", "no") for r in out["rows"])
+    clean = next(r for r in out["rows"] if r["Customer"] == "CleanCo")
+    assert clean["Flagged"] == "no"
+    assert clean["Days overdue"] == "10"
+
+
+def test_xf06_missing_source_column_still_errors(credit_table):
+    with pytest.raises(TransformError, match="Missing column\\(s\\): Current balance GBP"):
+        execute_transform(
+            "XF-06",
+            {
+                "rows": credit_table["rows"],
+                "columns": ["Customer", "Credit limit GBP", "Oldest unpaid invoice date"],
+                "derive": _CREDIT_DERIVE,
+                "as_of": "2026-08-11",
+            },
+        )
+
+
+def test_xf06_flagged_as_input_to_xf01_still_missing_without_derive(credit_table):
+    """Reproduce the demo failure mode: XF-01 treating Flagged as a required input."""
+    with pytest.raises(TransformError, match="Missing column\\(s\\): Flagged"):
+        execute_transform(
+            "XF-01",
+            {
+                **credit_table,
+                "status_column": "Flagged",
+                "status_value": "yes",
+                "id_column": "Current balance GBP",
+                "min_id": 0,
+                "max_id": 999999,
+            },
+        )
+
+
+def test_execute_step_xf06_via_runner(credit_table):
+    out = _execute_step(
+        "XF-06",
+        {
+            **credit_table,
+            "derive": _CREDIT_DERIVE,
+            "keep_when": {"column": "Flagged", "op": "equals", "value": "yes"},
+            "as_of": "2026-08-11",
+        },
+        user_id="u1",
+        agent_id="nova",
+        agent_name="Nova",
+    )
+    assert out["row_count"] == 3
+    assert all(r["Flagged"] == "yes" for r in out["rows"])

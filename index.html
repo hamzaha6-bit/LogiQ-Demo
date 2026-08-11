@@ -6513,6 +6513,28 @@ CREATE TABLE IF NOT EXISTS workflow_runs (id uuid DEFAULT gen_random_uuid() PRIM
               "0-based row indices where each SKU group starts — feed into GS-11's group_boundaries if needed",
           },
         },
+        "XF-06": {
+          integration: "Transform",
+          name: "Derive columns then optional filter",
+          requires_approval: false,
+          params: {
+            rows: 'list of row objects from prior GS-01/XF — use "{{step_N.output.rows}}"',
+            columns: 'column name list — use "{{step_N.output.columns}}"',
+            derive:
+              "ORDERED list evaluated left-to-right PER ROW; later entries may reference earlier derived columns. Each item needs column (output name) + op. Ops: gt|gte|lt|lte|eq|neq (left_column + right_column|right_value), days_since (date_column → day count), or|and (columns:[...]). Boolean outputs default yes/no. Example: [{column:'Over limit', op:'gt', left_column:'Current balance GBP', right_column:'Credit limit GBP'}, {column:'Days overdue', op:'days_since', date_column:'Oldest unpaid invoice date'}, {column:'Overdue >30 days', op:'gt', left_column:'Days overdue', right_value:30}, {column:'Flagged', op:'or', columns:['Over limit','Overdue >30 days']}]. Do NOT require Flagged on the input sheet.",
+            keep_when:
+              "optional {column, op:'equals'|'truthy', value} applied AFTER derive — e.g. {column:'Flagged', op:'equals', value:'yes'}",
+            filter_column: "optional alias for keep_when.column (e.g. Flagged)",
+            filter_value: "optional alias for keep_when.value (default yes)",
+            as_of: "optional YYYY-MM-DD for deterministic days_since",
+          },
+          outputs: {
+            rows: 'rows with derived columns (and optionally filtered) — chain as "{{step_N.output.rows}}"',
+            columns: "input columns plus derived column names",
+            row_count: "number of rows remaining",
+            derived_columns: "names added by this step",
+          },
+        },
       };
 
       /** Only these codes have real workflow_runner implementations today. */
@@ -6547,6 +6569,7 @@ CREATE TABLE IF NOT EXISTS workflow_runs (id uuid DEFAULT gen_random_uuid() PRIM
         "XF-03",
         "XF-04",
         "XF-05",
+        "XF-06",
       ]);
 
       const IRREVERSIBLE_PRIMITIVES = new Set([
@@ -6620,6 +6643,8 @@ Rules:
 - For Sheets steps, always include params.url with the user's REAL Google Sheets URL. NEVER invent YOUR_SHEET_ID, YOUR_SPREADSHEET_ID, or ellipsis URLs. When revising a plan, copy the previous plan's exact params.url / spreadsheet_id onto every GS-* step.
 - GS-02 needs row/row_data; GS-03 needs row + row_data; GS-06 needs row; GS-07 needs cell (A1) + value.
 - For calendar: GC-01 needs time_min/time_max; GC-02 needs optional time range; GC-03/GC-06 need title, start, end (ISO); GC-06 also needs attendees[]; GC-04/GC-05 need event_id.
+- XF-01 only filters by status equality + numeric ID range on columns that already exist. It cannot compare two columns, do date math, or create Flagged.
+- For credit-review / over-limit / overdue / Flagged logic use XF-06 with an ORDERED derive list (later columns may reference earlier derived ones). Typical order: Over limit → Days overdue → Overdue >30 days → Flagged (or of the two flags). Optionally filter_column=Flagged filter_value=yes. Never use XF-01 with status_column=Flagged unless Flagged already exists on the sheet.
 - Prefer 2–6 steps. Be practical, not generic.
 - Tone: warm, concise, colleague-like — not a form or checklist.
 - Never mention internal codes, template variables, or raw JSON fields to the user in prose; codes belong only in the JSON block.`;

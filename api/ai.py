@@ -47,11 +47,18 @@ def _log(msg: str) -> None:
 
 
 def _blueprint_system_prompt(*, bound_sheet: Optional[dict] = None) -> str:
-    registry_block = "\n".join(
-        f"{p['code']}: {p['name']} ({p['integration']})"
-        + (" [requires approval]" if p["requires_approval"] else "")
-        for p in registry_for_prompt()
-    )
+    registry_lines = []
+    for p in registry_for_prompt():
+        line = (
+            f"{p['code']}: {p['name']} ({p['integration']})"
+            + (" [requires approval]" if p["requires_approval"] else "")
+        )
+        params = p.get("params")
+        if isinstance(params, dict) and params:
+            param_bits = "; ".join(f"{k}: {v}" for k, v in params.items())
+            line += f"\n  params: {param_bits}"
+        registry_lines.append(line)
+    registry_block = "\n".join(registry_lines)
     bound_block = ""
     if bound_sheet and bound_sheet.get("spreadsheet_id"):
         bound_block = f"""
@@ -104,6 +111,8 @@ Rules:
 - For Sheets steps, always include params.url with the user's REAL Google Sheets URL (full https://docs.google.com/spreadsheets/d/... link). NEVER invent YOUR_SHEET_ID, YOUR_SPREADSHEET_ID, example.com, or ellipsis URLs — if the user has not given a link yet, ask for it in prose and do not emit a deployable plan. When revising an existing plan, copy the previous plan's exact params.url / spreadsheet_id onto every GS-* step.
 - GS-02 needs row/row_data; GS-03 needs row + row_data; GS-06 needs row; GS-07 needs cell (A1) + value.
 - For calendar: GC-01 needs time_min/time_max; GC-02 needs optional time range; GC-03/GC-06 need title, start, end (ISO); GC-06 also needs attendees[]; GC-04/GC-05 need event_id.
+- XF-01 only filters by a status equality + numeric ID range on columns that ALREADY exist. It cannot compare two columns, do date math, or invent Flagged.
+- For credit-review / over-limit / days-overdue / Flagged logic use XF-06: pass an ORDERED derive list so later columns can reference earlier derived ones in the same step (Over limit → Days overdue → Overdue >30 days → Flagged last). Chain rows/columns from GS-01 via {{{{step_1.output.rows}}}} / {{{{step_1.output.columns}}}}. Optionally set keep_when or filter_column=Flagged + filter_value=yes. Never plan XF-01 with status_column=Flagged unless Flagged already exists on the sheet.
 - Prefer 2–6 steps. Be practical, not generic.
 - Tone: warm, concise, colleague-like — not a form or checklist.
 - Never mention internal codes, template variables, or raw JSON fields to the user in prose; codes belong only in the JSON block.{bound_block}"""
