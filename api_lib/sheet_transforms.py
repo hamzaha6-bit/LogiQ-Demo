@@ -1,4 +1,4 @@
-"""Pure in-memory sheet transforms (XF-01..XF-05). No Sheets API calls.
+"""Pure in-memory sheet transforms (XF-01..XF-06). No Sheets API calls.
 
 Input / output shape matches GS-01: {"rows": [dict, ...], "columns": [str, ...]}.
 Optional metadata (group_boundaries, row_count, etc.) is included for later
@@ -8,6 +8,7 @@ formatting/grouping steps (piece 5).
 from __future__ import annotations
 
 import re
+from datetime import date, datetime, timezone
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 Row = Dict[str, Any]
@@ -415,10 +416,349 @@ def aggregate_rows(
     )
 
 
+# ── XF-06 Ordered derive / compute columns ───────────────────────────────────
+
+_COMPARE_OPS = frozenset({"gt", "gte", "lt", "lte", "eq", "neq", ">", ">=", "<", "<=", "==", "!="})
+_BOOL_OPS = frozenset({"or", "and"})
+_DATE_OPS = frozenset({"days_since", "days_from_today", "age_days"})
+
+_TRUTHY = frozenset({"yes", "true", "y", "1", "t"})
+
+_DATE_FORMATS = (
+    "%Y-%m-%d",
+    "%d/%m/%Y",
+    "%d-%m-%Y",
+    "%m/%d/%Y",
+    "%Y/%m/%d",
+    "%d %b %Y",
+    "%d %B %Y",
+    "%Y-%m-%dT%H:%M:%S",
+    "%Y-%m-%dT%H:%M:%S%z",
+)
+
+
+def _is_truthy(value: Any) -> bool:
+    return _as_str(value).casefold() in _TRUTHY
+
+
+def _parse_date(value: Any) -> Optional[date]:
+    text = _as_str(value)
+    if not text:
+        return None
+    # Excel serial-ish integers are uncommon in GS-01 string rows; skip.
+    for fmt in _DATE_FORMATS:
+        try:
+            return datetime.strptime(text, fmt).date()
+        except ValueError:
+            continue
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).date()
+    except ValueError:
+        return None
+
+
+def _normalize_compare_op(op: str) -> str:
+    mapping = {
+        ">": "gt",
+        ">=": "gte",
+        "<": "lt",
+        "<=": "lte",
+        "==": "eq",
+        "=": "eq",
+        "!=": "neq",
+        "<>": "neq",
+    }
+    key = (op or "").strip().lower()
+    return mapping.get(key, key)
+
+
+def _compare_numbers(left: Optional[float], right: Optional[float], op: str) -> Optional[bool]:
+    if left is None or right is None:
+        return None
+    op_n = _normalize_compare_op(op)
+    if op_n == "gt":
+        return left > right
+    if op_n == "gte":
+        return left >= right
+    if op_n == "lt":
+        return left < right
+    if op_n == "lte":
+        return left <= right
+    if op_n == "eq":
+        return left == right
+    if op_n == "neq":
+        return left != right
+    raise TransformError(f"Unsupported compare op {op!r}")
+
+
+def _resolve_side(
+    row: Row,
+    *,
+    column: Optional[str],
+    literal: Any,
+    available: Sequence[str],
+) -> Any:
+    if column:
+        if column not in available and column not in row:
+            raise TransformError(f"Missing column(s): {column}")
+        return row.get(column, "")
+    return literal
+
+
+def _bool_output(flag: Optional[bool], true_value: str, false_value: str) -> str:
+    if flag is True:
+        return true_value
+    return false_value
+
+
+def _right_side(spec: Dict[str, Any]) -> Tuple[Optional[str], Any]:
+    """Return (right_column, right_literal). Prefer explicit right_column / right_value."""
+    if spec.get("right_column"):
+        return str(spec["right_column"]), None
+    if "right_value" in spec:
+        return None, spec.get("right_value")
+    if "value" in spec and "right" not in spec:
+        return None, spec.get("value")
+    right = spec.get("right")
+    if isinstance(right, str):
+        # String right without right_value → column reference (Balance > Limit).
+        return right, None
+    if right is not None:
+        return None, right
+    if "value" in spec:
+        return None, spec.get("value")
+    return None, None
+
+
+def _eval_derive_spec(
+    row: Row,
+    spec: Dict[str, Any],
+    *,
+    available: Sequence[str],
+    today: date,
+) -> Any:
+    op_raw = _as_str(spec.get("op") or spec.get("operator")).lower()
+    if not op_raw:
+        raise TransformError("Each derive entry requires op")
+
+    if "true_value" in spec:
+        true_value = spec["true_value"]
+    elif "yes_value" in spec:
+        true_value = spec["yes_value"]
+    else:
+        true_value = "yes"
+    if "false_value" in spec:
+        false_value = spec["false_value"]
+    elif "no_value" in spec:
+        false_value = spec["no_value"]
+    else:
+        false_value = "no"
+    true_value = _as_str(true_value) if true_value is not None else "yes"
+    false_value = _as_str(false_value) if false_value is not None else "no"
+
+    if op_raw in _DATE_OPS:
+        date_column = (
+            spec.get("date_column")
+            or spec.get("column_ref")
+            or spec.get("left_column")
+        )
+        if not date_column:
+            raise TransformError("days_since requires date_column")
+        parsed = _parse_date(
+            _resolve_side(row, column=str(date_column), literal=None, available=available)
+        )
+        if parsed is None:
+            return ""
+        return str((today - parsed).days)
+
+    op = _normalize_compare_op(op_raw)
+    if op in {"gt", "gte", "lt", "lte", "eq", "neq"}:
+        left_column = spec.get("left_column") or spec.get("left")
+        left_col = str(left_column) if left_column else None
+        if not left_col:
+            raise TransformError(f"Compare op {op_raw!r} requires left_column")
+        right_column, right_literal = _right_side(spec)
+        if not right_column and right_literal is None:
+            raise TransformError(
+                f"Compare op {op_raw!r} requires right_column or right_value"
+            )
+        left_raw = _resolve_side(row, column=left_col, literal=None, available=available)
+        if right_column:
+            right_raw = _resolve_side(
+                row, column=str(right_column), literal=None, available=available
+            )
+        else:
+            right_raw = right_literal
+        result = _compare_numbers(_parse_number(left_raw), _parse_number(right_raw), op)
+        return _bool_output(result, true_value, false_value)
+
+    if op_raw in _BOOL_OPS:
+        cols = spec.get("columns") or spec.get("inputs") or spec.get("refs")
+        if not isinstance(cols, list) or not cols:
+            raise TransformError(f"{op_raw} requires columns: [list of column names]")
+        flags = []
+        for c in cols:
+            val = _resolve_side(row, column=str(c), literal=None, available=available)
+            flags.append(_is_truthy(val))
+        if op_raw == "or":
+            return _bool_output(any(flags), true_value, false_value)
+        return _bool_output(all(flags), true_value, false_value)
+
+    raise TransformError(
+        f"Unsupported derive op {op_raw!r}; use gt/gte/lt/lte/eq/neq, days_since, or, and"
+    )
+
+
+def _collect_derive_source_columns(
+    derive: Sequence[Dict[str, Any]],
+    input_columns: Sequence[str],
+) -> List[str]:
+    """Columns that must already exist on input (not produced earlier in derive)."""
+    derived: set = set()
+    missing: List[str] = []
+    input_set = set(input_columns)
+
+    def need(ref: Optional[str]) -> None:
+        if not ref:
+            return
+        name = str(ref)
+        if name in derived or name in input_set:
+            return
+        if name not in missing:
+            missing.append(name)
+
+    for raw in derive:
+        if not isinstance(raw, dict):
+            raise TransformError("Each derive entry must be an object")
+        out_name = raw.get("column") or raw.get("name") or raw.get("as")
+        if not out_name:
+            raise TransformError("Each derive entry requires column (output name)")
+        op_raw = _as_str(raw.get("op") or raw.get("operator")).lower()
+        op = _normalize_compare_op(op_raw)
+
+        if op_raw in _DATE_OPS:
+            need(raw.get("date_column") or raw.get("column_ref") or raw.get("left_column"))
+        elif op in {"gt", "gte", "lt", "lte", "eq", "neq"}:
+            need(raw.get("left_column") or raw.get("left"))
+            right_column, _literal = _right_side(raw)
+            if right_column:
+                need(right_column)
+        elif op_raw in _BOOL_OPS:
+            cols = raw.get("columns") or raw.get("inputs") or raw.get("refs") or []
+            if not isinstance(cols, list):
+                raise TransformError(f"{op_raw} requires columns list")
+            for c in cols:
+                need(str(c))
+        else:
+            raise TransformError(
+                f"Unsupported derive op {op_raw!r}; use gt/gte/lt/lte/eq/neq, days_since, or, and"
+            )
+        derived.add(str(out_name))
+
+    return missing
+
+
+def derive_columns(
+    rows: List[Row],
+    columns: List[str],
+    *,
+    derive: Sequence[Dict[str, Any]],
+    keep_when: Optional[Dict[str, Any]] = None,
+    as_of: Optional[Any] = None,
+) -> Table:
+    """Apply ordered column expressions; later specs may reference earlier outputs.
+
+    Each derive entry is evaluated left-to-right **per row** so dependencies like
+    Flagged = Over limit OR Overdue >30 days work in one step without Flagged
+    existing on the input sheet.
+
+    Ops:
+      gt/gte/lt/lte/eq/neq — numeric compare (left_column vs right_column|right_value)
+      days_since — today minus date_column (integer day count as string)
+      or / and — boolean combine of columns (truthy: yes/true/y/1)
+
+    Optional keep_when / filter_column+filter_value keeps matching rows after derive.
+    """
+    if not isinstance(derive, (list, tuple)) or not derive:
+        raise TransformError("XF-06 requires a non-empty derive list")
+
+    missing = _collect_derive_source_columns(derive, columns)
+    if missing:
+        raise TransformError(f"Missing column(s): {', '.join(missing)}")
+
+    if as_of is None:
+        today = datetime.now(timezone.utc).date()
+    else:
+        parsed_as_of = _parse_date(as_of)
+        if parsed_as_of is None and isinstance(as_of, date):
+            parsed_as_of = as_of
+        if parsed_as_of is None:
+            raise TransformError("as_of must be a parseable date")
+        today = parsed_as_of
+
+    out_columns = list(columns)
+    derive_names: List[str] = []
+    for raw in derive:
+        name = str(raw.get("column") or raw.get("name") or raw.get("as"))
+        derive_names.append(name)
+        if name not in out_columns:
+            out_columns.append(name)
+
+    out_rows: List[Row] = []
+    for row in rows:
+        new_row = dict(row)
+        available = list(columns)
+        for spec, name in zip(derive, derive_names):
+            value = _eval_derive_spec(new_row, spec, available=available, today=today)
+            new_row[name] = value
+            if name not in available:
+                available.append(name)
+        for c in out_columns:
+            new_row.setdefault(c, "")
+        out_rows.append(new_row)
+
+    if isinstance(keep_when, dict) and keep_when:
+        fcol = keep_when.get("column") or keep_when.get("filter_column")
+        if not fcol:
+            raise TransformError("keep_when requires column")
+        fop = _as_str(keep_when.get("op") or "equals").lower()
+        fval = keep_when.get("value")
+        if fval is None:
+            fval = keep_when.get("filter_value")
+        fval_s = _as_str(fval)
+        case_sensitive = bool(keep_when.get("case_sensitive", False))
+        filtered: List[Row] = []
+        for row in out_rows:
+            cell = _as_str(row.get(str(fcol), ""))
+            if fop in ("equals", "eq", "=="):
+                if case_sensitive:
+                    ok = cell == fval_s
+                else:
+                    ok = cell.casefold() == fval_s.casefold()
+            elif fop in ("truthy", "yes", "true"):
+                ok = _is_truthy(cell)
+            else:
+                raise TransformError(
+                    f"Unsupported keep_when op {fop!r}; use equals or truthy"
+                )
+            if ok:
+                filtered.append(row)
+        out_rows = filtered
+
+    return _table_out(
+        out_rows,
+        out_columns,
+        extra={
+            "derived_columns": derive_names,
+            "as_of": today.isoformat(),
+        },
+    )
+
+
 # ── Dispatch ─────────────────────────────────────────────────────────────────
 
 def execute_transform(code: str, params: Dict[str, Any]) -> Table:
-    """Run XF-01..XF-05 from workflow params. Raises TransformError on bad input."""
+    """Run XF-01..XF-06 from workflow params. Raises TransformError on bad input."""
     normalized = (code or "").strip().upper()
     rows, columns = _normalize_table(params or {})
 
@@ -531,6 +871,36 @@ def execute_transform(code: str, params: Dict[str, Any]) -> Table:
             format_string=str(format_string),
             summary_column=str(params.get("summary_column") or "Summary"),
             preserve_other_columns=bool(params.get("preserve_other_columns", True)),
+        )
+
+    if normalized == "XF-06":
+        derive = (
+            params.get("derive")
+            or params.get("derived_columns")
+            or params.get("computations")
+            or params.get("expressions")
+        )
+        if not isinstance(derive, list):
+            raise TransformError(
+                "XF-06 requires derive (ordered list of {column, op, ...} expressions)"
+            )
+        keep_when = params.get("keep_when") if isinstance(params.get("keep_when"), dict) else None
+        if keep_when is None and params.get("filter_column"):
+            keep_when = {
+                "column": params.get("filter_column"),
+                "op": params.get("filter_op") or "equals",
+                "value": (
+                    params.get("filter_value")
+                    if params.get("filter_value") is not None
+                    else "yes"
+                ),
+            }
+        return derive_columns(
+            rows,
+            columns,
+            derive=derive,
+            keep_when=keep_when,
+            as_of=params.get("as_of") or params.get("today"),
         )
 
     raise TransformError(f"Unhandled transform action {normalized}")

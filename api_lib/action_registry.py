@@ -213,18 +213,50 @@ ACTION_REGISTRY: Dict[str, Dict[str, Any]] = {
             "summary_column": "output column name for formatted string (default Summary)",
         },
     },
+    "XF-06": {
+        "integration": "Transform",
+        "name": "Derive columns then optional filter",
+        "requires_approval": False,
+        "params": {
+            "rows": "list of row objects (from prior GS-01/XF output)",
+            "columns": "column name list from prior step",
+            "derive": (
+                "ORDERED list of expressions evaluated left-to-right PER ROW. "
+                "Later entries MAY reference earlier derived columns in the same list. "
+                "Each item: {column (output name), op, ...}. "
+                "Ops: gt|gte|lt|lte|eq|neq with left_column + right_column|right_value "
+                "(numeric compare between columns or vs literal); "
+                "days_since with date_column (today minus date → day count string); "
+                "or|and with columns:[...] (truthy: yes/true/y/1). "
+                "Boolean outputs default to true_value='yes' / false_value='no'. "
+                "Do NOT require derived names (e.g. Flagged) to exist on the input sheet. "
+                "Example credit review order: "
+                "(1) Over limit = balance gt limit; "
+                "(2) Days overdue = days_since oldest unpaid; "
+                "(3) Overdue >30 days = Days overdue gt 30; "
+                "(4) Flagged = or([Over limit, Overdue >30 days])."
+            ),
+            "keep_when": (
+                "optional post-derive filter {column, op: equals|truthy, value}. "
+                "Use column=Flagged, value=yes to keep flagged rows only."
+            ),
+            "filter_column": "optional alias for keep_when.column",
+            "filter_value": "optional alias for keep_when.value (default yes)",
+            "as_of": "optional YYYY-MM-DD for deterministic days_since (tests/demos)",
+        },
+    },
 }
 
 # Only these codes have real implementations in workflow_runner._execute_step.
 # Phase 1 tracks add codes here as each action is verified working.
 # Tracks A/B/C: all 21 Gmail, Sheets, and Calendar codes use real API calls.
-# XF-01..05: pure in-memory transforms (no Sheets API).
+# XF-01..06: pure in-memory transforms (no Sheets API).
 REAL_CODES = frozenset({
     "GS-01", "GS-02", "GS-03", "GS-04", "GS-05", "GS-06", "GS-07", "GS-08", "GS-09",
     "GS-10", "GS-11",
     "GM-01", "GM-02", "GM-03", "GM-04", "GM-05", "GM-06", "GM-07", "GM-08",
     "GC-01", "GC-02", "GC-03", "GC-04", "GC-05", "GC-06",
-    "XF-01", "XF-02", "XF-03", "XF-04", "XF-05",
+    "XF-01", "XF-02", "XF-03", "XF-04", "XF-05", "XF-06",
 })
 
 IRREVERSIBLE_CODES = frozenset({"GM-03", "GM-04", "GC-05", "GC-06", "GS-06"})
@@ -236,16 +268,20 @@ def is_real_code(code: Optional[str]) -> bool:
 
 def registry_for_prompt() -> List[Dict[str, Any]]:
     """Primitives Blueprint may plan — executable codes only."""
-    return [
-        {
+    out: List[Dict[str, Any]] = []
+    for code, meta in ACTION_REGISTRY.items():
+        if code not in REAL_CODES:
+            continue
+        entry: Dict[str, Any] = {
             "code": code,
             "integration": meta["integration"],
             "name": meta["name"],
             "requires_approval": meta["requires_approval"],
         }
-        for code, meta in ACTION_REGISTRY.items()
-        if code in REAL_CODES
-    ]
+        if isinstance(meta.get("params"), dict):
+            entry["params"] = meta["params"]
+        out.append(entry)
+    return out
 
 
 def validate_plan_steps(steps: List[Dict[str, Any]]) -> Optional[str]:
