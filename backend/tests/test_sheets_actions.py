@@ -36,6 +36,7 @@ def _conn():
 
 def test_connect_fails_when_rest_post_returns_no_row():
     with patch("sheets_service._require_sheets"), \
+         patch("sheets_service.client_id_from_user_id", return_value="client-1"), \
          patch("sheets_service.get_sheets_service", return_value=MagicMock()), \
          patch("sheets_service._resolve_sheet_title", return_value="Sheet1"), \
          patch("sheets_service._fetch_values", return_value=[["Name", "Email"], ["Ada", "a@x.com"]]), \
@@ -45,8 +46,39 @@ def test_connect_fails_when_rest_post_returns_no_row():
     assert "persist" in str(exc.value).lower() or "boom" in str(exc.value)
 
 
+def test_connect_includes_client_id():
+    """sheet_connections.client_id is NOT NULL — same bug class as workflows/user_integrations."""
+    with patch("sheets_service._require_sheets"), \
+         patch("sheets_service.client_id_from_user_id", return_value="client-1") as mock_cid, \
+         patch("sheets_service.get_sheets_service", return_value=MagicMock()), \
+         patch("sheets_service._resolve_sheet_title", return_value="Sheet1"), \
+         patch("sheets_service._fetch_values", return_value=[["Name"], ["Ada"]]), \
+         patch("sheets_service.rest_post_with_error", return_value=({"id": "c1"}, "")) as mock_post:
+        out = connect(SHEET_URL, "nova", "u1")
+    assert out["success"] is True
+    mock_cid.assert_called_once_with("u1")
+    payload = mock_post.call_args.args[1]
+    assert payload["client_id"] == "client-1"
+    assert payload["user_id"] == "u1"
+    assert payload["agent_id"] == "nova"
+
+
+def test_connect_fails_without_client_membership():
+    with patch("sheets_service._require_sheets"), \
+         patch(
+             "sheets_service.client_id_from_user_id",
+             side_effect=ValueError("no client membership for user u1"),
+         ), \
+         patch("sheets_service.rest_post_with_error") as mock_post:
+        with pytest.raises(SheetsError) as exc:
+            connect(SHEET_URL, "aria", "u1")
+    assert "no client membership" in str(exc.value)
+    mock_post.assert_not_called()
+
+
 def test_gs05_connect_success_requires_connection_id():
     with patch("sheets_service._require_sheets"), \
+         patch("sheets_service.client_id_from_user_id", return_value="client-1"), \
          patch("sheets_service.get_sheets_service", return_value=MagicMock()), \
          patch("sheets_service._resolve_sheet_title", return_value="Sheet1"), \
          patch("sheets_service._fetch_values", return_value=[["Name"], ["Ada"]]), \
@@ -59,6 +91,7 @@ def test_gs05_connect_success_requires_connection_id():
     assert out["source_sheet_name"] == "Sheet1"
     payload = mock_post.call_args.args[1]
     assert payload["source_sheet_name"] == "Sheet1"
+    assert payload["client_id"] == "client-1"
 
 
 # ── GS-01 auto-connects when sheet_connections row is missing ───────────────

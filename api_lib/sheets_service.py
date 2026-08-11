@@ -14,7 +14,7 @@ from google_oauth import (
     has_scope,
     load_user_token,
 )
-from supabase_rest import rest_get, rest_patch, rest_post_with_error
+from supabase_rest import client_id_from_user_id, rest_get, rest_patch, rest_post_with_error
 
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}|^\d{1,2}/\d{1,2}/\d{2,4}")
@@ -290,6 +290,11 @@ def connect(
     spreadsheet_id = parse_spreadsheet_id(url)
     if not spreadsheet_id:
         raise SheetsError("Invalid Google Sheets URL")
+    # sheet_connections.client_id is NOT NULL (migration 001).
+    try:
+        client_id = client_id_from_user_id(user_id)
+    except ValueError as exc:
+        raise SheetsError(str(exc)) from exc
     agent_key = agent_id.lower().strip()
     # Resolve source tab first so missing names fail before any DB write.
     # Title resolve owns the Sheets service lookup (keeps tests patch-friendly).
@@ -305,6 +310,7 @@ def connect(
         "sheet_connections",
         {
             "user_id": user_id,
+            "client_id": client_id,
             "agent_id": agent_key,
             "spreadsheet_id": spreadsheet_id,
             "sheet_url": url.strip(),
