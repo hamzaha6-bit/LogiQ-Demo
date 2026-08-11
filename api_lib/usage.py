@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import date, datetime, timezone
 from typing import Dict
 
-from supabase_rest import rest_get, rest_post
+from supabase_rest import client_id_from_user_id, rest_get, rest_post
 
 
 def _month_start() -> str:
@@ -83,12 +83,18 @@ def _increment_daily(user_id: str, field: str, amount: int = 1) -> None:
     uid = (user_id or "").strip()
     if not uid or field not in ("api_calls", "emails_sent", "actions_taken"):
         return
+    # usage_tracking.client_id is NOT NULL (migration 001).
+    try:
+        client_id = client_id_from_user_id(uid)
+    except ValueError:
+        return
     current = get_today_usage(uid)
     current[field] = int(current.get(field) or 0) + max(1, int(amount))
     rest_post(
         "usage_tracking",
         {
             "user_id": uid,
+            "client_id": client_id,
             "date": _today(),
             "api_calls": current["api_calls"],
             "emails_sent": current["emails_sent"],

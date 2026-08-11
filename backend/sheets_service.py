@@ -231,6 +231,13 @@ def connect(url: str, agent_id: str = "aria", user_id: Optional[str] = None) -> 
     spreadsheet_id = parse_spreadsheet_id(url)
     if not spreadsheet_id:
         raise SheetsError("Invalid Google Sheets URL")
+    # sheet_connections.client_id is NOT NULL (migration 001).
+    from supabase_rest import client_id_from_user_id
+
+    try:
+        client_id = client_id_from_user_id(user_id)
+    except ValueError as exc:
+        raise SheetsError(str(exc)) from exc
     agent_key = agent_id.lower().strip()
     values = _fetch_values(user_id, spreadsheet_id)
     rows, columns = _rows_from_values(values)
@@ -241,6 +248,7 @@ def connect(url: str, agent_id: str = "aria", user_id: Optional[str] = None) -> 
         "sheet_connections",
         {
             "user_id": user_id,
+            "client_id": client_id,
             "agent_id": agent_key,
             "spreadsheet_id": spreadsheet_id,
             "sheet_url": url.strip(),
