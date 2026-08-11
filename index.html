@@ -6042,6 +6042,8 @@
       let blueprintHistory = [];
       let blueprintUserTurns = 0;
       let blueprintPlan = null;
+      /** Last valid plan kept across Edit / regenerate so sheet URL/id is not lost. */
+      let blueprintPriorPlan = null;
       let blueprintSelectedAgent = "aria";
       let blueprintConversationId = null;
       let blueprintHistoryLoading = false;
@@ -6599,7 +6601,7 @@ When the user describes what they want to automate:
       "step": 1,
       "code": "GS-01",
       "description": "Plain English: what this step does in context",
-      "params": { "url": "https://docs.google.com/spreadsheets/d/..." }
+      "params": { "url": "<paste the user's real Google Sheets URL here>" }
     }
   ]
 }
@@ -6615,7 +6617,8 @@ Rules:
 - Search results are oldest-first. After GM-07, use message_id: "{{step_1.output.results.0.message_id}}".
 - For franchise / enquiry inbox workflows, GM-07 query MUST exclude already-processed mail, e.g. (franchise OR franchising OR "become a franchisee" OR "franchise opportunity") -label:"Franchise Enquiry". Prefer nova; summary must state one enquiry per run.
 - For read message (GM-02) use { "message_id" }; for get thread (GM-08) use { "thread_id" }; for label (GM-06) use { "message_id", "add_labels", "remove_labels" }.
-- For Sheets steps, always include params.url (Google Sheets URL). GS-02 needs row/row_data; GS-03 needs row + row_data; GS-06 needs row; GS-07 needs cell (A1) + value.
+- For Sheets steps, always include params.url with the user's REAL Google Sheets URL. NEVER invent YOUR_SHEET_ID, YOUR_SPREADSHEET_ID, or ellipsis URLs. When revising a plan, copy the previous plan's exact params.url / spreadsheet_id onto every GS-* step.
+- GS-02 needs row/row_data; GS-03 needs row + row_data; GS-06 needs row; GS-07 needs cell (A1) + value.
 - For calendar: GC-01 needs time_min/time_max; GC-02 needs optional time range; GC-03/GC-06 need title, start, end (ISO); GC-06 also needs attendees[]; GC-04/GC-05 need event_id.
 - Prefer 2–6 steps. Be practical, not generic.
 - Tone: warm, concise, colleague-like — not a form or checklist.
@@ -7952,13 +7955,157 @@ Rules:
         });
       }
 
-      function validateBlueprintPlan(plan) {
+      function isPlaceholderSheetRef(value) {
+        const raw = String(value || "").trim();
+        if (!raw) return true;
+        if (raw.includes("...") || /\/d\/…\//.test(raw) || /\/d\/\.\.\.\//.test(raw))
+          return true;
+        const lower = raw.toLowerCase();
+        const placeholders = new Set([
+          "your_sheet_id",
+          "your_spreadsheet_id",
+          "your_spreadsheet",
+          "sheet_id",
+          "spreadsheet_id",
+          "example",
+          "placeholder",
+        ]);
+        if (placeholders.has(lower)) return true;
+        const m = raw.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/i);
+        if (m && (placeholders.has(m[1].toLowerCase()) || /your[_-]?sheet|placeholder|example/i.test(m[1])))
+          return true;
+        if (!m && /your[_ -]?sheet|your[_ -]?spreadsheet|placeholder/i.test(raw))
+          return true;
+        return false;
+      }
+
+      function parseSpreadsheetIdClient(urlOrId) {
+        const raw = String(urlOrId || "").trim();
+        if (!raw || isPlaceholderSheetRef(raw)) return null;
+        const m = raw.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/i);
+        if (m) {
+          if (isPlaceholderSheetRef(m[1])) return null;
+          return m[1];
+        }
+        if (/^[a-zA-Z0-9-_]{20,}$/.test(raw)) return raw;
+        return null;
+      }
+
+      function extractSheetBindingFromPlan(plan) {
+        const sheetCodes = new Set([
+          "GS-01", "GS-02", "GS-03", "GS-04", "GS-05", "GS-06", "GS-07",
+          "GS-08", "GS-09", "GS-10", "GS-11",
+        ]);
+        for (const step of plan?.steps || []) {
+          if (!sheetCodes.has(String(step.code || "").toUpperCase())) continue;
+          const p = step.params || {};
+          const url = String(p.url || p.sheet_url || p.spreadsheet_url || "").trim();
+          const sid = String(p.spreadsheet_id || p.sheet_id || "").trim();
+          const resolved =
+            parseSpreadsheetIdClient(sid) || parseSpreadsheetIdClient(url);
+          if (!resolved) continue;
+          return {
+            url:
+              url && !isPlaceholderSheetRef(url)
+                ? url
+                : `https://docs.google.com/spreadsheets/d/${resolved}/edit`,
+            spreadsheet_id: resolved,
+          };
+        }
+        return null;
+      }
+
+      function extractSheetBindingFromHistory() {
+        const re =
+          /https?:\/\/docs\.google\.com\/spreadsheets\/d\/[a-zA-Z0-9-_]+[^\s)\]"']*/gi;
+        for (let i = blueprintHistory.length - 1; i >= 0; i--) {
+          const text = String(blueprintHistory[i]?.content || "");
+          const matches = text.match(re);
+          if (!matches) continue;
+          for (const candidate of matches) {
+            const clean = candidate.replace(/[.,;]+$/, "");
+            const sid = parseSpreadsheetIdClient(clean);
+            if (sid) return { url: clean, spreadsheet_id: sid };
+          }
+        }
+        return null;
+      }
+
+      function inheritSheetBindings(plan, priorPlan) {
+        if (!plan) return plan;
+        const binding =
+          extractSheetBindingFromPlan(priorPlan) ||
+          extractSheetBindingFromPlan(plan) ||
+          extractSheetBindingFromHistory();
+        if (!binding) return plan;
+        const sheetCodes = new Set([
+          "GS-01", "GS-02", "GS-03", "GS-04", "GS-05", "GS-06", "GS-07",
+          "GS-08", "GS-09", "GS-10", "GS-11",
+        ]);
+        const steps = (plan.steps || []).map((step) => {
+          const code = String(step.code || "").toUpperCase();
+          if (!sheetCodes.has(code)) return step;
+          const params = { ...(step.params || {}) };
+          let needsFix = false;
+          for (const key of [
+            "url",
+            "sheet_url",
+            "spreadsheet_url",
+            "spreadsheet_id",
+            "sheet_id",
+          ]) {
+            if (key in params && isPlaceholderSheetRef(params[key])) {
+              needsFix = true;
+              delete params[key];
+            }
+          }
+          const hasUrl =
+            parseSpreadsheetIdClient(params.url || params.sheet_url || "");
+          const hasSid = parseSpreadsheetIdClient(params.spreadsheet_id || "");
+          if (needsFix || !hasUrl || !hasSid) {
+            params.url = binding.url;
+            params.spreadsheet_id = binding.spreadsheet_id;
+          }
+          return { ...step, params };
+        });
+        return { ...plan, steps };
+      }
+
+      function validateBlueprintPlan(plan, { requireSheetUrl = false } = {}) {
         if (!plan?.steps?.length) return "Workflow needs at least one step";
+        const sheetCodes = new Set([
+          "GS-01", "GS-02", "GS-03", "GS-04", "GS-05", "GS-06", "GS-07",
+          "GS-08", "GS-09", "GS-10", "GS-11",
+        ]);
         for (const step of plan.steps) {
           if (!ACTION_REGISTRY[step.code])
             return `Unknown action ${step.code} — not in the registry`;
           if (!REAL_CODES.has(step.code)) {
             return `Action ${step.code} is not available yet. Only GS-01, GM-03, and GM-04 work today.`;
+          }
+          if (sheetCodes.has(step.code)) {
+            const p = step.params || {};
+            const url = String(p.url || p.sheet_url || "").trim();
+            const sid = String(p.spreadsheet_id || "").trim();
+            if (
+              (url && isPlaceholderSheetRef(url)) ||
+              (sid && isPlaceholderSheetRef(sid))
+            ) {
+              return (
+                "Sheets step still has a placeholder like YOUR_SHEET_ID — " +
+                "paste the real Google Sheets link and ask Blueprint to update the plan."
+              );
+            }
+            if (
+              requireSheetUrl &&
+              !parseSpreadsheetIdClient(url) &&
+              !parseSpreadsheetIdClient(sid)
+            ) {
+              return (
+                "Sheets steps need a real Google Sheets URL " +
+                "(https://docs.google.com/spreadsheets/d/<id>/edit)."
+              );
+            }
           }
         }
         const agent = (plan.agent || "").toLowerCase();
@@ -8338,6 +8485,7 @@ Rules:
           blueprintHistory = [];
           blueprintConversationId = null;
           blueprintPlan = null;
+          blueprintPriorPlan = null;
           box.innerHTML = "";
           addBuildMsg(
             "assistant",
@@ -8364,6 +8512,7 @@ Rules:
           }));
           box.innerHTML = "";
           blueprintPlan = null;
+          blueprintPriorPlan = null;
           if (!blueprintHistory.length) {
             addBuildMsg(
               "assistant",
@@ -8383,10 +8532,16 @@ Rules:
             });
             if (restorePlan) {
               restorePlan.steps = enrichBlueprintSteps(restorePlan.steps || []);
+              restorePlan = inheritSheetBindings(restorePlan, null);
+              restorePlan.steps = enrichBlueprintSteps(restorePlan.steps || []);
               const err = validateBlueprintPlan(restorePlan);
               if (!err) {
                 blueprintPlan = restorePlan;
+                blueprintPriorPlan = restorePlan;
                 renderBlueprintPlanReview(restorePlan);
+              } else {
+                // Keep prior binding even if card can't render (e.g. missing link).
+                blueprintPriorPlan = restorePlan;
               }
             }
           }
@@ -8422,6 +8577,7 @@ Rules:
           blueprintConversationId = data.conversation?.id || null;
           blueprintHistory = [];
           blueprintPlan = null;
+          blueprintPriorPlan = null;
           const box = document.getElementById("build-messages");
           if (box) box.innerHTML = "";
           addBuildMsg(
@@ -8443,6 +8599,7 @@ Rules:
           btn.classList.toggle("active", btn.dataset.agent === aid);
         });
         blueprintPlan = null;
+        blueprintPriorPlan = null;
         loadBlueprintHistory(aid);
       }
 
@@ -8471,6 +8628,8 @@ Rules:
         if (!(await requireAI())) return;
 
         input.value = "";
+        // Hide the review card while regenerating, but keep blueprintPriorPlan
+        // so sheet URL/id survives Edit → revise filter logic.
         blueprintPlan = null;
         addBuildMsg("user", text);
         blueprintHistory.push({ role: "user", content: text });
@@ -8526,6 +8685,9 @@ Rules:
             "aria"
           ).toLowerCase();
           plan.steps = enrichBlueprintSteps(plan.steps);
+          // Regenerate/edit often drops the bound sheet id — inherit from prior plan.
+          plan = inheritSheetBindings(plan, blueprintPriorPlan || blueprintPlan);
+          plan.steps = enrichBlueprintSteps(plan.steps);
           const err = validateBlueprintPlan(plan);
           if (err) {
             const msg =
@@ -8538,6 +8700,7 @@ Rules:
             return;
           }
           blueprintPlan = plan;
+          blueprintPriorPlan = plan;
           // Persist display text for local history; render the card once (no duplicate bubble).
           blueprintHistory.push({
             role: "assistant",
@@ -8667,6 +8830,7 @@ Rules:
 
       function editBlueprintPlan() {
         document.getElementById("blueprint-plan-review")?.remove();
+        // Keep blueprintPriorPlan so regenerate inherits spreadsheet_id/url.
         blueprintPlan = null;
         addBuildMsg(
           "assistant",
@@ -8678,6 +8842,7 @@ Rules:
       function cancelBlueprintPlan() {
         document.getElementById("blueprint-plan-review")?.remove();
         blueprintPlan = null;
+        blueprintPriorPlan = null;
         addBuildMsg(
           "assistant",
           "Cancelled — that plan won't be deployed. Tell me whenever you want to try something else.",
@@ -8686,7 +8851,18 @@ Rules:
 
       async function deployBlueprintPlan() {
         if (!blueprintPlan) return;
-        const plan = blueprintPlan;
+        let plan = inheritSheetBindings(
+          blueprintPlan,
+          blueprintPriorPlan || blueprintPlan,
+        );
+        plan.steps = enrichBlueprintSteps(plan.steps || []);
+        const sheetErr = validateBlueprintPlan(plan, { requireSheetUrl: true });
+        if (sheetErr) {
+          toast(sheetErr, "err");
+          return;
+        }
+        blueprintPlan = plan;
+        blueprintPriorPlan = plan;
         const agentId = plan.agent;
         if (!deployedAgents.has(agentId)) {
           toast("Select Aria or Nova — that agent must be active");
@@ -8747,6 +8923,7 @@ Rules:
           );
           document.getElementById("blueprint-plan-review")?.remove();
           blueprintPlan = null;
+          blueprintPriorPlan = null;
           toast("Workflow deployed", "success");
           await runWorkflow(saved.id);
           updateApprovalBadgeCount();

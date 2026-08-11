@@ -4,6 +4,7 @@ import json
 import os
 import sys
 import traceback
+from typing import Optional
 from urllib.parse import parse_qs, urlparse
 
 _API_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -20,11 +21,14 @@ from blueprint_history import (
     append_message,
     cap_messages_for_claude,
     get_or_create_active_conversation,
+    list_conversation_messages,
     load_active_history,
     normalize_agent_id,
     start_new_conversation,
 )
 from blueprint_plan import (
+    enrich_plan_steps,
+    extract_sheet_binding,
     parse_blueprint_plan,
     prepare_blueprint_response,
     strip_plan_json,
@@ -42,12 +46,21 @@ def _log(msg: str) -> None:
     print(f"[ai] {msg}", flush=True)
 
 
-def _blueprint_system_prompt() -> str:
+def _blueprint_system_prompt(*, bound_sheet: Optional[dict] = None) -> str:
     registry_block = "\n".join(
         f"{p['code']}: {p['name']} ({p['integration']})"
         + (" [requires approval]" if p["requires_approval"] else "")
         for p in registry_for_prompt()
     )
+    bound_block = ""
+    if bound_sheet and bound_sheet.get("spreadsheet_id"):
+        bound_block = f"""
+
+BOUND SPREADSHEET (already chosen in this conversation — preserve EXACTLY on every Sheets step when revising):
+- url: {bound_sheet.get("url")}
+- spreadsheet_id: {bound_sheet.get("spreadsheet_id")}
+When the user asks to edit/regenerate filter logic or any other step, copy these values into every GS-* params.url / params.spreadsheet_id. Never replace them with YOUR_SHEET_ID, placeholders, or "https://docs.google.com/spreadsheets/d/...".
+"""
     return f"""You are LogiQ Blueprint — an intelligent colleague who turns plain-English automation ideas into structured workflows.
 
 AVAILABLE PRIMITIVES (use ONLY these codes — never invent new actions):
@@ -70,7 +83,7 @@ When the user describes what they want to automate:
       "step": 1,
       "code": "GS-01",
       "description": "Plain English: what this step does in context",
-      "params": {{ "url": "https://docs.google.com/spreadsheets/d/..." }}
+      "params": {{ "url": "<paste the user's real Google Sheets URL here>" }}
     }}
   ]
 }}
@@ -88,11 +101,27 @@ Rules:
 - For franchise / enquiry inbox workflows (or similar labelling loops), GM-07 query MUST exclude already-processed mail, e.g. query: (franchise OR franchising OR "become a franchisee" OR "franchise opportunity") -label:"Franchise Enquiry"
 - Franchise Enquiry Auto-Response (and similar): prefer nova; title like "Franchise Enquiry Auto-Response"; summary must state plainly that it processes one enquiry per run (not real-time / not all-at-once). Typical flow: GM-07 search → GM-02 read first result → GM-03/GM-04 acknowledgement (approval) → GM-06 label → GS-02 log row → GM-05 follow-up draft.
 - For read message (GM-02) use {{ "message_id" }}; for get thread (GM-08) use {{ "thread_id" }}; for label (GM-06) use {{ "message_id", "add_labels", "remove_labels" }}.
-- For Sheets steps, always include params.url (Google Sheets URL). GS-02 needs row/row_data; GS-03 needs row + row_data; GS-06 needs row; GS-07 needs cell (A1) + value.
+- For Sheets steps, always include params.url with the user's REAL Google Sheets URL (full https://docs.google.com/spreadsheets/d/... link). NEVER invent YOUR_SHEET_ID, YOUR_SPREADSHEET_ID, example.com, or ellipsis URLs — if the user has not given a link yet, ask for it in prose and do not emit a deployable plan. When revising an existing plan, copy the previous plan's exact params.url / spreadsheet_id onto every GS-* step.
+- GS-02 needs row/row_data; GS-03 needs row + row_data; GS-06 needs row; GS-07 needs cell (A1) + value.
 - For calendar: GC-01 needs time_min/time_max; GC-02 needs optional time range; GC-03/GC-06 need title, start, end (ISO); GC-06 also needs attendees[]; GC-04/GC-05 need event_id.
 - Prefer 2–6 steps. Be practical, not generic.
 - Tone: warm, concise, colleague-like — not a form or checklist.
-- Never mention internal codes, template variables, or raw JSON fields to the user in prose; codes belong only in the JSON block."""
+- Never mention internal codes, template variables, or raw JSON fields to the user in prose; codes belong only in the JSON block.{bound_block}"""
+
+
+def _prior_plan_from_messages(messages: list) -> Optional[dict]:
+    """Most recent assistant message that contains a supported plan JSON."""
+    for msg in reversed(messages or []):
+        if (msg.get("role") or "") != "assistant":
+            continue
+        plan = parse_blueprint_plan(str(msg.get("content") or ""))
+        if plan:
+            return enrich_plan_steps(plan)
+    return None
+
+
+def _text_sources_from_messages(messages: list) -> list:
+    return [str(m.get("content") or "") for m in (messages or []) if m.get("content")]
 
 
 def _response_text(response) -> str:
@@ -261,7 +290,7 @@ class handler(BaseHTTPRequestHandler):
             max_tokens = 2200
         max_tokens = max(1, min(max_tokens, MAX_CHAT_TOKENS))
 
-        system = (body.get("system") or "").strip() or _blueprint_system_prompt()
+        system = (body.get("system") or "").strip()
         raw_messages = body.get("messages") or [{"role": "user", "content": message}]
         claude_messages: list[dict] = []
         for m in raw_messages:
@@ -281,9 +310,38 @@ class handler(BaseHTTPRequestHandler):
 
         claude_messages = cap_messages_for_claude(claude_messages, CLAUDE_CONTEXT_MESSAGE_CAP)
 
+        # Prior plan JSON lives in DB (raw assistant content). Client history is
+        # display-only, so load from conversation to preserve sheet bindings on edit.
+        prior_plan = None
+        text_sources = _text_sources_from_messages(claude_messages)
+        if conversation_id:
+            try:
+                stored = list_conversation_messages(conversation_id)
+                # Exclude the user message we just appended when finding prior plan
+                prior_plan = _prior_plan_from_messages(stored)
+                text_sources = _text_sources_from_messages(stored) + text_sources
+            except Exception as exc:
+                _log(f"prior plan load failed: {exc}")
+        bound_sheet = extract_sheet_binding(prior_plan, text_sources=text_sources)
+        if system:
+            # Frontend may send its own prompt copy — still inject the bound sheet
+            # so regenerate/edit cannot invent YOUR_SHEET_ID.
+            if bound_sheet and bound_sheet.get("spreadsheet_id"):
+                system = (
+                    system.rstrip()
+                    + "\n\nBOUND SPREADSHEET (already chosen in this conversation — "
+                    "preserve EXACTLY on every Sheets step when revising):\n"
+                    f"- url: {bound_sheet.get('url')}\n"
+                    f"- spreadsheet_id: {bound_sheet.get('spreadsheet_id')}\n"
+                    "Never replace with YOUR_SHEET_ID or any placeholder."
+                )
+        else:
+            system = _blueprint_system_prompt(bound_sheet=bound_sheet)
+
         _log(
             f"blueprint chat user={user_id} agent={agent_id} model={MODEL} "
             f"messages={len(claude_messages)} max_tokens={max_tokens} preview={gate.free_preview}"
+            + (f" bound_sheet={bound_sheet.get('spreadsheet_id')}" if bound_sheet else "")
         )
 
         try:
@@ -297,7 +355,11 @@ class handler(BaseHTTPRequestHandler):
             raw_content = _response_text(response)
             # Persist the full model output (incl. execution JSON) for Claude continuity.
             # Return only user-facing text + a separate plan field for approve/create.
-            user_content, plan, plan_err = prepare_blueprint_response(raw_content)
+            user_content, plan, plan_err = prepare_blueprint_response(
+                raw_content,
+                prior_plan=prior_plan,
+                text_sources=text_sources,
+            )
             if plan_err and not plan:
                 user_content = (
                     strip_plan_json(raw_content)

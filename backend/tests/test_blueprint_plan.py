@@ -11,12 +11,14 @@ sys.path.insert(0, str(_ROOT / "api_lib"))
 from blueprint_plan import (  # noqa: E402
     build_user_facing_summary,
     format_approval_payload,
+    inherit_sheet_bindings,
     parse_blueprint_plan,
     plain_approval_label,
     plain_step_label,
     prepare_blueprint_response,
     strip_plan_json,
     summary_leaks_internals,
+    validate_sheet_bindings,
 )
 
 FRANCHISE_PLAN = {
@@ -209,3 +211,100 @@ def test_plain_step_label_strips_templates_from_description():
     assert "GM-03" not in label
     assert "{{" not in label
     assert "Send to" in label
+
+
+REAL_SHEET = (
+    "https://docs.google.com/spreadsheets/d/"
+    "1qlOS1W3p1MIeZKViZEdCLnhXa_8fInsxjGN4Orzo0Ng/edit"
+)
+
+
+def test_inherit_sheet_bindings_replaces_your_sheet_id_on_regenerate():
+    prior = {
+        "supported": True,
+        "title": "Picklist",
+        "agent": "aria",
+        "steps": [
+            {
+                "step": 1,
+                "code": "GS-01",
+                "description": "Read orders",
+                "params": {"url": REAL_SHEET},
+            }
+        ],
+    }
+    regenerated = {
+        "supported": True,
+        "title": "Picklist",
+        "agent": "aria",
+        "steps": [
+            {
+                "step": 1,
+                "code": "GS-01",
+                "description": "Read orders",
+                "params": {
+                    "url": "https://docs.google.com/spreadsheets/d/YOUR_SHEET_ID/edit",
+                    "spreadsheet_id": "YOUR_SHEET_ID",
+                },
+            },
+            {
+                "step": 2,
+                "code": "XF-01",
+                "description": "Filter paid orders",
+                "params": {"status_column": "Financial Status", "status_value": "paid"},
+            },
+        ],
+    }
+    fixed = inherit_sheet_bindings(regenerated, prior)
+    p1 = fixed["steps"][0]["params"]
+    assert "YOUR_SHEET_ID" not in str(p1)
+    assert p1["spreadsheet_id"] == "1qlOS1W3p1MIeZKViZEdCLnhXa_8fInsxjGN4Orzo0Ng"
+    assert "1qlOS1W3p1MIeZKViZEdCLnhXa_8fInsxjGN4Orzo0Ng" in p1["url"]
+
+
+def test_prepare_inherits_prior_plan_sheet_and_rejects_bare_placeholder():
+    prior = {
+        "supported": True,
+        "title": "Picklist",
+        "agent": "aria",
+        "steps": [
+            {
+                "step": 1,
+                "code": "GS-01",
+                "description": "Read",
+                "params": {"url": REAL_SHEET},
+            }
+        ],
+    }
+    bad = {
+        "supported": True,
+        "title": "Picklist",
+        "agent": "aria",
+        "steps": [
+            {
+                "step": 1,
+                "code": "GS-01",
+                "description": "Read",
+                "params": {"url": "https://docs.google.com/spreadsheets/d/YOUR_SHEET_ID/edit"},
+            }
+        ],
+    }
+    raw = "Updated filter.\n\n```json\n" + __import__("json").dumps(bad) + "\n```"
+    content, plan, err = prepare_blueprint_response(raw, prior_plan=prior)
+    assert err is None
+    assert plan is not None
+    assert "YOUR_SHEET_ID" not in str(plan["steps"][0]["params"])
+    assert plan["steps"][0]["params"]["spreadsheet_id"].startswith("1qlOS")
+
+
+def test_validate_sheet_bindings_rejects_placeholder_for_deploy():
+    steps = [
+        {
+            "step": 1,
+            "code": "GS-01",
+            "params": {"url": "https://docs.google.com/spreadsheets/d/YOUR_SHEET_ID/edit"},
+        }
+    ]
+    err = validate_sheet_bindings(steps)
+    assert err is not None
+    assert "YOUR_SHEET_ID" in err or "placeholder" in err.lower()

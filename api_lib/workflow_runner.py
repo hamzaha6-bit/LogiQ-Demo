@@ -92,17 +92,19 @@ def _approval_summary(step: Dict[str, Any], params: Dict[str, Any]) -> str:
 
 def _log_audit(user_id: str, agent: str, action_type: str, metadata: Dict[str, Any]) -> None:
     try:
+        try:
+            client_id = client_id_from_user_id(user_id)
+        except ValueError as exc:
+            print(f"[workflow_runner] audit log skipped (no client_id): {exc}")
+            return
         entry: Dict[str, Any] = {
             "user_id": user_id,
+            "client_id": client_id,
             "agent": agent,
             "action_type": action_type,
             "status": metadata.get("status", "completed"),
             "metadata": metadata,
         }
-        try:
-            entry["client_id"] = client_id_from_user_id(user_id)
-        except ValueError:
-            pass
         rest_post("audit_log", entry)
     except Exception as exc:
         print(f"[workflow_runner] audit log failed: {exc}")
@@ -117,8 +119,13 @@ def _create_approval(
 ) -> None:
     user_id = str(workflow.get("user_id") or "")
     expires = (datetime.now(timezone.utc) + timedelta(hours=24)).isoformat()
+    try:
+        client_id = client_id_from_user_id(user_id)
+    except ValueError as exc:
+        raise StepExecutionError(str(exc)) from exc
     row: Dict[str, Any] = {
         "user_id": user_id,
+        "client_id": client_id,
         "workflow_id": workflow.get("id"),
         "workflow_run_id": workflow_run_id,
         "agent_id": workflow.get("agent_id"),
@@ -131,10 +138,6 @@ def _create_approval(
         "status": "pending",
         "expires_at": expires,
     }
-    try:
-        row["client_id"] = client_id_from_user_id(user_id)
-    except ValueError:
-        pass
     rest_post("workflow_approvals", row)
 
 
@@ -317,15 +320,31 @@ def _execute_sheets_step(
     agent_id: str,
 ) -> Dict[str, Any]:
     url = (params.get("url") or params.get("sheet_url") or "").strip()
+    spreadsheet_id = (params.get("spreadsheet_id") or "").strip()
+    # Normalize early so GS-01..07 can take raw id or URL; reject YOUR_SHEET_ID
+    # before any Google API call.
+    if url or spreadsheet_id:
+        try:
+            from sheets_service import resolve_spreadsheet_id
+
+            sid = resolve_spreadsheet_id(url or None, spreadsheet_id=spreadsheet_id or None)
+            if not url:
+                url = f"https://docs.google.com/spreadsheets/d/{sid}/edit"
+            spreadsheet_id = sid
+        except SheetsError as exc:
+            raise StepExecutionError(str(exc)) from exc
     sheet_agent = (params.get("agent") or agent_id or "aria").strip()
     sheet_name = _sheet_name_param(params)
     try:
         if code == "GS-01":
-            if not url:
-                raise StepExecutionError("GS-01 requires a sheet url param")
+            if not url and not spreadsheet_id:
+                raise StepExecutionError(
+                    "GS-01 requires a real Google Sheets URL — paste the sheet link in Blueprint "
+                    "(placeholders like YOUR_SHEET_ID are rejected)."
+                )
             return read_sheet(url, sheet_agent, user_id, sheet_name=sheet_name)
         if code == "GS-02":
-            if not url:
+            if not url and not spreadsheet_id:
                 raise StepExecutionError("GS-02 requires a sheet url param")
             row_data = params.get("row") or params.get("row_data") or params.get("data") or {}
             if not isinstance(row_data, dict) or not row_data:
@@ -338,7 +357,7 @@ def _execute_sheets_step(
                 sheet_name=sheet_name,
             )
         if code == "GS-03":
-            if not url:
+            if not url and not spreadsheet_id:
                 raise StepExecutionError("GS-03 requires a sheet url param")
             row_data = params.get("row_data") or params.get("data") or {}
             if not isinstance(row_data, dict) or not row_data:
@@ -352,21 +371,21 @@ def _execute_sheets_step(
                 sheet_name=sheet_name,
             )
         if code == "GS-04":
-            if not url:
+            if not url and not spreadsheet_id:
                 raise StepExecutionError("GS-04 requires a sheet url param")
             return poll(url, sheet_agent, user_id, sheet_name=sheet_name)
         if code == "GS-05":
-            if not url:
+            if not url and not spreadsheet_id:
                 raise StepExecutionError("GS-05 requires a sheet url param")
             return connect(url, sheet_agent, user_id, sheet_name=sheet_name)
         if code == "GS-06":
-            if not url:
+            if not url and not spreadsheet_id:
                 raise StepExecutionError("GS-06 requires a sheet url param")
             return delete_row(
                 url, sheet_agent, user_id, params.get("row"), sheet_name=sheet_name
             )
         if code == "GS-07":
-            if not url:
+            if not url and not spreadsheet_id:
                 raise StepExecutionError("GS-07 requires a sheet url param")
             return write_cell(
                 url,
@@ -377,7 +396,6 @@ def _execute_sheets_step(
                 sheet_name=sheet_name,
             )
         if code == "GS-08":
-            spreadsheet_id = (params.get("spreadsheet_id") or "").strip()
             if not url and not spreadsheet_id:
                 raise StepExecutionError("GS-08 requires a sheet url or spreadsheet_id")
             rows = params.get("rows")
@@ -412,7 +430,6 @@ def _execute_sheets_step(
                 spreadsheet_id=spreadsheet_id or None,
             )
         if code == "GS-09":
-            spreadsheet_id = (params.get("spreadsheet_id") or "").strip()
             if not url and not spreadsheet_id:
                 raise StepExecutionError("GS-09 requires a sheet url or spreadsheet_id")
             # GS-09 creates an output tab — title is required (no first-tab default).
@@ -437,7 +454,6 @@ def _execute_sheets_step(
                 template_sheet_name=template_name,
             )
         if code == "GS-10":
-            spreadsheet_id = (params.get("spreadsheet_id") or "").strip()
             if not url and not spreadsheet_id:
                 raise StepExecutionError("GS-10 requires a sheet url or spreadsheet_id")
             return emit_picklist(
@@ -447,7 +463,6 @@ def _execute_sheets_step(
                 spreadsheet_id=spreadsheet_id or None,
             )
         if code == "GS-11":
-            spreadsheet_id = (params.get("spreadsheet_id") or "").strip()
             if not url and not spreadsheet_id:
                 raise StepExecutionError("GS-11 requires a sheet url or spreadsheet_id")
             return format_picklist(

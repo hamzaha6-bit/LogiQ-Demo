@@ -39,9 +39,91 @@ class SchemaMismatchError(Exception):
         self.diff = diff
 
 
+# LLM / Blueprint templates that must never hit the Google API.
+_PLACEHOLDER_SHEET_IDS = frozenset(
+    {
+        "your_sheet_id",
+        "your_spreadsheet_id",
+        "your_spreadsheet",
+        "sheet_id",
+        "spreadsheet_id",
+        "example",
+        "placeholder",
+        "xxx",
+        "xxxx",
+        "insert_id_here",
+        "paste_sheet_id_here",
+    }
+)
+_SHEET_ID_RE = re.compile(r"^[a-zA-Z0-9-_]{20,}$")
+_SHEET_URL_ID_RE = re.compile(r"/spreadsheets/d/([a-zA-Z0-9-_]+)")
+_PLACEHOLDER_HINT_RE = re.compile(
+    r"(?i)\b(your[_ -]?sheet|your[_ -]?spreadsheet|example|placeholder|insert[_ -]?id|paste[_ -]?)\b"
+)
+_SHEET_PARAM_ERROR = (
+    "Paste a real Google Sheets link in the Blueprint plan "
+    "(e.g. https://docs.google.com/spreadsheets/d/<id>/edit) — "
+    "placeholder values like YOUR_SHEET_ID cannot be used."
+)
+
+
+def is_placeholder_spreadsheet_ref(value: Optional[str]) -> bool:
+    """True for empty, template, or obviously fake sheet URL/id strings."""
+    raw = (value or "").strip()
+    if not raw:
+        return True
+    if "..." in raw or raw.endswith("/d/") or "/d/…/" in raw or "/d/.../" in raw:
+        return True
+    lower = raw.lower()
+    if lower in _PLACEHOLDER_SHEET_IDS:
+        return True
+    # URL with a placeholder id segment
+    m = _SHEET_URL_ID_RE.search(raw)
+    if m and (m.group(1).lower() in _PLACEHOLDER_SHEET_IDS or _PLACEHOLDER_HINT_RE.search(m.group(1))):
+        return True
+    if not m and _PLACEHOLDER_HINT_RE.search(raw) and "docs.google.com" not in lower:
+        return True
+    return False
+
+
 def parse_spreadsheet_id(url: str) -> Optional[str]:
-    match = re.search(r"/spreadsheets/d/([a-zA-Z0-9-_]+)", url or "")
-    return match.group(1) if match else None
+    """Extract spreadsheet id from a Sheets URL, or accept a raw id. Rejects placeholders."""
+    raw = (url or "").strip()
+    if not raw or is_placeholder_spreadsheet_ref(raw):
+        return None
+    match = _SHEET_URL_ID_RE.search(raw)
+    if match:
+        sid = match.group(1)
+        if is_placeholder_spreadsheet_ref(sid):
+            return None
+        return sid
+    # Raw spreadsheet id (no URL path)
+    if _SHEET_ID_RE.match(raw) and not is_placeholder_spreadsheet_ref(raw):
+        return raw
+    return None
+
+
+def resolve_spreadsheet_id(
+    url: Optional[str] = None,
+    *,
+    spreadsheet_id: Optional[str] = None,
+) -> str:
+    """
+    Resolve a real spreadsheet id from url and/or spreadsheet_id.
+    Raises SheetsError with an actionable message — never call Google with placeholders.
+    """
+    for candidate in (spreadsheet_id, url):
+        if candidate is None:
+            continue
+        text = str(candidate).strip()
+        if not text:
+            continue
+        if is_placeholder_spreadsheet_ref(text):
+            raise SheetsError(_SHEET_PARAM_ERROR)
+        sid = parse_spreadsheet_id(text)
+        if sid:
+            return sid
+    raise SheetsError(_SHEET_PARAM_ERROR)
 
 
 def _infer_type(values: List[str]) -> str:
@@ -231,9 +313,7 @@ def _ensure_connection(
     scope (user_integrations), not from sheet_connections. Blueprint workflows often
     start with GS-01 + a sheet URL without a prior GS-05 step — bridge that gap here.
     """
-    sid = spreadsheet_id or parse_spreadsheet_id(url)
-    if not sid:
-        raise SheetsError("Invalid Google Sheets URL")
+    sid = resolve_spreadsheet_id(url, spreadsheet_id=spreadsheet_id)
     conn = get_connection(user_id, agent_id, sid)
     if conn:
         return sid, conn
@@ -287,9 +367,7 @@ def connect(
 ) -> Dict[str, Any]:
     """Connect/lock a *source* tab. Output tabs use GS-08/GS-09 with explicit sheet_name."""
     _require_sheets(user_id)
-    spreadsheet_id = parse_spreadsheet_id(url)
-    if not spreadsheet_id:
-        raise SheetsError("Invalid Google Sheets URL")
+    spreadsheet_id = resolve_spreadsheet_id(url)
     # sheet_connections.client_id is NOT NULL (migration 001).
     try:
         client_id = client_id_from_user_id(user_id)
@@ -443,9 +521,7 @@ def update_row(
 ) -> Dict[str, Any]:
     """Update a 1-based data row (row 1 = header; data starts at row 2)."""
     _require_sheets(user_id)
-    spreadsheet_id = parse_spreadsheet_id(url)
-    if not spreadsheet_id:
-        raise SheetsError("Invalid Google Sheets URL")
+    spreadsheet_id = resolve_spreadsheet_id(url)
     try:
         row_num = int(row)
     except (TypeError, ValueError) as exc:
@@ -510,9 +586,7 @@ def write_cell(
 ) -> Dict[str, Any]:
     """Write a single cell by A1 notation (e.g. B3)."""
     _require_sheets(user_id)
-    spreadsheet_id = parse_spreadsheet_id(url)
-    if not spreadsheet_id:
-        raise SheetsError("Invalid Google Sheets URL")
+    spreadsheet_id = resolve_spreadsheet_id(url)
     a1_cell = (cell or "").strip().upper()
     if not re.match(r"^[A-Z]+\d+$", a1_cell):
         raise SheetsError("cell must be A1 notation like B3")
@@ -562,9 +636,7 @@ def delete_row(
 ) -> Dict[str, Any]:
     """Delete a 1-based sheet row (including header row 1 — caller should avoid that)."""
     _require_sheets(user_id)
-    spreadsheet_id = parse_spreadsheet_id(url)
-    if not spreadsheet_id:
-        raise SheetsError("Invalid Google Sheets URL")
+    spreadsheet_id = resolve_spreadsheet_id(url)
     try:
         row_num = int(row)
     except (TypeError, ValueError) as exc:
@@ -676,9 +748,7 @@ def write_rows(
     Distinct from write_row (GS-02), which appends one CRM row against locked schema.
     """
     _require_sheets(user_id)
-    sid = (spreadsheet_id or "").strip() or parse_spreadsheet_id(url or "")
-    if not sid:
-        raise SheetsError("Invalid Google Sheets URL or spreadsheet_id")
+    sid = resolve_spreadsheet_id(url, spreadsheet_id=spreadsheet_id)
     if not isinstance(rows, list):
         raise SheetsError("rows must be a list of objects")
     for i, row in enumerate(rows):
@@ -799,9 +869,7 @@ def create_sheet(
     Missing/blank title fails loudly; duplicate title fails loudly (no silent reuse).
     """
     _require_sheets(user_id)
-    sid = (spreadsheet_id or "").strip() or parse_spreadsheet_id(url or "")
-    if not sid:
-        raise SheetsError("Invalid Google Sheets URL or spreadsheet_id")
+    sid = resolve_spreadsheet_id(url, spreadsheet_id=spreadsheet_id)
     title = (sheet_name or "").strip()
     if not title:
         raise SheetsError("sheet_name is required to create a tab")
@@ -946,8 +1014,9 @@ def poll(
 
 
 def connection_status(user_id: str, agent_id: str, url: str) -> Dict[str, Any]:
-    spreadsheet_id = parse_spreadsheet_id(url)
-    if not spreadsheet_id:
+    try:
+        spreadsheet_id = resolve_spreadsheet_id(url)
+    except SheetsError:
         return {"connected": False}
     conn = get_connection(user_id, agent_id, spreadsheet_id)
     if not conn:
@@ -1049,9 +1118,7 @@ def emit_picklist(
     )
 
     _require_sheets(user_id)
-    sid = (spreadsheet_id or "").strip() or parse_spreadsheet_id(url or "")
-    if not sid:
-        raise SheetsError("Invalid Google Sheets URL or spreadsheet_id")
+    sid = resolve_spreadsheet_id(url, spreadsheet_id=spreadsheet_id)
 
     try:
         plan = parse_emit_params(params or {})
@@ -1283,9 +1350,7 @@ def format_picklist(
         resolve_boundaries_from_rows,
     )
 
-    sid = (spreadsheet_id or "").strip() or parse_spreadsheet_id(url or "")
-    if not sid:
-        raise SheetsError("Invalid Google Sheets URL or spreadsheet_id")
+    sid = resolve_spreadsheet_id(url, spreadsheet_id=spreadsheet_id)
 
     # Target tabs: explicit sheet_name / sheet_names, or tabs from prior GS-10.
     sheet_names: List[str] = []
