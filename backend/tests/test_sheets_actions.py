@@ -61,6 +61,70 @@ def test_gs05_connect_success_requires_connection_id():
     assert payload["source_sheet_name"] == "Sheet1"
 
 
+# ── GS-01 auto-connects when sheet_connections row is missing ───────────────
+
+def test_gs01_autoconnects_when_connection_missing():
+    """Integrations UI shows OAuth; GS-01 should create the schema lock itself."""
+    with patch("sheets_service._require_sheets"), \
+         patch("sheets_service.get_connection", side_effect=[None, _conn()]), \
+         patch(
+             "sheets_service.connect",
+             return_value={"success": True, "connection_id": "conn-1"},
+         ) as mock_connect, \
+         patch(
+             "sheets_service._fetch_values",
+             return_value=[["Name", "Email"], ["Ada", "a@x.com"]],
+         ):
+        out = _execute_step(
+            "GS-01",
+            {"url": SHEET_URL},
+            user_id="u1",
+            agent_id="aria",
+            agent_name="Aria",
+        )
+    assert out["success"] is True
+    assert out["row_count"] == 1
+    mock_connect.assert_called_once_with(SHEET_URL, "aria", "u1", sheet_name=None)
+
+
+def test_gs01_skips_autoconnect_when_already_connected():
+    with patch("sheets_service._require_sheets"), \
+         patch("sheets_service.get_connection", return_value=_conn()) as mock_get, \
+         patch("sheets_service.connect") as mock_connect, \
+         patch(
+             "sheets_service._fetch_values",
+             return_value=[["Name", "Email"], ["Ada", "a@x.com"]],
+         ):
+        out = _execute_step(
+            "GS-01",
+            {"url": SHEET_URL},
+            user_id="u1",
+            agent_id="aria",
+            agent_name="Aria",
+        )
+    assert out["success"] is True
+    mock_connect.assert_not_called()
+    assert mock_get.called
+
+
+def test_gs01_autoconnect_propagates_connect_failure():
+    with patch("sheets_service._require_sheets"), \
+         patch("sheets_service.get_connection", return_value=None), \
+         patch(
+             "sheets_service.connect",
+             side_effect=SheetsError("Connect Google first — /api/auth/gmail/connect"),
+         ):
+        with pytest.raises(StepExecutionError) as exc:
+            _execute_step(
+                "GS-01",
+                {"url": SHEET_URL},
+                user_id="u1",
+                agent_id="aria",
+                agent_name="Aria",
+            )
+    assert "Connect Google" in str(exc.value) or "not connected" in str(exc.value).lower()
+
+
 # ── GS-02 append verifies API confirmation ──────────────────────────────────
 
 def test_gs02_append_requires_update_confirmation():
