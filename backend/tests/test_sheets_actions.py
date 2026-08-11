@@ -277,3 +277,81 @@ def test_gs04_poll_returns_new_rows_and_advances_cursor():
         )
     assert out["new_count"] == 2
     assert mock_patch.called
+
+
+# ── Spreadsheet id resolve / placeholder reject ─────────────────────────────
+
+def test_resolve_spreadsheet_id_from_full_url():
+    from sheets_service import resolve_spreadsheet_id
+
+    sid = resolve_spreadsheet_id(
+        "https://docs.google.com/spreadsheets/d/1qlOS1W3p1MIeZKViZEdCLnhXa_8fInsxjGN4Orzo0Ng/edit#gid=0"
+    )
+    assert sid == "1qlOS1W3p1MIeZKViZEdCLnhXa_8fInsxjGN4Orzo0Ng"
+
+
+def test_resolve_spreadsheet_id_from_raw_id():
+    from sheets_service import resolve_spreadsheet_id
+
+    sid = resolve_spreadsheet_id(
+        "1qlOS1W3p1MIeZKViZEdCLnhXa_8fInsxjGN4Orzo0Ng"
+    )
+    assert sid == "1qlOS1W3p1MIeZKViZEdCLnhXa_8fInsxjGN4Orzo0Ng"
+
+
+def test_reject_your_sheet_id_placeholder_before_api():
+    from sheets_service import SheetsError, resolve_spreadsheet_id
+
+    with pytest.raises(SheetsError) as exc:
+        resolve_spreadsheet_id(
+            "https://docs.google.com/spreadsheets/d/YOUR_SHEET_ID/edit"
+        )
+    msg = str(exc.value).lower()
+    assert "your_sheet_id" in msg or "placeholder" in msg or "paste" in msg
+
+
+def test_gs01_rejects_placeholder_without_calling_google():
+    with patch("sheets_service._require_sheets") as mock_req, \
+         patch("sheets_service.get_connection") as mock_get, \
+         patch("sheets_service.connect") as mock_connect, \
+         patch("sheets_service._fetch_values") as mock_fetch:
+        with pytest.raises(StepExecutionError) as exc:
+            _execute_step(
+                "GS-01",
+                {"url": "https://docs.google.com/spreadsheets/d/YOUR_SHEET_ID/edit"},
+                user_id="u1",
+                agent_id="aria",
+                agent_name="Aria",
+            )
+    assert "paste" in str(exc.value).lower() or "placeholder" in str(exc.value).lower()
+    mock_req.assert_not_called()
+    mock_get.assert_not_called()
+    mock_connect.assert_not_called()
+    mock_fetch.assert_not_called()
+
+
+def test_gs01_autoconnect_with_valid_id_from_url():
+    real_url = (
+        "https://docs.google.com/spreadsheets/d/"
+        "1qlOS1W3p1MIeZKViZEdCLnhXa_8fInsxjGN4Orzo0Ng/edit"
+    )
+    with patch("sheets_service._require_sheets"), \
+         patch("sheets_service.get_connection", side_effect=[None, _conn()]), \
+         patch(
+             "sheets_service.connect",
+             return_value={"success": True, "connection_id": "conn-1"},
+         ) as mock_connect, \
+         patch(
+             "sheets_service._fetch_values",
+             return_value=[["Name", "Email"], ["Ada", "a@x.com"]],
+         ):
+        out = _execute_step(
+            "GS-01",
+            {"url": real_url},
+            user_id="u1",
+            agent_id="aria",
+            agent_name="Aria",
+        )
+    assert out["success"] is True
+    mock_connect.assert_called_once()
+    assert "1qlOS1W3p1MIeZKViZEdCLnhXa_8fInsxjGN4Orzo0Ng" in mock_connect.call_args.args[0]

@@ -7,11 +7,27 @@ import re
 from typing import Any, Dict, List, Optional, Tuple
 
 from action_registry import ACTION_REGISTRY, IRREVERSIBLE_CODES, validate_plan_steps
+from sheets_service import (
+    is_placeholder_spreadsheet_ref,
+    parse_spreadsheet_id,
+    resolve_spreadsheet_id,
+    SheetsError,
+)
 
 _FENCED_JSON_RE = re.compile(r"```(?:json)?\s*([\s\S]*?)```", re.IGNORECASE)
 _SUPPORTED_BLOB_RE = re.compile(r"\{[\s\S]*\"supported\"[\s\S]*\}")
 _STEP_CODE_RE = re.compile(r"\b(?:GM|GS|GC)-\d{2}\b")
 _TEMPLATE_VAR_RE = re.compile(r"\{\{[^}]+\}\}")
+_SHEET_URL_IN_TEXT_RE = re.compile(
+    r"https?://docs\.google\.com/spreadsheets/d/[a-zA-Z0-9-_]+[^\s)\]\"']*",
+    re.IGNORECASE,
+)
+_SHEETS_STEP_CODES = frozenset(
+    {
+        "GS-01", "GS-02", "GS-03", "GS-04", "GS-05", "GS-06", "GS-07",
+        "GS-08", "GS-09", "GS-10", "GS-11",
+    }
+)
 
 # Codes that write externally or send — call out in the summary even if not irreversible.
 _USER_APPROVAL_CODES = IRREVERSIBLE_CODES | {
@@ -90,6 +106,156 @@ def enrich_plan_steps(plan: Dict[str, Any]) -> Dict[str, Any]:
     out["summary"] = str(out.get("summary") or "").strip()
     out["supported"] = True
     return out
+
+
+def _sheet_ref_from_params(params: Dict[str, Any]) -> Tuple[Optional[str], Optional[str]]:
+    """Return (url, spreadsheet_id) from step params when either is a real binding."""
+    if not isinstance(params, dict):
+        return None, None
+    url = str(
+        params.get("url")
+        or params.get("sheet_url")
+        or params.get("spreadsheet_url")
+        or ""
+    ).strip()
+    sid_raw = str(
+        params.get("spreadsheet_id") or params.get("sheet_id") or ""
+    ).strip()
+    url_ok = bool(url and not is_placeholder_spreadsheet_ref(url) and parse_spreadsheet_id(url))
+    sid_ok = bool(
+        sid_raw and not is_placeholder_spreadsheet_ref(sid_raw) and parse_spreadsheet_id(sid_raw)
+    )
+    resolved_from_url = parse_spreadsheet_id(url) if url_ok else None
+    return (url if url_ok else None), (sid_raw if sid_ok else resolved_from_url)
+
+
+def extract_sheet_binding(
+    plan: Optional[Dict[str, Any]] = None,
+    *,
+    text_sources: Optional[List[str]] = None,
+) -> Optional[Dict[str, str]]:
+    """
+    Find the conversation-bound spreadsheet from a prior plan and/or free text
+    (user messages that pasted a Sheets link).
+    """
+    if isinstance(plan, dict):
+        for step in plan.get("steps") or []:
+            if not isinstance(step, dict):
+                continue
+            code = str(step.get("code") or "").strip().upper()
+            if code not in _SHEETS_STEP_CODES:
+                continue
+            url, sid = _sheet_ref_from_params(step.get("params") or {})
+            if sid or url:
+                resolved = sid or (parse_spreadsheet_id(url or "") or "")
+                if not resolved:
+                    continue
+                out_url = url or f"https://docs.google.com/spreadsheets/d/{resolved}/edit"
+                return {"url": out_url, "spreadsheet_id": resolved}
+
+    for text in text_sources or []:
+        for match in _SHEET_URL_IN_TEXT_RE.finditer(text or ""):
+            candidate = match.group(0).rstrip(".,;")
+            if is_placeholder_spreadsheet_ref(candidate):
+                continue
+            sid = parse_spreadsheet_id(candidate)
+            if sid:
+                return {"url": candidate, "spreadsheet_id": sid}
+    return None
+
+
+def inherit_sheet_bindings(
+    plan: Dict[str, Any],
+    prior_plan: Optional[Dict[str, Any]] = None,
+    *,
+    text_sources: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """
+    When Blueprint regenerates steps, copy a real sheet URL/id from the prior plan
+    (or pasted chat links) into any Sheets step that is missing one or still has a
+    placeholder like YOUR_SHEET_ID.
+    """
+    binding = extract_sheet_binding(prior_plan, text_sources=text_sources)
+    if not binding:
+        # Also allow a good binding already present on some step of the new plan
+        # to fill sibling steps that lost theirs during regenerate.
+        binding = extract_sheet_binding(plan, text_sources=text_sources)
+    if not binding:
+        return plan
+
+    out = dict(plan)
+    steps_out: List[Dict[str, Any]] = []
+    for step in out.get("steps") or []:
+        if not isinstance(step, dict):
+            continue
+        step_copy = dict(step)
+        code = str(step_copy.get("code") or "").strip().upper()
+        if code in _SHEETS_STEP_CODES:
+            params = (
+                dict(step_copy.get("params") or {})
+                if isinstance(step_copy.get("params"), dict)
+                else {}
+            )
+            url, sid = _sheet_ref_from_params(params)
+            needs_fix = not url or not sid
+            for key in ("url", "sheet_url", "spreadsheet_url", "spreadsheet_id", "sheet_id"):
+                if key in params and is_placeholder_spreadsheet_ref(str(params.get(key) or "")):
+                    needs_fix = True
+                    params.pop(key, None)
+            if needs_fix:
+                params["url"] = binding["url"]
+                params["spreadsheet_id"] = binding["spreadsheet_id"]
+            step_copy["params"] = params
+        steps_out.append(step_copy)
+    out["steps"] = steps_out
+    return out
+
+
+def validate_sheet_placeholders(steps: List[Dict[str, Any]]) -> Optional[str]:
+    """Reject only explicit placeholders (YOUR_SHEET_ID etc.) during chat prepare."""
+    for i, step in enumerate(steps or [], start=1):
+        if not isinstance(step, dict):
+            continue
+        code = str(step.get("code") or "").strip().upper()
+        if code not in _SHEETS_STEP_CODES:
+            continue
+        params = step.get("params") if isinstance(step.get("params"), dict) else {}
+        for key in ("url", "sheet_url", "spreadsheet_url", "spreadsheet_id", "sheet_id"):
+            value = str(params.get(key) or "").strip()
+            if not value:
+                continue
+            if is_placeholder_spreadsheet_ref(value):
+                return (
+                    f"Step {i} ({code}): {key} is still a placeholder "
+                    f"({value!r}). Paste the real Google Sheets link in Blueprint "
+                    "and re-approve — do not use YOUR_SHEET_ID."
+                )
+    return None
+
+
+def validate_sheet_bindings(steps: List[Dict[str, Any]]) -> Optional[str]:
+    """Reject Sheets steps that still use placeholders or lack a resolvable id (deploy/run)."""
+    placeholder_err = validate_sheet_placeholders(steps)
+    if placeholder_err:
+        return placeholder_err
+    for i, step in enumerate(steps or [], start=1):
+        if not isinstance(step, dict):
+            continue
+        code = str(step.get("code") or "").strip().upper()
+        if code not in _SHEETS_STEP_CODES:
+            continue
+        params = step.get("params") if isinstance(step.get("params"), dict) else {}
+        url = str(params.get("url") or params.get("sheet_url") or "").strip()
+        sid = str(params.get("spreadsheet_id") or "").strip()
+        try:
+            resolve_spreadsheet_id(url or None, spreadsheet_id=sid or None)
+        except SheetsError:
+            return (
+                f"Step {i} ({code}): needs a real Google Sheets URL "
+                "(https://docs.google.com/spreadsheets/d/<id>/edit). "
+                "Placeholders like YOUR_SHEET_ID are rejected before deploy/run."
+            )
+    return None
 
 
 def _step_callout(step: Dict[str, Any]) -> str:
@@ -340,16 +506,27 @@ def display_content_for_user(raw_assistant_text: str, plan: Optional[Dict[str, A
     return f"{prose}\n\n{summary}".strip()
 
 
-def prepare_blueprint_response(raw_assistant_text: str) -> Tuple[str, Optional[Dict[str, Any]], Optional[str]]:
+def prepare_blueprint_response(
+    raw_assistant_text: str,
+    *,
+    prior_plan: Optional[Dict[str, Any]] = None,
+    text_sources: Optional[List[str]] = None,
+) -> Tuple[str, Optional[Dict[str, Any]], Optional[str]]:
     """
     Returns (user_facing_content, execution_plan_or_none, validation_error_or_none).
     execution_plan is enriched and safe to pass to workflow create on approve.
+    When prior_plan / text_sources are provided, regenerated Sheets steps inherit
+    the bound spreadsheet URL/id so edits cannot wipe in YOUR_SHEET_ID placeholders.
     """
     plan = parse_blueprint_plan(raw_assistant_text)
     if not plan:
         return strip_plan_json(raw_assistant_text) or (raw_assistant_text or "").strip(), None, None
 
     enriched = enrich_plan_steps(plan)
+    enriched = inherit_sheet_bindings(
+        enriched, prior_plan, text_sources=text_sources
+    )
+    enriched = enrich_plan_steps(enriched)
     err = validate_plan_steps(enriched.get("steps") or [])
     if err:
         return (
@@ -357,6 +534,16 @@ def prepare_blueprint_response(raw_assistant_text: str) -> Tuple[str, Optional[D
             or "I couldn't build that workflow with the actions available today.",
             None,
             err,
+        )
+    # Chat may still show a plan that needs a sheet link; only hard-fail placeholders here.
+    # Approve/create uses validate_sheet_bindings (full resolve required).
+    sheet_err = validate_sheet_placeholders(enriched.get("steps") or [])
+    if sheet_err:
+        return (
+            strip_plan_json(raw_assistant_text)
+            or "I need your real Google Sheets link before I can finish this plan.",
+            None,
+            sheet_err,
         )
     user_content = display_content_for_user(raw_assistant_text, enriched)
     return user_content, enriched, None

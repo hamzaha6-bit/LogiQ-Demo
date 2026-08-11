@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Optional, Tuple
 
 from action_registry import validate_plan_steps
+from blueprint_plan import validate_sheet_bindings
 from execution_gate import check_execution_gate
 from supabase_rest import client_id_from_user_id, rest_post_with_error
 from workflow_scheduler import initial_next_run, parse_schedule
@@ -58,6 +59,10 @@ def create_workflow_for_user(user_id: str, body: Dict[str, Any]) -> Tuple[int, D
     step_err = validate_plan_steps(steps)
     if step_err:
         return 400, {"detail": step_err, "error": "unsupported_step_code"}
+
+    sheet_err = validate_sheet_bindings(steps)
+    if sheet_err:
+        return 400, {"detail": sheet_err, "error": "invalid_sheet_binding"}
 
     status = str(body.get("status") or "active").strip().lower() or "active"
     if status not in ("active", "paused"):
