@@ -123,6 +123,7 @@ def test_gm05_creates_draft_not_send():
     service.users().drafts().create().execute.return_value = {"id": "d1", "message": {"id": "m9"}}
     with patch("google_oauth.build", return_value=service), \
          patch("google_oauth.get_credentials", return_value=MagicMock()), \
+         patch("google_oauth.has_gmail_draft_scope", return_value=True), \
          patch("google_oauth.check_gmail_health", return_value={"email": "me@co.com"}):
         out = _execute_step(
             "GM-05",
@@ -138,6 +139,99 @@ def test_gm05_creates_draft_not_send():
 def test_gm05_requires_to_and_subject():
     with pytest.raises(StepExecutionError):
         _execute_step("GM-05", {"to": "", "subject": ""}, user_id="u1", agent_id="aria", agent_name="Aria")
+
+
+def test_gm05_batch_creates_one_draft_per_row():
+    service = MagicMock()
+    service.users().drafts().create().execute.side_effect = [
+        {"id": "d1", "message": {"id": "m1"}},
+        {"id": "d2", "message": {"id": "m2"}},
+    ]
+    rows = [
+        {
+            "Customer": "Acme",
+            "Contact email": "a@acme.com",
+            "Current balance GBP": "1200",
+            "Days overdue": "45",
+        },
+        {
+            "Customer": "Beta",
+            "Contact email": "b@beta.com",
+            "Current balance GBP": "900",
+            "Days overdue": "60",
+        },
+    ]
+    with patch("google_oauth.build", return_value=service), \
+         patch("google_oauth.get_credentials", return_value=MagicMock()), \
+         patch("google_oauth.has_gmail_draft_scope", return_value=True), \
+         patch("google_oauth.check_gmail_health", return_value={"email": "me@co.com"}):
+        out = _execute_step(
+            "GM-05",
+            {
+                "rows": rows,
+                "to_column": "Contact email",
+                "subject": "Payment reminder — {Customer}",
+                "body": "Hi {Customer}, balance {Current balance GBP}, {Days overdue} days overdue.",
+            },
+            user_id="u1", agent_id="aria", agent_name="Aria",
+        )
+    assert out["batch"] is True
+    assert out["count"] == 2
+    assert out["draft_ids"] == ["d1", "d2"]
+    assert out["drafts"][0]["to"] == "a@acme.com"
+    assert "Acme" in out["drafts"][0]["subject"]
+    assert out["drafts"][1]["to"] == "b@beta.com"
+    assert service.users().drafts().create().execute.call_count == 2
+    assert not service.users().messages().send.called
+
+
+def test_gm05_missing_draft_scope_asks_reconnect():
+    with patch("google_oauth.has_gmail_draft_scope", return_value=False), \
+         patch("google_oauth.get_credentials", return_value=MagicMock()):
+        with pytest.raises(StepExecutionError, match="Reconnect Google"):
+            _execute_step(
+                "GM-05",
+                {"to": "a@b.com", "subject": "Hi", "body": "x"},
+                user_id="u1", agent_id="aria", agent_name="Aria",
+            )
+
+
+def test_google_scopes_include_compose_and_modify():
+    scopes = set(google_oauth.GOOGLE_SCOPES)
+    assert "https://www.googleapis.com/auth/gmail.compose" in scopes
+    assert "https://www.googleapis.com/auth/gmail.modify" in scopes
+    assert "https://www.googleapis.com/auth/gmail.send" in scopes
+    assert "https://www.googleapis.com/auth/gmail.readonly" in scopes
+    # Sheets path must remain in the connect request.
+    assert "https://www.googleapis.com/auth/spreadsheets" in scopes
+
+
+def test_insufficient_scope_http_error_maps_to_reconnect():
+    try:
+        from googleapiclient.errors import HttpError
+    except ImportError:
+        pytest.skip("googleapiclient not installed")
+
+    class _Resp:
+        status = 403
+        reason = "Forbidden"
+
+    http_exc = HttpError(
+        _Resp(),
+        b'{"error":{"status":"PERMISSION_DENIED","message":"Request had insufficient authentication scopes."}}',
+    )
+    service = MagicMock()
+    service.users().drafts().create().execute.side_effect = http_exc
+    with patch("google_oauth.build", return_value=service), \
+         patch("google_oauth.get_credentials", return_value=MagicMock()), \
+         patch("google_oauth.has_gmail_draft_scope", return_value=True), \
+         patch("google_oauth.check_gmail_health", return_value={"email": "me@co.com"}):
+        with pytest.raises(StepExecutionError, match="Reconnect Google"):
+            _execute_step(
+                "GM-05",
+                {"to": "a@b.com", "subject": "Hi", "body": "x"},
+                user_id="u1", agent_id="aria", agent_name="Aria",
+            )
 
 
 # ── GM-06 label modify (resolves names to ids) ──────────────────────────────

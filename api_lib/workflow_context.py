@@ -178,6 +178,10 @@ def is_missing_upstream_id(code: str, params: Dict[str, Any], *, had_empty_ref: 
     if normalized == "GM-08":
         return not str(params.get("thread_id") or params.get("threadId") or "").strip()
     if normalized in ("GM-03", "GM-05"):
+        # Batch draft mode: empty rows from prior filter is a clean no-op.
+        rows = params.get("rows")
+        if normalized == "GM-05" and isinstance(rows, list):
+            return len(rows) == 0
         # Draft/send often templated from prior read — only empty-exit when templates
         # failed AND to is blank.
         return had_empty_ref and not str(params.get("to") or "").strip()

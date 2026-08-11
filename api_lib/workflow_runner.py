@@ -9,11 +9,14 @@ from typing import Any, Dict, List, Optional, Tuple
 from action_registry import REAL_CODES, is_real_code
 from execution_gate import check_execution_gate, record_allowed_action
 from google_oauth import (
+    GMAIL_DRAFT_RECONNECT_MSG,
     cancel_event,
     check_availability,
     create_draft,
+    create_drafts_for_rows,
     create_event,
     get_thread,
+    is_insufficient_scope_error,
     list_messages,
     list_events,
     modify_labels,
@@ -270,11 +273,46 @@ def _execute_gmail_step(
         if code == "GM-08":
             return get_thread(user_id, params.get("thread_id") or params.get("threadId") or "")
         if code == "GM-05":
+            rows = params.get("rows")
+            if rows is None and isinstance(params.get("results"), list):
+                rows = params.get("results")
+            if isinstance(rows, dict) and isinstance(rows.get("rows"), list):
+                rows = rows.get("rows")
+            if isinstance(rows, list):
+                subject = (params.get("subject") or params.get("subject_template") or "").strip()
+                body = (params.get("body") or params.get("body_template") or "").strip()
+                to_column = (
+                    params.get("to_column")
+                    or params.get("email_column")
+                    or params.get("contact_email_column")
+                    or ""
+                )
+                if not rows:
+                    return {
+                        "created": True,
+                        "count": 0,
+                        "drafts": [],
+                        "draft_ids": [],
+                        "errors": [],
+                        "error_count": 0,
+                        "batch": True,
+                        "skipped": "no_rows",
+                    }
+                return create_drafts_for_rows(
+                    user_id,
+                    rows,
+                    subject=subject,
+                    body=body,
+                    to_column=str(to_column or "").strip(),
+                    from_name=agent_name,
+                )
             to = (params.get("to") or "").strip()
             subject = (params.get("subject") or "").strip()
             body = (params.get("body") or "").strip()
             if not to or not subject:
-                raise StepExecutionError("GM-05 requires to and subject")
+                raise StepExecutionError(
+                    "GM-05 requires to and subject, or a rows list for batch drafts"
+                )
             return create_draft(user_id, to, subject, body, agent_name)
         if code == "GM-06":
             return modify_labels(
@@ -288,8 +326,17 @@ def _execute_gmail_step(
     except (ValueError, PermissionError) as exc:
         raise StepExecutionError(str(exc)) from exc
     except HttpError as exc:
+        if code == "GM-05" and is_insufficient_scope_error(exc):
+            raise StepExecutionError(GMAIL_DRAFT_RECONNECT_MSG) from exc
+        if is_insufficient_scope_error(exc):
+            raise StepExecutionError(
+                "Reconnect Google in Settings → Integrations to grant required Gmail "
+                "permissions. Disconnect Gmail, then connect again."
+            ) from exc
         raise StepExecutionError(f"Gmail API error on {code}: {exc}") from exc
     except Exception as exc:
+        if code == "GM-05" and is_insufficient_scope_error(exc):
+            raise StepExecutionError(GMAIL_DRAFT_RECONNECT_MSG) from exc
         raise StepExecutionError(f"{code} failed: {exc}") from exc
 
     raise StepExecutionError(f"Unhandled Gmail action {code}")

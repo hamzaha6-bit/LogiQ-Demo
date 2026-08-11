@@ -6634,9 +6634,9 @@ Rules:
 - Every step.code MUST be one of the registered primitives listed above. Do not use any code not in that list.
 - Set requires_approval implicitly from the registry (GM-03, GM-04, GS-06, GC-05, and GC-06 always need approval).
 - For steps that send email (GM-03, GM-04), include params: { "to", "subject", "body" } with realistic draft content.
-- For draft email (GM-05), include params: { "to", "subject", "body" }.
+- For draft email (GM-05), single mode: { "to", "subject", "body" }. For credit-chase / one draft per flagged customer: pass rows from XF-06 — { "rows": "{{step_N.output.rows}}", "to_column": "Contact email", "subject": "…{Customer}…", "body": "…{Current balance GBP}…{Days overdue}…" }. Creates held drafts only (not sent).
 - For search (GM-07), include structured params like { "from", "subject", "after", "before", "has_attachment", "query", "max_results" }.
-- Inter-step templates MUST use {{step_N.output.field}} or nested paths like {{step_1.output.results.0.message_id}}. The engine does NOT fan out over arrays — bind later steps to the first result only.
+- Inter-step templates MUST use {{step_N.output.field}} or nested paths like {{step_1.output.results.0.message_id}}. Most steps do NOT fan out — bind later read/label/send steps to the first result only. Exception: GM-05 with a rows list creates one draft per row.
 - Search results are oldest-first. After GM-07, use message_id: "{{step_1.output.results.0.message_id}}".
 - For franchise / enquiry inbox workflows, GM-07 query MUST exclude already-processed mail, e.g. (franchise OR franchising OR "become a franchisee" OR "franchise opportunity") -label:"Franchise Enquiry". Prefer nova; summary must state one enquiry per run.
 - For read message (GM-02) use { "message_id" }; for get thread (GM-08) use { "thread_id" }; for label (GM-06) use { "message_id", "add_labels", "remove_labels" }.
@@ -6644,7 +6644,7 @@ Rules:
 - GS-02 needs row/row_data; GS-03 needs row + row_data; GS-06 needs row; GS-07 needs cell (A1) + value.
 - For calendar: GC-01 needs time_min/time_max; GC-02 needs optional time range; GC-03/GC-06 need title, start, end (ISO); GC-06 also needs attendees[]; GC-04/GC-05 need event_id.
 - XF-01 only filters by status equality + numeric ID range on columns that already exist. It cannot compare two columns, do date math, or create Flagged.
-- For credit-review / over-limit / overdue / Flagged logic use XF-06 with an ORDERED derive list (later columns may reference earlier derived ones). Typical order: Over limit → Days overdue → Overdue >30 days → Flagged (or of the two flags). Optionally filter_column=Flagged filter_value=yes. Never use XF-01 with status_column=Flagged unless Flagged already exists on the sheet.
+- For credit-review / over-limit / overdue / Flagged logic use XF-06 with an ORDERED derive list (later columns may reference earlier derived ones). Typical order: Over limit → Days overdue → Overdue >30 days → Flagged (or of the two flags). Optionally filter_column=Flagged filter_value=yes. Never use XF-01 with status_column=Flagged unless Flagged already exists on the sheet. When chasing each flagged customer, follow with GM-05 batch (rows + to_column + templates) — one held draft per row, not sent.
 - Prefer 2–6 steps. Be practical, not generic.
 - Tone: warm, concise, colleague-like — not a form or checklist.
 - Never mention internal codes, template variables, or raw JSON fields to the user in prose; codes belong only in the JSON block.`;

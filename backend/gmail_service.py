@@ -34,9 +34,13 @@ if GMAIL_REDIRECT_URI != "http://localhost:8000/api/auth/gmail/callback":
     raise RuntimeError("GMAIL_REDIRECT_URI constant corrupted")
 if GMAIL_REDIRECT_URI.endswith("/"):
     raise RuntimeError("GMAIL_REDIRECT_URI must not have a trailing slash")
+# Must stay aligned with api_lib/google_oauth.GOOGLE_SCOPES — compose/modify
+# required for drafts.create and label modify (GM-05 / GM-06).
 GMAIL_SCOPES = [
     "https://www.googleapis.com/auth/gmail.send",
     "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/gmail.compose",
+    "https://www.googleapis.com/auth/gmail.modify",
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/calendar.readonly",
     "https://www.googleapis.com/auth/calendar.events",
