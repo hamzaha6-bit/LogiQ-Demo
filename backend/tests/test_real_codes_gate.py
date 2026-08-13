@@ -46,6 +46,44 @@ def test_validate_plan_steps_rejects_unknown_code():
     assert "unknown" in err.lower()
 
 
+def test_validate_plan_steps_allows_pound_fabrics_picklist_codes():
+    steps = [
+        {"step": 1, "code": "GS-01", "params": {"url": "https://docs.google.com/spreadsheets/d/abc/edit"}},
+        {
+            "step": 2,
+            "code": "XF-02",
+            "params": {
+                "group_column": "Name",
+                "match_column": "Lineitem name",
+                "op": "contains",
+                "value": "Express Shipping",
+            },
+        },
+        {
+            "step": 3,
+            "code": "XF-05",
+            "params": {
+                "sku_column": "Lineitem sku",
+                "qty_column": "Lineitem quantity",
+                "min_count": 4,
+                "format_string": "{qty}m x {count}",
+            },
+        },
+        {
+            "step": 4,
+            "code": "GS-10",
+            "params": {
+                "url": "https://docs.google.com/spreadsheets/d/abc/edit",
+                "split_mode": "sku_prefix_bands",
+                "exception_field": "Lineitem sku",
+                "sheet1_before_product_name": "Plain Polycotton Fabric",
+                "sku_prefix_breaks": ["COT", "DF", "F", "G", "L", "S"],
+            },
+        },
+    ]
+    assert validate_plan_steps(steps) is None
+
+
 def test_validate_plan_steps_allows_real_codes():
     steps = [
         {"step": 1, "code": "gs-01", "params": {"url": "https://example.com"}},

@@ -6645,7 +6645,8 @@ Rules:
 - For calendar: GC-01 needs time_min/time_max; GC-02 needs optional time range; GC-03/GC-06 need title, start, end (ISO); GC-06 also needs attendees[]; GC-04/GC-05 need event_id.
 - XF-01 only filters by status equality + numeric ID range on columns that already exist. It cannot compare two columns, do date math, or create Flagged.
 - For credit-review / over-limit / overdue / Flagged logic use XF-06 with an ORDERED derive list (later columns may reference earlier derived ones). Typical order: Over limit → Days overdue → Overdue >30 days → Flagged (or of the two flags). Optionally filter_column=Flagged filter_value=yes. Never use XF-01 with status_column=Flagged unless Flagged already exists on the sheet. When chasing each flagged customer, follow with GM-05 batch (rows + to_column + templates) — one held draft per row, not sent.
-- Prefer 2–6 steps. Be practical, not generic.
+- Pound Fabrics / warehouse picklist: prefer nova. GS-01 read → XF-02 drop whole orders whose Lineitem name contains Express Shipping (group_column=Name) → XF-05 sku+qty min_count=4 format "{qty}m x {count}" write_summary_to_qty=true (never SKU-alone; triples stay unmerged) → GS-10 split_mode=sku_prefix_bands exception_field=Lineitem sku sheet1_before_product_name="Plain Polycotton Fabric" sku_prefix_breaks=["COT","DF","F","G","L","S"] (Sheet 1 = product-name cut, NOT SKU prefix; sheets 2–8 = SKU bands) → optional GS-11 format. Do NOT use volume-balance target_rows_per_tab for this workflow.
+- Prefer 2–6 steps (picklist may use 5). Be practical, not generic.
 - Tone: warm, concise, colleague-like — not a form or checklist.
 - Never mention internal codes, template variables, or raw JSON fields to the user in prose; codes belong only in the JSON block.`;
       }
