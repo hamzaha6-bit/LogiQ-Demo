@@ -25,6 +25,7 @@ from picklist_emit import (  # noqa: E402
     is_managed_picklist_title,
     parse_emit_params,
     split_exceptions,
+    split_sku_prefix_bands,
 )
 from workflow_runner import StepExecutionError, _execute_step  # noqa: E402
 
@@ -572,3 +573,57 @@ def test_gs10_reserved_template_name_hard_fails_before_delete(
     # Managed / template tabs must be untouched.
     assert "Picklist 1" in state["titles"]
     assert template_name in state["titles"]
+
+
+def test_split_sku_prefix_bands_sheet1_is_product_name_not_sku():
+    """Sheet 1 = before Plain Polycotton Fabric (product name). Sheets 2–8 = SKU cuts."""
+    rows = [
+        {"Lineitem name": "Aardvark Canvas", "Lineitem sku": "ZZZ-99"},  # sheet 1 (name < Plain…)
+        {"Lineitem name": "Zebra Wool", "Lineitem sku": "AAA-01"},  # sku < COT → sheet 2
+        {"Lineitem name": "Zebra Wool", "Lineitem sku": "COT-10"},  # COT ≤ sku < DF → sheet 3
+        {"Lineitem name": "Zebra Wool", "Lineitem sku": "DF-20"},
+        {"Lineitem name": "Zebra Wool", "Lineitem sku": "FAB-1"},  # F band → sheet 5
+        {"Lineitem name": "Zebra Wool", "Lineitem sku": "GLO-1"},
+        {"Lineitem name": "Zebra Wool", "Lineitem sku": "LIN-1"},
+        {"Lineitem name": "Zebra Wool", "Lineitem sku": "SILK-1"},  # >= S → sheet 8
+        {"Lineitem name": "Plain Polycotton Fabric", "Lineitem sku": "BBB-02"},  # not sheet 1; < COT → 2
+    ]
+    bands = split_sku_prefix_bands(
+        rows,
+        sku_column="Lineitem sku",
+        product_name_column="Lineitem name",
+        sheet1_before_product_name="Plain Polycotton Fabric",
+        sku_prefix_breaks=["COT", "DF", "F", "G", "L", "S"],
+    )
+    assert len(bands) == 8
+    assert [r["Lineitem sku"] for r in bands[0]] == ["ZZZ-99"]
+    assert "Aardvark Canvas" in {r["Lineitem name"] for r in bands[0]}
+    assert [r["Lineitem sku"] for r in bands[1]] == ["AAA-01", "BBB-02"]  # before COT
+    assert [r["Lineitem sku"] for r in bands[2]] == ["COT-10"]
+    assert [r["Lineitem sku"] for r in bands[3]] == ["DF-20"]
+    assert [r["Lineitem sku"] for r in bands[4]] == ["FAB-1"]
+    assert [r["Lineitem sku"] for r in bands[5]] == ["GLO-1"]
+    assert [r["Lineitem sku"] for r in bands[6]] == ["LIN-1"]
+    assert [r["Lineitem sku"] for r in bands[7]] == ["SILK-1"]
+
+
+def test_parse_emit_sku_prefix_mode_always_eight_picklists():
+    rows = [
+        {"Name": "#1", "Lineitem sku": "AAA-1", "Lineitem name": "Zebra"},
+        {"Name": "#1", "Lineitem sku": "", "Lineitem name": "Custom no sku"},
+    ]
+    plan = parse_emit_params(
+        {
+            "rows": rows,
+            "columns": ["Name", "Lineitem sku", "Lineitem name"],
+            "exception_field": "Lineitem sku",
+            "split_mode": "sku_prefix_bands",
+            "sheet1_before_product_name": "Plain Polycotton Fabric",
+        }
+    )
+    assert plan["split_mode"] == "sku_prefix_bands"
+    assert plan["tab_count"] == 8
+    assert plan["exception_row_count"] == 1
+    assert plan["picklists"][0]["sheet_name"] == "Picklist 1"
+    assert plan["picklists"][7]["sheet_name"] == "Picklist 8"
+    assert plan["exceptions"]["row_count"] == 1

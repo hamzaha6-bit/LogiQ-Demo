@@ -113,7 +113,13 @@ Rules:
 - For calendar: GC-01 needs time_min/time_max; GC-02 needs optional time range; GC-03/GC-06 need title, start, end (ISO); GC-06 also needs attendees[]; GC-04/GC-05 need event_id.
 - XF-01 only filters by a status equality + numeric ID range on columns that ALREADY exist. It cannot compare two columns, do date math, or invent Flagged.
 - For credit-review / over-limit / days-overdue / Flagged logic use XF-06: pass an ORDERED derive list so later columns can reference earlier derived ones in the same step (Over limit → Days overdue → Overdue >30 days → Flagged last). Chain rows/columns from GS-01 via {{{{step_1.output.rows}}}} / {{{{step_1.output.columns}}}}. Optionally set keep_when or filter_column=Flagged + filter_value=yes. Never plan XF-01 with status_column=Flagged unless Flagged already exists on the sheet. When the goal is chase emails for each flagged customer, follow XF-06 with GM-05 batch mode (rows + to_column + subject/body templates) — one held draft per flagged row, not sent.
-- Prefer 2–6 steps. Be practical, not generic.
+- Pound Fabrics / warehouse picklist (Shopify order export → picklist tabs). Prefer nova. Title like "Pound Fabrics Picklist". Typical flow (do NOT use volume-balance GS-10 or XF-01-as-Flagged):
+  1) GS-01 read the user's sheet (real url; optional sheet_name for the orders tab).
+  2) XF-02 group-aware drop: group_column=Name (order number), match_column=Lineitem name, op=contains, value="Express Shipping" — drop EVERY line of any order that has an Express Shipping line, not just that line.
+  3) XF-05 aggregate: sku_column=Lineitem sku, qty_column=Lineitem quantity, min_count=4, format_string="{{qty}}m x {{count}}", write_summary_to_qty=true. Merge ONLY when the SAME SKU AND SAME quantity value appear 4+ times. Never merge on SKU alone. Groups of 3 identical qty stay unmerged.
+  4) GS-10 emit with split_mode="sku_prefix_bands" (NOT target_rows_per_tab / keep_groups_intact): exception_field=Lineitem sku; sku_column=Lineitem sku; product_name_column=Lineitem name; sheet1_before_product_name="Plain Polycotton Fabric"; sku_prefix_breaks=["COT","DF","F","G","L","S"]; optional template_sheet_name="Picklist Template". Sheet 1 boundary is PRODUCT NAME (before Plain Polycotton Fabric), not SKU prefix. Sheets 2–8 are SKU-prefix bands (before COT / DF / F / G / L / S, then rest). Missing SKU → Exceptions tab.
+  5) Optional GS-11 format on the emitted tabs (bold/borders/banding). Print margins come from the template tab duplicate, not GS-11.
+- Prefer 2–6 steps (picklist may use up to 5). Be practical, not generic.
 - Tone: warm, concise, colleague-like — not a form or checklist.
 - Never mention internal codes, template variables, or raw JSON fields to the user in prose; codes belong only in the JSON block.{bound_block}"""
 

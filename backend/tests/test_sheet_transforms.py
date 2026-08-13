@@ -219,6 +219,57 @@ def test_xf05_format_must_be_param(shopify_table):
         execute_transform("XF-05", {**shopify_table, "sku_column": "Lineitem sku", "qty_column": "Lineitem quantity"})
 
 
+def test_xf05_min_count_4_leaves_triples_unmerged():
+    """Pound Fabrics SOP: merge only when same SKU AND same qty appear 4+ times."""
+    rows = (
+        [{"Name": "#1", "Lineitem sku": "AAA", "Lineitem quantity": "3"}] * 3
+        + [{"Name": "#2", "Lineitem sku": "AAA", "Lineitem quantity": "3"}] * 2
+        + [{"Name": "#3", "Lineitem sku": "BBB", "Lineitem quantity": "2"}] * 3
+        + [{"Name": "#4", "Lineitem sku": "CCC", "Lineitem quantity": "5"}]
+    )
+    # AAA@3 appears 5 times → merge; BBB@2 appears 3 → unmerged; CCC@5 once → unmerged
+    out = aggregate_rows(
+        rows,
+        ["Name", "Lineitem sku", "Lineitem quantity"],
+        sku_column="Lineitem sku",
+        qty_column="Lineitem quantity",
+        format_string="{qty}m x {count}",
+        min_count=4,
+        write_summary_to_qty=True,
+        preserve_other_columns=True,
+    )
+    aaa = [r for r in out["rows"] if r["Lineitem sku"] == "AAA"]
+    bbb = [r for r in out["rows"] if r["Lineitem sku"] == "BBB"]
+    ccc = [r for r in out["rows"] if r["Lineitem sku"] == "CCC"]
+    assert len(aaa) == 1
+    assert aaa[0]["Lineitem quantity"] == "3m x 5"
+    assert len(bbb) == 3
+    assert all(r["Lineitem quantity"] == "2" for r in bbb)
+    assert len(ccc) == 1
+    assert ccc[0]["Lineitem quantity"] == "5"
+    assert out["merged_group_count"] == 1
+
+
+def test_xf05_does_not_merge_same_sku_different_qty():
+    rows = (
+        [{"Lineitem sku": "AAA", "Lineitem quantity": "3"}] * 4
+        + [{"Lineitem sku": "AAA", "Lineitem quantity": "5"}] * 4
+    )
+    out = aggregate_rows(
+        rows,
+        ["Lineitem sku", "Lineitem quantity"],
+        sku_column="Lineitem sku",
+        qty_column="Lineitem quantity",
+        format_string="{qty}m x {count}",
+        min_count=4,
+        preserve_other_columns=False,
+    )
+    summaries = {(r["Lineitem sku"], r["Lineitem quantity"]): r["Summary"] for r in out["rows"]}
+    assert summaries[("AAA", "3")] == "3m x 4"
+    assert summaries[("AAA", "5")] == "5m x 4"
+    assert out["row_count"] == 2
+
+
 def test_xf05_multiple_groups(shopify_table):
     out = execute_transform(
         "XF-05",

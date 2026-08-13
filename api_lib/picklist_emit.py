@@ -17,6 +17,12 @@ Partition = Dict[str, Any]
 
 _PICKLIST_TITLE_RE = re.compile(r"^(.+?)\s+(\d+)$")
 
+# Pound Fabrics SOP: sheets 2–8 SKU cuts, then remainder. Sheet 1 is product-name.
+DEFAULT_SKU_PREFIX_BREAKS = ["COT", "DF", "F", "G", "L", "S"]
+DEFAULT_SHEET1_BEFORE_PRODUCT = "Plain Polycotton Fabric"
+SPLIT_MODE_VOLUME = "volume"
+SPLIT_MODE_SKU_PREFIX = "sku_prefix_bands"
+
 
 class EmitError(ValueError):
     """Invalid emit-picklist params or table shape."""
@@ -224,6 +230,70 @@ def _pack_groups_into_n(
     return tabs
 
 
+def _fold(value: Any) -> str:
+    return _as_str(value).casefold()
+
+
+def split_sku_prefix_bands(
+    rows: Sequence[Row],
+    *,
+    sku_column: str,
+    product_name_column: str,
+    sheet1_before_product_name: str = DEFAULT_SHEET1_BEFORE_PRODUCT,
+    sku_prefix_breaks: Optional[Sequence[str]] = None,
+) -> List[List[Row]]:
+    """8 partitions matching the Pound Fabrics SOP.
+
+    Sheet 1: product name < sheet1_before_product_name (case-insensitive).
+             This is a PRODUCT NAME rule, not a SKU-prefix rule.
+    Sheets 2–8: remaining rows sorted by SKU, cut at sku_prefix_breaks
+             (default COT / DF / F / G / L / S) then remainder to end.
+
+    Always returns exactly 8 lists (empty bands allowed).
+    """
+    breaks = [str(b).strip() for b in (sku_prefix_breaks or DEFAULT_SKU_PREFIX_BREAKS) if str(b).strip()]
+    if len(breaks) != 6:
+        raise EmitError(
+            "sku_prefix_breaks must be 6 cut points (e.g. COT, DF, F, G, L, S) "
+            "→ Picklist 2–8 (before each, then till end)"
+        )
+    cut = (sheet1_before_product_name or "").strip()
+    if not cut:
+        raise EmitError("sheet1_before_product_name is required for sku_prefix_bands")
+    if not (sku_column or "").strip() or not (product_name_column or "").strip():
+        raise EmitError("sku_prefix_bands requires sku_column and product_name_column")
+
+    cut_key = _fold(cut)
+    sheet1: List[Row] = []
+    rest: List[Row] = []
+    for row in rows:
+        if _fold(_cell(row, product_name_column)) < cut_key:
+            sheet1.append(row)
+        else:
+            rest.append(row)
+    sheet1.sort(
+        key=lambda r: (_fold(_cell(r, product_name_column)), _fold(_cell(r, sku_column)))
+    )
+    rest_sorted = sorted(
+        rest,
+        key=lambda r: (_fold(_cell(r, sku_column)), _fold(_cell(r, product_name_column))),
+    )
+
+    bands: List[List[Row]] = [[] for _ in range(7)]
+    break_keys = [_fold(b) for b in breaks]
+    for row in rest_sorted:
+        sku = _fold(_cell(row, sku_column))
+        placed = False
+        for i, bk in enumerate(break_keys):
+            if sku < bk:
+                bands[i].append(row)
+                placed = True
+                break
+        if not placed:
+            bands[-1].append(row)
+    return [sheet1, *bands]
+
+
 def balance_rows(
     rows: Sequence[Row],
     *,
@@ -280,20 +350,47 @@ def build_partitions(
     group_column: Optional[str] = None,
     picklist_prefix: str = "Picklist",
     exception_sheet_name: str = "Exceptions",
+    split_mode: str = SPLIT_MODE_VOLUME,
+    sku_column: Optional[str] = None,
+    product_name_column: Optional[str] = None,
+    sheet1_before_product_name: Optional[str] = None,
+    sku_prefix_breaks: Optional[Sequence[str]] = None,
 ) -> Dict[str, Any]:
-    """Split exceptions + balance remaining rows. Returns partition plan (no I/O)."""
+    """Split exceptions + partition remaining rows. Returns partition plan (no I/O)."""
     field = (exception_field or "").strip()
     if not field:
         raise EmitError("GS-10 requires exception_field (e.g. Lineitem sku)")
 
     good, bad = split_exceptions(rows, field)
-    buckets = balance_rows(
-        good,
-        target_rows_per_tab=target_rows_per_tab,
-        tab_count=tab_count,
-        keep_groups_intact=keep_groups_intact,
-        group_column=group_column,
-    )
+    mode = (split_mode or SPLIT_MODE_VOLUME).strip().lower().replace("-", "_")
+    if mode in ("sku_prefix", "prefix", "sku_bands", SPLIT_MODE_SKU_PREFIX):
+        mode = SPLIT_MODE_SKU_PREFIX
+        buckets = split_sku_prefix_bands(
+            good,
+            sku_column=(sku_column or "Lineitem sku").strip(),
+            product_name_column=(product_name_column or "Lineitem name").strip(),
+            sheet1_before_product_name=(
+                sheet1_before_product_name or DEFAULT_SHEET1_BEFORE_PRODUCT
+            ),
+            sku_prefix_breaks=sku_prefix_breaks,
+        )
+        keep_groups_intact = False
+        group_column = None
+    elif mode in ("volume", "row", "rows", SPLIT_MODE_VOLUME, ""):
+        mode = SPLIT_MODE_VOLUME
+        buckets = balance_rows(
+            good,
+            target_rows_per_tab=target_rows_per_tab,
+            tab_count=tab_count,
+            keep_groups_intact=keep_groups_intact,
+            group_column=group_column,
+        )
+    else:
+        raise EmitError(
+            "GS-10 split_mode must be 'volume' (target_rows_per_tab) or "
+            "'sku_prefix_bands' (Pound Fabrics SOP: sheet 1 by product name, "
+            "sheets 2–8 by SKU prefix)"
+        )
 
     picklists: List[Partition] = []
     gcol = (group_column or "").strip() or None
@@ -345,6 +442,10 @@ def build_partitions(
         "group_column": gcol,
         "target_rows_per_tab": target_rows_per_tab,
         "tab_count_override": tab_count,
+        "split_mode": mode,
+        "sku_column": (sku_column or "").strip() or None,
+        "product_name_column": (product_name_column or "").strip() or None,
+        "sheet1_before_product_name": (sheet1_before_product_name or "").strip() or None,
         "columns": list(columns),
     }
 
@@ -389,6 +490,31 @@ def parse_emit_params(params: Dict[str, Any]) -> Dict[str, Any]:
         or params.get("exception_tab")
         or "Exceptions"
     )
+    split_mode = str(
+        params.get("split_mode") or params.get("partition_mode") or SPLIT_MODE_VOLUME
+    )
+    sku_column = params.get("sku_column") or params.get("sku_field")
+    product_name_column = (
+        params.get("product_name_column")
+        or params.get("name_column")
+        or params.get("lineitem_name_column")
+    )
+    sheet1_before = (
+        params.get("sheet1_before_product_name")
+        or params.get("sheet1_before")
+        or params.get("product_name_cut")
+    )
+    breaks_raw = (
+        params.get("sku_prefix_breaks")
+        or params.get("prefix_breaks")
+        or params.get("sku_cuts")
+    )
+    if isinstance(breaks_raw, str):
+        sku_breaks = [p.strip() for p in breaks_raw.replace(";", ",").split(",") if p.strip()]
+    elif isinstance(breaks_raw, list):
+        sku_breaks = [str(p).strip() for p in breaks_raw if str(p).strip()]
+    else:
+        sku_breaks = None
 
     return build_partitions(
         rows,
@@ -400,4 +526,9 @@ def parse_emit_params(params: Dict[str, Any]) -> Dict[str, Any]:
         group_column=group_column,
         picklist_prefix=prefix,
         exception_sheet_name=exc_name,
+        split_mode=split_mode,
+        sku_column=str(sku_column).strip() if sku_column else None,
+        product_name_column=str(product_name_column).strip() if product_name_column else None,
+        sheet1_before_product_name=str(sheet1_before).strip() if sheet1_before else None,
+        sku_prefix_breaks=sku_breaks,
     )

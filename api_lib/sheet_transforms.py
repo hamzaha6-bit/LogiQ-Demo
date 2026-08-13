@@ -330,8 +330,14 @@ def aggregate_rows(
     format_string: str,
     summary_column: str = "Summary",
     preserve_other_columns: bool = True,
+    min_count: int = 1,
+    write_summary_to_qty: bool = False,
 ) -> Table:
     """Collapse rows sharing (sku, qty) into one summary row.
+
+    Merge key is BOTH sku AND qty — never SKU alone.
+    min_count (default 1): only groups with count >= min_count are merged.
+    Pound Fabrics SOP: min_count=4 (triples of identical qty stay unmerged).
 
     Format placeholders (configurable via format_string, not hardcoded):
       {qty}   — shared value from qty_column
@@ -342,6 +348,12 @@ def aggregate_rows(
     Example: format_string="{qty}m x {count}" with qty=3, count=5 → "3m x 5".
     """
     _require_columns(columns, sku_column, qty_column)
+    try:
+        min_n = int(min_count)
+    except (TypeError, ValueError) as exc:
+        raise TransformError("XF-05 min_count must be a positive integer") from exc
+    if min_n < 1:
+        raise TransformError("XF-05 min_count must be a positive integer")
     fmt = format_string if format_string is not None else ""
     if not _as_str(fmt):
         raise TransformError("XF-05 requires a non-empty format_string")
@@ -362,10 +374,26 @@ def aggregate_rows(
 
     out_rows: List[Row] = []
     group_sizes: List[int] = []
+    merged_count = 0
     for key in order:
         members = groups[key]
         sku_val, qty_val = key
         count = len(members)
+
+        if count < min_n:
+            for row in members:
+                passthrough = dict(row) if preserve_other_columns else {
+                    sku_column: sku_val,
+                    qty_column: qty_val,
+                }
+                if preserve_other_columns:
+                    for c in out_columns:
+                        passthrough.setdefault(c, "")
+                elif summary_column not in (sku_column, qty_column):
+                    passthrough.setdefault(summary_column, "")
+                out_rows.append(passthrough)
+                group_sizes.append(1)
+            continue
 
         def repl(match: re.Match[str]) -> str:
             token = match.group(1)
@@ -383,8 +411,12 @@ def aggregate_rows(
         else:
             base = {sku_column: sku_val, qty_column: qty_val}
         base[sku_column] = sku_val
-        base[qty_column] = qty_val
-        base[summary_column] = summary
+        if write_summary_to_qty or summary_column == qty_column:
+            base[qty_column] = summary
+        else:
+            base[qty_column] = qty_val
+            base[summary_column] = summary
+        merged_count += 1
         # Drop columns not in out_columns when not preserving extras
         if not preserve_other_columns:
             base = {c: base.get(c, "") for c in out_columns}
@@ -408,6 +440,8 @@ def aggregate_rows(
         extra={
             "group_sizes": group_sizes,
             "aggregated_from": len(rows),
+            "merged_group_count": merged_count,
+            "min_count": min_n,
             "sku_column": sku_column,
             "qty_column": qty_column,
             "summary_column": summary_column,
@@ -863,6 +897,14 @@ def execute_transform(code: str, params: Dict[str, Any]) -> Table:
         )
         if format_string is None:
             raise TransformError("XF-05 requires format_string (e.g. \"{qty}m x {count}\")")
+        min_raw = params.get("min_count")
+        if min_raw is None:
+            min_raw = params.get("min_group_size")
+        min_count = 1 if min_raw is None or min_raw == "" else min_raw
+        write_to_qty = bool(
+            params.get("write_summary_to_qty")
+            or params.get("replace_qty")
+        )
         return aggregate_rows(
             rows,
             columns,
@@ -871,6 +913,8 @@ def execute_transform(code: str, params: Dict[str, Any]) -> Table:
             format_string=str(format_string),
             summary_column=str(params.get("summary_column") or "Summary"),
             preserve_other_columns=bool(params.get("preserve_other_columns", True)),
+            min_count=min_count,
+            write_summary_to_qty=write_to_qty,
         )
 
     if normalized == "XF-06":
