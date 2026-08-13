@@ -1203,12 +1203,11 @@
         white-space: pre-wrap;
         margin-bottom: 18px;
       }
-      .blueprint-summary-body ol {
-        margin: 10px 0 0;
-        padding-left: 1.25em;
+      .blueprint-plan-steps {
+        margin-top: 10px;
       }
-      .blueprint-summary-body li {
-        margin: 6px 0;
+      .blueprint-plan-steps .wf-step:last-child {
+        border-bottom: 1px solid rgba(22, 21, 26, 0.06);
       }
       .blueprint-summary-callout {
         color: #b45309;
@@ -8464,7 +8463,7 @@ Rules:
         const title = plan.title || "Workflow plan";
         const steps = Array.isArray(plan.steps) ? plan.steps : [];
         const items = steps
-          .map((s) => {
+          .map((s, i) => {
             let desc = String(
               s.description || s.name || "Complete this step",
             ).trim();
@@ -8473,11 +8472,20 @@ Rules:
               .replace(/\{\{[^}]+\}\}/g, "");
             desc = desc.replace(/\s{2,}/g, " ").replace(/^[\s\-–—:]+/, "");
             if (desc) desc = desc.charAt(0).toUpperCase() + desc.slice(1);
-            const callout = blueprintStepCallout(s);
-            const calloutHtml = callout
-              ? `<span class="blueprint-summary-callout">${esc(callout)}</span>`
-              : "";
-            return `<li>${esc(desc)}${calloutHtml}</li>`;
+            const callout = blueprintStepCallout(s).replace(/^\s*\(|\)\s*$/g, "").trim();
+            const needsYou = !!callout;
+            return `<div class="wf-step">
+        <div class="n">${i + 1}</div>
+        <div>
+          <div>${esc(desc)}</div>
+          ${
+            callout
+              ? `<div class="detail">${esc(callout.charAt(0).toUpperCase() + callout.slice(1))}</div>`
+              : ""
+          }
+        </div>
+        <div class="detail">${needsYou ? "Needs you" : "Ready"}</div>
+      </div>`;
           })
           .join("");
         const footer =
@@ -8498,7 +8506,7 @@ Rules:
     </div>
     <div class="blueprint-summary-body">
       <div>Here's what I'll do:</div>
-      <ol>${items}</ol>
+      <div class="blueprint-plan-steps">${items}</div>
       <p style="margin-top:14px;color:var(--text2)">${esc(footer)}</p>
     </div>`;
       }
@@ -8889,16 +8897,14 @@ Rules:
         }
         blueprintPlan = plan;
         blueprintPriorPlan = plan;
-        const agentId = plan.agent;
-        if (!deployedAgents.has(agentId)) {
-          toast("Select Aria or Nova — that agent must be active");
-          return;
-        }
+        const agentId = plan.agent === "nova" ? "nova" : "aria";
         if (!getAuthBearerToken()) {
           toast("Sign in to deploy a workflow", "err");
           return;
         }
-        const agent = deployedAgents.get(agentId);
+        const agentName =
+          deployedAgents.get(agentId)?.name ||
+          (agentId === "nova" ? "Nova" : "Aria");
         const scheduleJson = readBlueprintSchedule();
         const record = {
           agent_id: agentId,
@@ -8931,7 +8937,7 @@ Rules:
             toast("Could not save workflow — no id returned", "err");
             return;
           }
-          logAuditEvent(agent.name, "workflow_deploy", {
+          logAuditEvent(agentName, "workflow_deploy", {
             workflow_id: saved.id,
             title: record.name,
             status: "completed",
@@ -8941,7 +8947,7 @@ Rules:
             "✓ **" +
               record.name +
               "** is live on **" +
-              agent.name +
+              agentName +
               "**." +
               scheduleSummaryLabel(scheduleJson) +
               " I'll pause for your approval before any irreversible action.",
