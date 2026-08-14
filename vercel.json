@@ -66,6 +66,7 @@
     { "src": "/api/integrations/sheets/poll", "dest": "/api/integrations.py" },
     { "src": "/api/integrations/sheets/status", "dest": "/api/integrations.py" },
     { "src": "/api/integrations/sheets/write", "dest": "/api/integrations.py" },
+    { "src": "/api/integrations/sheets/write-cell", "dest": "/api/integrations.py" },
     { "src": "/api/integrations/calendar/availability", "dest": "/api/integrations.py" },
     { "src": "/api/integrations/calendar/events", "dest": "/api/integrations.py" },
     { "src": "/api/integrations/calendar/status", "dest": "/api/integrations.py" },

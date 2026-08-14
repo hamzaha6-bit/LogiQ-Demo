@@ -67,6 +67,7 @@ BOUND SPREADSHEET (already chosen in this conversation — preserve EXACTLY on e
 - url: {bound_sheet.get("url")}
 - spreadsheet_id: {bound_sheet.get("spreadsheet_id")}
 When the user asks to edit/regenerate filter logic or any other step, copy these values into every GS-* params.url / params.spreadsheet_id. Never replace them with YOUR_SHEET_ID, placeholders, or "https://docs.google.com/spreadsheets/d/...".
+Do NOT ask the user for a spreadsheet URL or to re-link the sheet — it is already connected. Proceed with the bound URL on every plan.
 """
     return f"""You are LogiQ Blueprint — an intelligent colleague who turns plain-English automation ideas into structured workflows.
 
@@ -339,6 +340,23 @@ class handler(BaseHTTPRequestHandler):
             except Exception as exc:
                 _log(f"prior plan load failed: {exc}")
         bound_sheet = extract_sheet_binding(prior_plan, text_sources=text_sources)
+        # Explicit client binding (attach via +) wins — do not re-ask for the URL.
+        client_bound = body.get("bound_sheet") if isinstance(body.get("bound_sheet"), dict) else None
+        if client_bound:
+            client_url = str(client_bound.get("url") or "").strip()
+            client_sid = str(
+                client_bound.get("spreadsheet_id") or client_bound.get("sheet_id") or ""
+            ).strip()
+            if not client_sid and client_url:
+                from sheets_service import parse_spreadsheet_id
+
+                client_sid = parse_spreadsheet_id(client_url) or ""
+            if client_sid:
+                bound_sheet = {
+                    "url": client_url
+                    or f"https://docs.google.com/spreadsheets/d/{client_sid}/edit",
+                    "spreadsheet_id": client_sid,
+                }
         if system:
             # Frontend may send its own prompt copy — still inject the bound sheet
             # so regenerate/edit cannot invent YOUR_SHEET_ID.
@@ -349,7 +367,8 @@ class handler(BaseHTTPRequestHandler):
                     "preserve EXACTLY on every Sheets step when revising):\n"
                     f"- url: {bound_sheet.get('url')}\n"
                     f"- spreadsheet_id: {bound_sheet.get('spreadsheet_id')}\n"
-                    "Never replace with YOUR_SHEET_ID or any placeholder."
+                    "Never replace with YOUR_SHEET_ID or any placeholder. "
+                    "Do NOT ask the user to paste or re-link this spreadsheet — it is already connected."
                 )
         else:
             system = _blueprint_system_prompt(bound_sheet=bound_sheet)

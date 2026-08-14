@@ -21,7 +21,16 @@ from google_oauth import (
     send_user_email,
 )
 from http_auth import resolve_user_id
-from sheets_service import SchemaMismatchError, SheetsError, connect, connection_status, poll, read_sheet, write_row
+from sheets_service import (
+    SchemaMismatchError,
+    SheetsError,
+    connect,
+    connection_status,
+    poll,
+    read_sheet,
+    write_cell,
+    write_row,
+)
 from usage import record_email_sent
 
 
@@ -165,6 +174,33 @@ class handler(BaseHTTPRequestHandler):
                     return
                 row = body.get("row") or body.get("row_data") or {}
                 result = write_row(url, agent, user_id, row)
+                record_allowed_action(gate.client_id, "integration")
+                self._json(200, result)
+            elif path.endswith("/write-cell"):
+                gate = check_execution_gate(user_id, "integration")
+                if not gate.allowed:
+                    self._json(403, gate.as_error_payload())
+                    return
+                if not url:
+                    self._json(400, {"detail": "Sheet URL is required"})
+                    return
+                cell = (body.get("cell") or "").strip()
+                if "value" not in body:
+                    self._json(400, {"detail": "value is required"})
+                    return
+                sheet_name = (
+                    body.get("sheet_name")
+                    or body.get("sheet")
+                    or body.get("tab")
+                )
+                result = write_cell(
+                    url,
+                    agent,
+                    user_id,
+                    cell,
+                    body.get("value"),
+                    sheet_name=str(sheet_name).strip() if sheet_name else None,
+                )
                 record_allowed_action(gate.client_id, "integration")
                 self._json(200, result)
             else:

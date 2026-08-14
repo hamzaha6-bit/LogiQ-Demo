@@ -946,6 +946,17 @@
         align-items: center;
         justify-content: center;
         flex-shrink: 0;
+        overflow: hidden;
+      }
+      .chat-avatar.chat-avatar-logo {
+        background: transparent;
+        padding: 0;
+      }
+      .chat-avatar.chat-avatar-logo img {
+        width: 32px;
+        height: 32px;
+        object-fit: cover;
+        display: block;
       }
       .chat-msg.user .chat-avatar {
         background: var(--bg3);
@@ -1198,9 +1209,20 @@
       }
       .blueprint-plan-steps {
         margin-top: 10px;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+      .blueprint-plan-steps .wf-step {
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        background: var(--bg2);
+        padding: 14px 16px;
+        border-bottom: none;
+        gap: 12px;
       }
       .blueprint-plan-steps .wf-step:last-child {
-        border-bottom: 1px solid rgba(22, 21, 26, 0.06);
+        border-bottom: none;
       }
       .blueprint-summary-callout {
         color: #b45309;
@@ -2938,6 +2960,96 @@
       .compose-sheet-strip input[type="url"]:focus {
         border-color: #5b4bf5;
       }
+      .compose-sheet-strip.connected {
+        background: var(--brand-ll);
+        border: 1px solid var(--brand-m);
+        border-radius: 10px;
+        padding: 10px 12px;
+        border-bottom: none;
+        margin-bottom: 8px;
+      }
+      .compose-sheet-strip .sheet-connected-label {
+        font-size: 13px;
+        color: var(--text);
+        font-weight: 500;
+        flex: 1;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .compose-sheet-strip .sheet-connected-label span {
+        color: var(--text2);
+        font-weight: 400;
+        font-size: 12px;
+      }
+
+      .run-params-overlay {
+        display: none;
+        position: fixed;
+        inset: 0;
+        background: rgba(15, 15, 18, 0.4);
+        backdrop-filter: blur(4px);
+        z-index: 220;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+      }
+      .run-params-overlay.open {
+        display: flex;
+      }
+      .run-params-modal {
+        width: 420px;
+        max-width: 95vw;
+        background: var(--bg);
+        border-radius: 16px;
+        border: 1px solid var(--border);
+        padding: 24px;
+        box-shadow: 0 18px 48px rgba(22, 21, 26, 0.14);
+      }
+      .run-params-modal h3 {
+        margin: 0 0 6px;
+        font-family: var(--font-display);
+        font-weight: 500;
+        font-size: 22px;
+        letter-spacing: -0.03em;
+      }
+      .run-params-modal .sub {
+        margin: 0 0 18px;
+        font-size: 13px;
+        color: var(--text2);
+        line-height: 1.45;
+      }
+      .run-params-field {
+        margin-bottom: 14px;
+      }
+      .run-params-field label {
+        display: block;
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--text2);
+        margin-bottom: 6px;
+      }
+      .run-params-field input {
+        width: 100%;
+        padding: 11px 12px;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        font-size: 14px;
+        background: var(--bg2);
+        color: var(--text);
+        outline: none;
+        box-sizing: border-box;
+      }
+      .run-params-field input:focus {
+        border-color: var(--brand);
+      }
+      .run-params-actions {
+        display: flex;
+        gap: 10px;
+        justify-content: flex-end;
+        margin-top: 8px;
+      }
       .compose-row {
         display: flex;
         gap: 10px;
@@ -4317,6 +4429,13 @@
       onclick="if (event.target === this) closeBillingModal();"
     >
       <div class="billing-modal" id="billing-modal-body"></div>
+    </div>
+    <div
+      class="run-params-overlay"
+      id="run-params-overlay"
+      onclick="if (event.target === this) closeRunParamsModal();"
+    >
+      <div class="run-params-modal" id="run-params-modal" onclick="event.stopPropagation()"></div>
     </div>
     <div class="modal-overlay" id="modal-cleo">
       <div class="modal">
@@ -6040,6 +6159,8 @@
       let blueprintSelectedAgent = "aria";
       let blueprintConversationId = null;
       let blueprintHistoryLoading = false;
+      /** Spreadsheet linked via + attach — persists for the conversation and across sessions. */
+      let blueprintBoundSheet = null;
       const agentChatState = {};
       let modalHistories = { cleo: [], nova: [] };
       const deployedAgents = new Map();
@@ -6610,7 +6731,7 @@ CREATE TABLE IF NOT EXISTS workflow_runs (id uuid DEFAULT gen_random_uuid() PRIM
           .join("\n");
       }
       function buildBlueprintSystemPrompt() {
-        return `You are LogiQ Blueprint — an intelligent colleague who turns plain-English automation ideas into structured workflows.
+        let prompt = `You are LogiQ Blueprint — an intelligent colleague who turns plain-English automation ideas into structured workflows.
 
 AVAILABLE PRIMITIVES (use ONLY these codes — never invent new actions):
 ${blueprintRegistryPromptBlock()}
@@ -6653,10 +6774,19 @@ Rules:
 - For calendar: GC-01 needs time_min/time_max; GC-02 needs optional time range; GC-03/GC-06 need title, start, end (ISO); GC-06 also needs attendees[]; GC-04/GC-05 need event_id.
 - XF-01 only filters by status equality + numeric ID range on columns that already exist. It cannot compare two columns, do date math, or create Flagged.
 - For credit-review / over-limit / overdue / Flagged logic use XF-06 with an ORDERED derive list (later columns may reference earlier derived ones). Typical order: Over limit → Days overdue → Overdue >30 days → Flagged (or of the two flags). Optionally filter_column=Flagged filter_value=yes. Never use XF-01 with status_column=Flagged unless Flagged already exists on the sheet. When chasing each flagged customer, follow with GM-05 batch (rows + to_column + templates) — one held draft per row, not sent.
-- Pound Fabrics / warehouse picklist: GS-01 read with read_order_range=true (tab "Picklist Run", B1=start order number, B2=end — client fills these two cells before each run; blank fails) → XF-01 id_column=Name min_id="{{step_1.output.start}}" max_id="{{step_1.output.end}}" → XF-02 drop whole orders whose Lineitem name contains Express Shipping (group_column=Name) → XF-05 sku+qty min_count=4 format "{qty}m x {count}" write_summary_to_qty=true (literal SOP: merge only at 4+ same SKU+qty; never SKU-alone; triples stay unmerged) → GS-10 split_mode=sku_prefix_bands exception_field=Lineitem sku sheet1_before_product_name="Plain Polycotton Fabric" sku_prefix_breaks=["COT","DF","F","G","L","S"] (Sheet 1 = product-name cut, NOT SKU prefix; sheets 2–8 = SKU bands) → optional GS-11 format. Do NOT use volume-balance target_rows_per_tab for this workflow.
+- Pound Fabrics / warehouse picklist: GS-01 read with read_order_range=true (tab "Picklist Run", B1=start order number, B2=end — filled via Automations run form before each run) → XF-01 id_column=Name min_id="{{step_1.output.start}}" max_id="{{step_1.output.end}}" → XF-02 drop whole orders whose Lineitem name contains Express Shipping (group_column=Name) → XF-05 sku+qty min_count=4 format "{qty}m x {count}" write_summary_to_qty=true (literal SOP: merge only at 4+ same SKU+qty; never SKU-alone; triples stay unmerged) → GS-10 split_mode=sku_prefix_bands exception_field=Lineitem sku sheet1_before_product_name="Plain Polycotton Fabric" sku_prefix_breaks=["COT","DF","F","G","L","S"] (Sheet 1 = product-name cut, NOT SKU prefix; sheets 2–8 = SKU bands) → optional GS-11 format. Do NOT use volume-balance target_rows_per_tab for this workflow.
 - Prefer 2–6 steps (picklist may use 6). Be practical, not generic.
 - Tone: warm, concise, colleague-like — not a form or checklist.
 - Never mention internal codes, template variables, or raw JSON fields to the user in prose; codes belong only in the JSON block.`;
+        if (blueprintBoundSheet?.spreadsheet_id) {
+          prompt += `
+
+BOUND SPREADSHEET (already connected — do NOT ask the user for a URL again):
+- url: ${blueprintBoundSheet.url}
+- spreadsheet_id: ${blueprintBoundSheet.spreadsheet_id}
+Copy these into every GS-* step. Never replace with placeholders.`;
+        }
+        return prompt;
       }
 
       const BLUEPRINT_PROMPT = buildBlueprintSystemPrompt();
@@ -7300,6 +7430,7 @@ Rules:
             agent_id: opts.agent_id || blueprintSelectedAgent || "aria",
             conversation_id:
               opts.conversation_id || blueprintConversationId || null,
+            bound_sheet: opts.bound_sheet || blueprintBoundSheet || null,
           },
         });
         if (!res.ok) {
@@ -8068,6 +8199,7 @@ Rules:
       function inheritSheetBindings(plan, priorPlan) {
         if (!plan) return plan;
         const binding =
+          blueprintBoundSheet ||
           extractSheetBindingFromPlan(priorPlan) ||
           extractSheetBindingFromPlan(plan) ||
           extractSheetBindingFromHistory();
@@ -8179,6 +8311,123 @@ Rules:
     </div>`;
       }
 
+      function blueprintSheetStorageKey() {
+        const uid = getCurrentUserId() || "anon";
+        return "logiq_blueprint_bound_sheet:" + uid;
+      }
+
+      function loadPersistedBlueprintSheet() {
+        try {
+          const raw = localStorage.getItem(blueprintSheetStorageKey());
+          if (!raw) return null;
+          const parsed = JSON.parse(raw);
+          const sid = parseSpreadsheetIdClient(
+            parsed?.spreadsheet_id || parsed?.url || "",
+          );
+          if (!sid) return null;
+          return {
+            url:
+              String(parsed.url || "").trim() ||
+              `https://docs.google.com/spreadsheets/d/${sid}/edit`,
+            spreadsheet_id: sid,
+          };
+        } catch (e) {
+          return null;
+        }
+      }
+
+      function persistBlueprintBoundSheet(binding) {
+        try {
+          if (!binding?.spreadsheet_id) {
+            localStorage.removeItem(blueprintSheetStorageKey());
+            return;
+          }
+          localStorage.setItem(
+            blueprintSheetStorageKey(),
+            JSON.stringify({
+              url: binding.url,
+              spreadsheet_id: binding.spreadsheet_id,
+            }),
+          );
+        } catch (e) {}
+      }
+
+      function setBlueprintBoundSheet(binding, { silent = false } = {}) {
+        if (!binding?.spreadsheet_id) {
+          blueprintBoundSheet = null;
+          persistBlueprintBoundSheet(null);
+          refreshBlueprintSheetStrip();
+          return;
+        }
+        blueprintBoundSheet = {
+          url: binding.url,
+          spreadsheet_id: binding.spreadsheet_id,
+        };
+        persistBlueprintBoundSheet(blueprintBoundSheet);
+        refreshBlueprintSheetStrip();
+        if (!silent) {
+          // Ensure inheritSheetBindings can always find this URL in history.
+          const note = "Google Sheet linked: " + blueprintBoundSheet.url;
+          const already = blueprintHistory.some(
+            (m) =>
+              m.role === "user" &&
+              String(m.content || "").includes(blueprintBoundSheet.spreadsheet_id),
+          );
+          if (!already) {
+            addBuildMsg("user", "📊 " + note);
+            blueprintHistory.push({ role: "user", content: note });
+          }
+        }
+      }
+
+      function clearBlueprintBoundSheet() {
+        blueprintBoundSheet = null;
+        persistBlueprintBoundSheet(null);
+        const strip = document.getElementById("sheet-panel-blueprint");
+        if (strip) {
+          strip.classList.remove("connected");
+          refreshBlueprintSheetStrip();
+          strip.classList.add("hidden");
+        }
+      }
+
+      function refreshBlueprintSheetStrip() {
+        const strip = document.getElementById("sheet-panel-blueprint");
+        if (!strip) return;
+        if (blueprintBoundSheet?.spreadsheet_id) {
+          const shortId = blueprintBoundSheet.spreadsheet_id;
+          strip.classList.remove("hidden");
+          strip.classList.add("connected");
+          strip.innerHTML = `
+      <div class="sheet-connected-label">Sheet connected <span>${esc(shortId)}</span></div>
+      <button type="button" class="btn-ghost" style="font-size:12px" onclick="blueprintChangeBoundSheet()">Change</button>
+      <button type="button" class="btn-ghost" style="font-size:12px" onclick="clearBlueprintBoundSheet()">Disconnect</button>`;
+          return;
+        }
+        strip.classList.remove("connected");
+        strip.innerHTML = `
+      <input type="url" id="sheet-url-blueprint" placeholder="https://docs.google.com/spreadsheets/d/…">
+      <button type="button" class="btn-sm brand" onclick="composeConnectSheet('blueprint')">Connect sheet</button>
+      <span id="sheet-status-blueprint" style="font-size:12px;color:var(--text2)"></span>
+      <button type="button" class="btn-ghost" style="font-size:12px;margin-left:auto" onclick="closeComposeSheetStrip('blueprint')">Close</button>`;
+      }
+
+      function blueprintChangeBoundSheet() {
+        const strip = document.getElementById("sheet-panel-blueprint");
+        if (!strip) return;
+        strip.classList.remove("hidden", "connected");
+        strip.innerHTML = `
+      <input type="url" id="sheet-url-blueprint" placeholder="https://docs.google.com/spreadsheets/d/…" value="${esc(blueprintBoundSheet?.url || "")}">
+      <button type="button" class="btn-sm brand" onclick="composeConnectSheet('blueprint')">Connect sheet</button>
+      <span id="sheet-status-blueprint" style="font-size:12px;color:var(--text2)"></span>
+      <button type="button" class="btn-ghost" style="font-size:12px;margin-left:auto" onclick="refreshBlueprintSheetStrip()">Cancel</button>`;
+        document.getElementById("sheet-url-blueprint")?.focus();
+      }
+
+      function blueprintAssistantAvatarHtml() {
+        return `<div class="chat-avatar chat-avatar-logo"><img src="/assets/logiq-icon-square.png" alt="LogiQ" width="32" height="32"></div>`;
+      }
+
       function renderComposeSheetStrip(scopeId, connectFn) {
         const sid = esc(scopeId);
         const connect = connectFn || `composeConnectSheet('${sid}')`;
@@ -8226,9 +8475,14 @@ Rules:
 
       function composeAttachSheet(scopeId) {
         closeAllComposeAttachMenus();
+        if (scopeId === "blueprint" && blueprintBoundSheet?.spreadsheet_id) {
+          blueprintChangeBoundSheet();
+          return;
+        }
         const strip = document.getElementById("sheet-panel-" + scopeId);
         if (strip) {
           strip.classList.remove("hidden");
+          if (scopeId === "blueprint") refreshBlueprintSheetStrip();
           document.getElementById("sheet-url-" + scopeId)?.focus();
         }
       }
@@ -8381,14 +8635,22 @@ Rules:
             toast("Paste a Google Sheets URL first");
             return;
           }
-          const note = "Google Sheet linked: " + url;
-          addBuildMsg("user", "📊 " + note);
-          blueprintHistory.push({ role: "user", content: note });
+          const sid = parseSpreadsheetIdClient(url);
+          if (!sid) {
+            toast("Paste a real Google Sheets URL", "err");
+            return;
+          }
+          const binding = {
+            url: url.includes("/spreadsheets/d/")
+              ? url
+              : `https://docs.google.com/spreadsheets/d/${sid}/edit`,
+            spreadsheet_id: sid,
+          };
+          setBlueprintBoundSheet(binding);
           const reply =
-            "Sheet linked for this Blueprint conversation. Describe the workflow — I'll use Sheets actions where they fit.";
+            "Sheet linked for this Blueprint conversation. I'll reuse it on every plan — no need to paste the link again.";
           addBuildMsg("assistant", reply);
           blueprintHistory.push({ role: "assistant", content: reply });
-          closeComposeSheetStrip("blueprint");
           return;
         }
         connectGoogleSheet(scopeId);
@@ -8430,7 +8692,20 @@ Rules:
           </div>
         </div>
       </div>`;
-        loadBlueprintHistory(blueprintSelectedAgent);
+        if (!blueprintBoundSheet) {
+          blueprintBoundSheet = loadPersistedBlueprintSheet();
+        }
+        loadBlueprintHistory(blueprintSelectedAgent).then(() => {
+          const fromHist = extractSheetBindingFromHistory();
+          const fromPlan =
+            extractSheetBindingFromPlan(blueprintPriorPlan) ||
+            extractSheetBindingFromPlan(blueprintPlan);
+          if (!blueprintBoundSheet && (fromPlan || fromHist)) {
+            setBlueprintBoundSheet(fromPlan || fromHist, { silent: true });
+          } else {
+            refreshBlueprintSheetStrip();
+          }
+        });
       }
 
       function stripBlueprintPlanJson(text) {
@@ -8625,7 +8900,9 @@ Rules:
         if (!box) return;
         const div = document.createElement("div");
         div.className = "chat-msg" + (role === "user" ? " user" : "");
-        div.innerHTML = `<div class="chat-avatar">${role === "user" ? "HA" : "Q"}</div>
+        const avatar =
+          role === "user" ? `<div class="chat-avatar">HA</div>` : blueprintAssistantAvatarHtml();
+        div.innerHTML = `${avatar}
     <div class="chat-bubble${cls ? " " + cls : ""}">${role === "user" ? esc(text) : formatBold(esc(text))}</div>`;
         box.appendChild(div);
         box.scrollTop = box.scrollHeight;
@@ -8656,7 +8933,8 @@ Rules:
         typing.className = "chat-msg";
         typing.id = "build-typing";
         typing.innerHTML =
-          '<div class="chat-avatar">Q</div><div class="chat-bubble"><span class="typing-dots"><span></span><span></span><span></span></span></div>';
+          blueprintAssistantAvatarHtml() +
+          '<div class="chat-bubble"><span class="typing-dots"><span></span><span></span><span></span></span></div>';
         document.getElementById("build-messages").appendChild(typing);
         document.getElementById("build-messages").scrollTop = 99999;
 
@@ -8740,7 +9018,7 @@ Rules:
         wrap.className = "chat-msg";
         wrap.id = "blueprint-plan-review";
         wrap.innerHTML = `
-    <div class="chat-avatar">Q</div>
+    ${blueprintAssistantAvatarHtml()}
     <div class="chat-bubble wide">
       <div class="blueprint-plan">
         ${buildBlueprintSummaryHtml(plan)}
@@ -8932,7 +9210,12 @@ Rules:
           blueprintPlan = null;
           blueprintPriorPlan = null;
           toast("Workflow deployed", "success");
-          await runWorkflow(saved.id);
+          await runAutomationWithParams(saved.id, {
+            ...saved,
+            steps: plan.steps,
+            agent_id: agentId,
+            name: record.name,
+          });
           updateApprovalBadgeCount();
           if (currentPage === "dashboard") renderDashboard();
           if (currentPage === "automations") renderAutomations();
@@ -9033,6 +9316,207 @@ Rules:
         } catch (err) {
           toast(err.message || "Workflow run failed", "err");
         }
+      }
+
+      function parseWorkflowSteps(wf) {
+        let steps = wf?.steps;
+        if (typeof steps === "string") {
+          try {
+            steps = JSON.parse(steps);
+          } catch (e) {
+            steps = [];
+          }
+        }
+        return Array.isArray(steps) ? steps : [];
+      }
+
+      function detectWorkflowRunParams(wf) {
+        const steps = parseWorkflowSteps(wf);
+        const fields = [];
+        let sheetUrl = "";
+        let orderRangeSheet = "Picklist Run";
+        let startCell = "B1";
+        let endCell = "B2";
+        let agentId = wf?.agent_id || "aria";
+
+        for (const step of steps) {
+          const code = String(step.code || "").toUpperCase();
+          const p = step.params || {};
+          if (!sheetUrl) {
+            const url = String(p.url || p.sheet_url || "").trim();
+            const sid = parseSpreadsheetIdClient(url || p.spreadsheet_id || "");
+            if (sid) {
+              sheetUrl =
+                url && !isPlaceholderSheetRef(url)
+                  ? url
+                  : `https://docs.google.com/spreadsheets/d/${sid}/edit`;
+            }
+          }
+          if (code === "GS-01") {
+            const wantsRange =
+              p.read_order_range === true ||
+              p.read_order_range === "true" ||
+              p.read_order_range === 1 ||
+              p.start_cell ||
+              p.end_cell ||
+              p.order_range_sheet_name;
+            if (wantsRange) {
+              orderRangeSheet =
+                String(p.order_range_sheet_name || p.range_sheet_name || "").trim() ||
+                "Picklist Run";
+              startCell = String(p.start_cell || "B1").trim().toUpperCase() || "B1";
+              endCell = String(p.end_cell || "B2").trim().toUpperCase() || "B2";
+            }
+          }
+        }
+
+        const needsOrderRange = steps.some((step) => {
+          const code = String(step.code || "").toUpperCase();
+          const p = step.params || {};
+          if (code !== "GS-01") return false;
+          return (
+            p.read_order_range === true ||
+            p.read_order_range === "true" ||
+            p.read_order_range === 1 ||
+            p.start_cell ||
+            p.end_cell ||
+            p.order_range_sheet_name
+          );
+        });
+
+        if (needsOrderRange) {
+          fields.push({
+            key: "order_start",
+            label: "Start order number",
+            placeholder: "e.g. 694100 or #694100",
+            required: true,
+          });
+          fields.push({
+            key: "order_end",
+            label: "End order number",
+            placeholder: "e.g. 694900",
+            required: true,
+          });
+        }
+
+        if (!fields.length) return null;
+        return {
+          fields,
+          sheetUrl,
+          orderRangeSheet,
+          startCell,
+          endCell,
+          agentId,
+          workflowId: wf.id,
+          workflowName: wf.name || "automation",
+        };
+      }
+
+      let pendingRunParams = null;
+
+      function closeRunParamsModal() {
+        pendingRunParams = null;
+        document.getElementById("run-params-overlay")?.classList.remove("open");
+      }
+
+      function openRunParamsModal(spec) {
+        pendingRunParams = spec;
+        const modal = document.getElementById("run-params-modal");
+        const overlay = document.getElementById("run-params-overlay");
+        if (!modal || !overlay) return;
+        modal.innerHTML = `
+      <h3>Before this run</h3>
+      <p class="sub">Enter the values ${esc(spec.workflowName)} needs. We'll write them into the sheet for you.</p>
+      ${spec.fields
+        .map(
+          (f) => `
+      <div class="run-params-field">
+        <label for="run-param-${esc(f.key)}">${esc(f.label)}</label>
+        <input id="run-param-${esc(f.key)}" type="text" placeholder="${esc(f.placeholder || "")}" autocomplete="off">
+      </div>`,
+        )
+        .join("")}
+      <div class="run-params-actions">
+        <button type="button" class="btn-ghost" onclick="closeRunParamsModal()">Cancel</button>
+        <button type="button" class="btn-primary" id="run-params-submit" onclick="submitRunParamsModal()">Run</button>
+      </div>`;
+        overlay.classList.add("open");
+        document.getElementById("run-param-" + spec.fields[0].key)?.focus();
+      }
+
+      async function writeSheetCell(url, agentId, cell, value, sheetName) {
+        const res = await apiFetch("/api/integrations/sheets/write-cell", {
+          method: "POST",
+          body: {
+            url,
+            agent: agentId || "aria",
+            cell,
+            value,
+            sheet_name: sheetName || undefined,
+          },
+        });
+        const data = await safeJson(res, {});
+        if (!res.ok) {
+          throw new Error(data.detail || data.message || "Could not write sheet cell");
+        }
+        return data;
+      }
+
+      async function submitRunParamsModal() {
+        const spec = pendingRunParams;
+        if (!spec) return;
+        const start = document.getElementById("run-param-order_start")?.value?.trim();
+        const end = document.getElementById("run-param-order_end")?.value?.trim();
+        if (!start || !end) {
+          toast("Enter both start and end order numbers", "err");
+          return;
+        }
+        if (!spec.sheetUrl) {
+          toast("This automation has no sheet URL to write to", "err");
+          return;
+        }
+        const btn = document.getElementById("run-params-submit");
+        if (btn) btn.disabled = true;
+        try {
+          await writeSheetCell(
+            spec.sheetUrl,
+            spec.agentId,
+            spec.startCell,
+            start,
+            spec.orderRangeSheet,
+          );
+          await writeSheetCell(
+            spec.sheetUrl,
+            spec.agentId,
+            spec.endCell,
+            end,
+            spec.orderRangeSheet,
+          );
+          closeRunParamsModal();
+          await runWorkflow(spec.workflowId);
+          if (currentPage === "automations") await renderAutomations();
+        } catch (e) {
+          toast(e.message || "Could not prepare run", "err");
+        } finally {
+          if (btn) btn.disabled = false;
+        }
+      }
+
+      async function runAutomationWithParams(workflowId, wfHint) {
+        const wf =
+          wfHint ||
+          (automationsCache || []).find((w) => w.id === workflowId) ||
+          (memStore.workflows || []).find((w) => w.id === workflowId);
+        if (!wf) {
+          await runWorkflow(workflowId);
+          return;
+        }
+        const spec = detectWorkflowRunParams(wf);
+        if (spec) {
+          openRunParamsModal({ ...spec, workflowId });
+          return;
+        }
+        await runWorkflow(workflowId);
       }
 
       async function createWorkflowApproval(workflow, step) {
@@ -12640,7 +13124,7 @@ Be proactive, concise, use **bold** for emphasis.`;
       async function runAutomationFromCard(id, btn) {
         if (btn) btn.disabled = true;
         try {
-          await runWorkflow(id);
+          await runAutomationWithParams(id);
           if (currentPage === "automations") await renderAutomations();
         } finally {
           if (btn) btn.disabled = false;
