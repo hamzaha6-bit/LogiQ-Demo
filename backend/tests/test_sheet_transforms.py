@@ -92,6 +92,47 @@ def test_xf01_status_case_insensitive(shopify_table):
     assert _orders(out["rows"]) == {"#1005"}
 
 
+def test_xf01_shopify_order_name_hash_prefix_range():
+    """SOP 10–13: bound by order Name (#694358), not Shopify internal Id."""
+    rows = [
+        {"Name": "#694100", "Financial Status": "paid", "sku": "A"},
+        {"Name": "#694550", "Financial Status": "paid", "sku": "B"},
+        {"Name": "#694580", "Financial Status": "paid", "sku": "C"},
+        {"Name": "#694900", "Financial Status": "paid", "sku": "D"},
+        {"Name": "#694550", "Financial Status": "paid", "sku": "B2"},
+    ]
+    columns = ["Name", "Financial Status", "sku"]
+    out = filter_rows(
+        rows,
+        columns,
+        status_column="Financial Status",
+        status_value="paid",
+        id_column="Name",
+        min_id=694550,
+        max_id=694580,
+    )
+    assert _orders(out["rows"]) == {"#694550", "#694580"}
+    assert out["row_count"] == 3  # both lines of #694550 kept
+
+
+def test_xf01_order_name_accepts_hash_in_bounds():
+    rows = [
+        {"Name": "#694550", "Financial Status": "paid"},
+        {"Name": "694560", "Financial Status": "paid"},
+    ]
+    out = execute_transform(
+        "XF-01",
+        {
+            "rows": rows,
+            "columns": ["Name", "Financial Status"],
+            "id_column": "Name",
+            "min_id": "#694550",
+            "max_id": "#694560",
+        },
+    )
+    assert out["row_count"] == 2
+
+
 # ── XF-02 Group-aware drop ───────────────────────────────────────────────────
 
 def test_xf02_drops_entire_order_on_express_line(shopify_table):
@@ -247,6 +288,34 @@ def test_xf05_min_count_4_leaves_triples_unmerged():
     assert all(r["Lineitem quantity"] == "2" for r in bbb)
     assert len(ccc) == 1
     assert ccc[0]["Lineitem quantity"] == "5"
+    assert out["merged_group_count"] == 1
+
+
+def test_xf05_literal_sop_four_plus_same_sku_qty():
+    """Documented SOP 37: 4+ identical SKU+qty → one cell; below 4 stay as rows.
+
+    Spec is the client SOP, not a historical Picklist-Completed.xlsm (step 15
+    already-printed / edits are not visible in a static export).
+    """
+    rows = (
+        [{"Lineitem sku": "CUT-3", "Lineitem quantity": "3"}] * 5
+        + [{"Lineitem sku": "CUT-3", "Lineitem quantity": "2"}] * 3
+    )
+    out = aggregate_rows(
+        rows,
+        ["Lineitem sku", "Lineitem quantity"],
+        sku_column="Lineitem sku",
+        qty_column="Lineitem quantity",
+        format_string="{qty}m x {count}",
+        min_count=4,
+        write_summary_to_qty=True,
+        preserve_other_columns=True,
+    )
+    merged = [r for r in out["rows"] if r["Lineitem quantity"] == "3m x 5"]
+    unmerged = [r for r in out["rows"] if r["Lineitem quantity"] == "2"]
+    assert len(merged) == 1
+    assert len(unmerged) == 3
+    assert out["row_count"] == 4
     assert out["merged_group_count"] == 1
 
 

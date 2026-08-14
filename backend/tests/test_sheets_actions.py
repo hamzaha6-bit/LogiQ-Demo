@@ -355,3 +355,64 @@ def test_gs01_autoconnect_with_valid_id_from_url():
     assert out["success"] is True
     mock_connect.assert_called_once()
     assert "1qlOS1W3p1MIeZKViZEdCLnhXa_8fInsxjGN4Orzo0Ng" in mock_connect.call_args.args[0]
+
+
+def test_gs01_reads_order_range_cells_without_touching_schema():
+    """Picklist Run B1/B2 are config cells — not a second schema lock."""
+
+    def _title(_service, _sid, name):
+        return (name or "").strip() or "Sheet1"
+
+    def _cell(_service, _sid, _title, cell):
+        return {"B1": "#694100", "B2": "694900"}[cell]
+
+    with patch("sheets_service._require_sheets"), \
+         patch("sheets_service.get_connection", return_value=_conn()), \
+         patch("sheets_service.connect") as mock_connect, \
+         patch(
+             "sheets_service._fetch_values",
+             return_value=[["Name", "Email"], ["Ada", "a@x.com"]],
+         ), \
+         patch("sheets_service.get_sheets_service", return_value=MagicMock()), \
+         patch("sheets_service._resolve_sheet_title", side_effect=_title), \
+         patch("sheets_service._read_a1_value", side_effect=_cell):
+        out = _execute_step(
+            "GS-01",
+            {"url": SHEET_URL, "read_order_range": True},
+            user_id="u1",
+            agent_id="aria",
+            agent_name="Aria",
+        )
+    assert out["success"] is True
+    assert out["row_count"] == 1
+    assert out["start"] == "#694100"
+    assert out["end"] == "694900"
+    assert out["start_cell"] == "B1"
+    assert out["end_cell"] == "B2"
+    assert out["order_range_sheet_name"] == "Picklist Run"
+    mock_connect.assert_not_called()
+
+
+def test_gs01_blank_order_range_cells_fail_loud():
+    with patch("sheets_service._require_sheets"), \
+         patch("sheets_service.get_connection", return_value=_conn()), \
+         patch(
+             "sheets_service._fetch_values",
+             return_value=[["Name", "Email"], ["Ada", "a@x.com"]],
+         ), \
+         patch("sheets_service.get_sheets_service", return_value=MagicMock()), \
+         patch("sheets_service._resolve_sheet_title", return_value="Picklist Run"), \
+         patch("sheets_service._read_a1_value", return_value=""):
+        with pytest.raises(StepExecutionError, match="start and end order numbers"):
+            _execute_step(
+                "GS-01",
+                {
+                    "url": SHEET_URL,
+                    "order_range_sheet_name": "Picklist Run",
+                    "start_cell": "B1",
+                    "end_cell": "B2",
+                },
+                user_id="u1",
+                agent_id="aria",
+                agent_name="Aria",
+            )

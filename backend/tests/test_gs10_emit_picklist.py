@@ -232,6 +232,7 @@ def test_managed_title_helpers():
     assert is_managed_output_title("Exceptions")
     assert is_managed_output_title("Picklist 1")
     assert not is_managed_output_title("Picklist Template")
+    assert not is_managed_output_title("Picklist Run")
     assert is_managed_output_title("MyExc", exception_sheet_name="MyExc")
     assert not is_managed_output_title("Exceptions", exception_sheet_name="Other")
 

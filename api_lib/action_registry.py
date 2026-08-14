@@ -34,6 +34,10 @@ ACTION_REGISTRY: Dict[str, Dict[str, Any]] = {
         "params": {
             "url": "Google Sheets URL",
             "sheet_name": "optional tab title; default connection source_sheet_name or first sheet; missing name fails loudly",
+            "read_order_range": "optional; if true, also read start/end order numbers from two cells (does not change schema lock)",
+            "order_range_sheet_name": "tab holding those two cells (default 'Picklist Run')",
+            "start_cell": "A1 of start order number (default B1)",
+            "end_cell": "A1 of end order number (default B2)",
         },
     },
     "GS-02": {
@@ -180,9 +184,9 @@ ACTION_REGISTRY: Dict[str, Dict[str, Any]] = {
             "columns": "column name list",
             "status_column": "status field name (e.g. Financial Status)",
             "status_value": "required equality value (e.g. paid); case-insensitive by default",
-            "id_column": "numeric ID column name",
-            "min_id": "inclusive lower bound",
-            "max_id": "inclusive upper bound",
+            "id_column": "numeric ID or Shopify order Name (#694358 is 694358)",
+            "min_id": "inclusive lower bound — picklist: {{step_N.output.start}} from GS-01 order-range cells",
+            "max_id": "inclusive upper bound — picklist: {{step_N.output.end}} from GS-01 order-range cells",
         },
     },
     "XF-02": {

@@ -121,7 +121,13 @@ def _parse_number(value: Any) -> Optional[float]:
     text = _as_str(value)
     if not text:
         return None
-    cleaned = text.replace(",", "").replace("£", "").replace("$", "")
+    cleaned = (
+        text.replace(",", "")
+        .replace("£", "")
+        .replace("$", "")
+        .replace("#", "")
+        .strip()
+    )
     try:
         return float(cleaned)
     except ValueError:
@@ -145,13 +151,13 @@ def filter_rows(
 
     Non-numeric id cells never pass the filter.
     Status comparison is case-insensitive by default.
+    Shopify order Name values like '#694358' parse as 694358.
     """
     _require_columns(columns, status_column, id_column)
-    try:
-        lo = float(min_id)
-        hi = float(max_id)
-    except (TypeError, ValueError) as exc:
-        raise TransformError("min_id and max_id must be numeric") from exc
+    lo = _parse_number(min_id)
+    hi = _parse_number(max_id)
+    if lo is None or hi is None:
+        raise TransformError("min_id and max_id must be numeric")
     if lo > hi:
         raise TransformError("min_id must be <= max_id")
 
@@ -337,7 +343,10 @@ def aggregate_rows(
 
     Merge key is BOTH sku AND qty — never SKU alone.
     min_count (default 1): only groups with count >= min_count are merged.
-    Pound Fabrics SOP: min_count=4 (triples of identical qty stay unmerged).
+    Pound Fabrics SOP (literal, not reverse-engineered from a historical
+    workbook): min_count=4. Same SKU + same qty appearing 4+ times becomes
+    one row (e.g. five 3m cuts → '3m x 5'). Groups smaller than 4 stay as
+    separate rows. SOP step 15 (already-printed / edits) is out of scope.
 
     Format placeholders (configurable via format_string, not hardcoded):
       {qty}   — shared value from qty_column

@@ -48,9 +48,21 @@ def test_validate_plan_steps_rejects_unknown_code():
 
 def test_validate_plan_steps_allows_pound_fabrics_picklist_codes():
     steps = [
-        {"step": 1, "code": "GS-01", "params": {"url": "https://docs.google.com/spreadsheets/d/abc/edit"}},
+        {"step": 1, "code": "GS-01", "params": {
+            "url": "https://docs.google.com/spreadsheets/d/abc/edit",
+            "read_order_range": True,
+        }},
         {
             "step": 2,
+            "code": "XF-01",
+            "params": {
+                "id_column": "Name",
+                "min_id": "{{step_1.output.start}}",
+                "max_id": "{{step_1.output.end}}",
+            },
+        },
+        {
+            "step": 3,
             "code": "XF-02",
             "params": {
                 "group_column": "Name",
@@ -60,7 +72,7 @@ def test_validate_plan_steps_allows_pound_fabrics_picklist_codes():
             },
         },
         {
-            "step": 3,
+            "step": 4,
             "code": "XF-05",
             "params": {
                 "sku_column": "Lineitem sku",
@@ -70,7 +82,7 @@ def test_validate_plan_steps_allows_pound_fabrics_picklist_codes():
             },
         },
         {
-            "step": 4,
+            "step": 5,
             "code": "GS-10",
             "params": {
                 "url": "https://docs.google.com/spreadsheets/d/abc/edit",

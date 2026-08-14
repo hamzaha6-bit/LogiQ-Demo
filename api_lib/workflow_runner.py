@@ -389,7 +389,19 @@ def _execute_sheets_step(
                     "GS-01 requires a real Google Sheets URL — paste the sheet link in Blueprint "
                     "(placeholders like YOUR_SHEET_ID are rejected)."
                 )
-            return read_sheet(url, sheet_agent, user_id, sheet_name=sheet_name)
+            return read_sheet(
+                url,
+                sheet_agent,
+                user_id,
+                sheet_name=sheet_name,
+                read_order_range=params.get("read_order_range"),
+                start_cell=params.get("start_cell"),
+                end_cell=params.get("end_cell"),
+                order_range_sheet_name=(
+                    params.get("order_range_sheet_name")
+                    or params.get("range_sheet_name")
+                ),
+            )
         if code == "GS-02":
             if not url and not spreadsheet_id:
                 raise StepExecutionError("GS-02 requires a sheet url param")
