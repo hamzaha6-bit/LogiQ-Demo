@@ -107,7 +107,8 @@ def test_strip_removes_json_and_codes_from_display_path():
 def test_user_facing_summary_has_no_internals():
     summary = build_user_facing_summary(FRANCHISE_PLAN)
     assert "Franchise Enquiry Auto-Response" in summary
-    assert "Nova" in summary
+    assert "Aria" not in summary
+    assert "Nova" not in summary
     assert "needs your approval" in summary
     assert "spreadsheet link" in summary.lower() or "spreadsheet" in summary.lower()
     assert "one" in summary.lower() and "per run" in summary.lower()
@@ -122,6 +123,7 @@ def test_prepare_returns_plan_separately():
     content, plan, err = prepare_blueprint_response(raw)
     assert err is None
     assert plan is not None
+    assert plan["agent"] == "aria"
     assert plan["steps"][0]["code"] == "GM-07"
     assert "supported" not in content
     assert not summary_leaks_internals(content)

@@ -100,8 +100,7 @@ def enrich_plan_steps(plan: Dict[str, Any]) -> Dict[str, Any]:
             }
         )
     out["steps"] = enriched
-    agent = str(out.get("agent") or "aria").strip().lower()
-    out["agent"] = agent if agent in ("aria", "nova") else "aria"
+    out["agent"] = "aria"
     out["title"] = str(out.get("title") or "Workflow plan").strip()
     out["summary"] = str(out.get("summary") or "").strip()
     out["supported"] = True
@@ -446,10 +445,8 @@ def build_user_facing_summary(plan: Dict[str, Any]) -> str:
     Plain-language card text for chat. No step codes, param names, or template vars.
     """
     enriched = enrich_plan_steps(plan) if plan.get("steps") else plan
-    agent = enriched.get("agent") or "aria"
-    agent_label = "Nova" if agent == "nova" else "Aria"
     title = enriched.get("title") or "Workflow plan"
-    lines: List[str] = [f"{title} (via {agent_label})", ""]
+    lines: List[str] = [str(title), ""]
 
     summary = str(enriched.get("summary") or "").strip()
     if summary and not _STEP_CODE_RE.search(summary) and not _TEMPLATE_VAR_RE.search(summary):
