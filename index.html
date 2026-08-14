@@ -3,6 +3,8 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
     <title>LogiQ — Mission Control</title>
     <link rel="icon" type="image/png" href="/assets/logiq-icon-square.png" />
     <link rel="apple-touch-icon" href="/assets/logiq-icon-square.png" />
@@ -1076,14 +1078,10 @@
       .blueprint-agent-picker {
         display: flex;
         align-items: center;
+        justify-content: flex-end;
         gap: 10px;
         padding: 12px 28px 0;
         flex-shrink: 0;
-      }
-      .blueprint-agent-picker span {
-        font-size: 12px;
-        color: var(--text2);
-        font-weight: 500;
       }
       .agent-pick {
         font-size: 12px;
@@ -1101,11 +1099,6 @@
       }
       .agent-pick:hover {
         border-color: var(--brand-m);
-        color: var(--brand);
-      }
-      .agent-pick.active {
-        background: var(--brand-ll);
-        border-color: var(--brand);
         color: var(--brand);
       }
       .blueprint-compose {
@@ -6043,6 +6036,7 @@
       let blueprintPlan = null;
       /** Last valid plan kept across Edit / regenerate so sheet URL/id is not lost. */
       let blueprintPriorPlan = null;
+      /** Blueprint always builds for Aria; agent_id still sent for history isolation. */
       let blueprintSelectedAgent = "aria";
       let blueprintConversationId = null;
       let blueprintHistoryLoading = false;
@@ -6606,7 +6600,7 @@ CREATE TABLE IF NOT EXISTS workflow_runs (id uuid DEFAULT gen_random_uuid() PRIM
 AVAILABLE PRIMITIVES (use ONLY these codes — never invent new actions):
 ${blueprintRegistryPromptBlock()}
 
-PHASE 1 AGENTS: aria (sales/outreach — leads, follow-ups, Gmail) or nova (customer comms — enquiries, support replies).
+Blueprint always builds for aria. Set "agent" to "aria" on every plan.
 
 When the user describes what they want to automate:
 1. If their request CANNOT be built using only the primitives above, respond conversationally explaining what is not supported yet and suggest a nearby alternative using available primitives. Do NOT output JSON.
@@ -6617,7 +6611,7 @@ When the user describes what they want to automate:
   "supported": true,
   "title": "Short workflow name",
   "summary": "What this workflow accomplishes, including that it processes one item per run",
-  "agent": "aria" or "nova",
+  "agent": "aria",
   "steps": [
     {
       "step": 1,
@@ -6637,14 +6631,14 @@ Rules:
 - For search (GM-07), include structured params like { "from", "subject", "after", "before", "has_attachment", "query", "max_results" }.
 - Inter-step templates MUST use {{step_N.output.field}} or nested paths like {{step_1.output.results.0.message_id}}. Most steps do NOT fan out — bind later read/label/send steps to the first result only. Exception: GM-05 with a rows list creates one draft per row.
 - Search results are oldest-first. After GM-07, use message_id: "{{step_1.output.results.0.message_id}}".
-- For franchise / enquiry inbox workflows, GM-07 query MUST exclude already-processed mail, e.g. (franchise OR franchising OR "become a franchisee" OR "franchise opportunity") -label:"Franchise Enquiry". Prefer nova; summary must state one enquiry per run.
+- For franchise / enquiry inbox workflows, GM-07 query MUST exclude already-processed mail, e.g. (franchise OR franchising OR "become a franchisee" OR "franchise opportunity") -label:"Franchise Enquiry". Summary must state one enquiry per run.
 - For read message (GM-02) use { "message_id" }; for get thread (GM-08) use { "thread_id" }; for label (GM-06) use { "message_id", "add_labels", "remove_labels" }.
 - For Sheets steps, always include params.url with the user's REAL Google Sheets URL. NEVER invent YOUR_SHEET_ID, YOUR_SPREADSHEET_ID, or ellipsis URLs. When revising a plan, copy the previous plan's exact params.url / spreadsheet_id onto every GS-* step.
 - GS-02 needs row/row_data; GS-03 needs row + row_data; GS-06 needs row; GS-07 needs cell (A1) + value.
 - For calendar: GC-01 needs time_min/time_max; GC-02 needs optional time range; GC-03/GC-06 need title, start, end (ISO); GC-06 also needs attendees[]; GC-04/GC-05 need event_id.
 - XF-01 only filters by status equality + numeric ID range on columns that already exist. It cannot compare two columns, do date math, or create Flagged.
 - For credit-review / over-limit / overdue / Flagged logic use XF-06 with an ORDERED derive list (later columns may reference earlier derived ones). Typical order: Over limit → Days overdue → Overdue >30 days → Flagged (or of the two flags). Optionally filter_column=Flagged filter_value=yes. Never use XF-01 with status_column=Flagged unless Flagged already exists on the sheet. When chasing each flagged customer, follow with GM-05 batch (rows + to_column + templates) — one held draft per row, not sent.
-- Pound Fabrics / warehouse picklist: prefer nova. GS-01 read → XF-02 drop whole orders whose Lineitem name contains Express Shipping (group_column=Name) → XF-05 sku+qty min_count=4 format "{qty}m x {count}" write_summary_to_qty=true (never SKU-alone; triples stay unmerged) → GS-10 split_mode=sku_prefix_bands exception_field=Lineitem sku sheet1_before_product_name="Plain Polycotton Fabric" sku_prefix_breaks=["COT","DF","F","G","L","S"] (Sheet 1 = product-name cut, NOT SKU prefix; sheets 2–8 = SKU bands) → optional GS-11 format. Do NOT use volume-balance target_rows_per_tab for this workflow.
+- Pound Fabrics / warehouse picklist: GS-01 read → XF-02 drop whole orders whose Lineitem name contains Express Shipping (group_column=Name) → XF-05 sku+qty min_count=4 format "{qty}m x {count}" write_summary_to_qty=true (never SKU-alone; triples stay unmerged) → GS-10 split_mode=sku_prefix_bands exception_field=Lineitem sku sheet1_before_product_name="Plain Polycotton Fabric" sku_prefix_breaks=["COT","DF","F","G","L","S"] (Sheet 1 = product-name cut, NOT SKU prefix; sheets 2–8 = SKU bands) → optional GS-11 format. Do NOT use volume-balance target_rows_per_tab for this workflow.
 - Prefer 2–6 steps (picklist may use 5). Be practical, not generic.
 - Tone: warm, concise, colleague-like — not a form or checklist.
 - Never mention internal codes, template variables, or raw JSON fields to the user in prose; codes belong only in the JSON block.`;
@@ -8395,11 +8389,6 @@ Rules:
 
       function renderBuild() {
         const el = document.getElementById("page-build");
-        if (el.dataset.init === "2") {
-          loadBlueprintHistory(blueprintSelectedAgent);
-          return;
-        }
-        el.dataset.init = "2";
         el.innerHTML = `
       <div class="chat-page">
         <div class="chat-page-header">
@@ -8411,10 +8400,7 @@ Rules:
           <img class="logo-mark" src="/assets/logiq-icon-square.png" alt="LogiQ" width="36" height="36" style="width:36px;height:36px;">
         </div>
         <div class="blueprint-agent-picker">
-          <span>Build for</span>
-          <button type="button" class="agent-pick${blueprintSelectedAgent === "aria" ? " active" : ""}" data-agent="aria" onclick="setBlueprintAgent('aria')">Aria</button>
-          <button type="button" class="agent-pick${blueprintSelectedAgent === "nova" ? " active" : ""}" data-agent="nova" onclick="setBlueprintAgent('nova')">Nova</button>
-          <button type="button" class="agent-pick" style="margin-left:auto" onclick="startNewBlueprintConversation()">Start new conversation</button>
+          <button type="button" class="agent-pick" onclick="startNewBlueprintConversation()">Start new conversation</button>
         </div>
         <div class="chat-messages-full" id="build-messages"></div>
         <div class="blueprint-compose">
@@ -8454,12 +8440,6 @@ Rules:
       }
 
       function buildBlueprintSummaryHtml(plan) {
-        const agent = deployedAgents.get(plan.agent);
-        const agentLabel = agent
-          ? agent.name
-          : plan.agent === "nova"
-            ? "Nova"
-            : "Aria";
         const title = plan.title || "Workflow plan";
         const steps = Array.isArray(plan.steps) ? plan.steps : [];
         const items = steps
@@ -8492,7 +8472,7 @@ Rules:
           "I'll process one matching item at a time. If several come in, I'll work through them one per run.";
         return `
     <div class="blueprint-plan-header">
-      <h3>${esc(title)} <span style="font-weight:500;color:var(--text2)">(via ${esc(agentLabel)})</span></h3>
+      <h3>${esc(title)}</h3>
       ${
         plan.summary
           ? `<p>${esc(
@@ -8565,6 +8545,7 @@ Rules:
               addBuildMsg(role, String(m.content || ""));
             });
             if (restorePlan) {
+              restorePlan.agent = "aria";
               restorePlan.steps = enrichBlueprintSteps(restorePlan.steps || []);
               restorePlan = inheritSheetBindings(restorePlan, null);
               restorePlan.steps = enrichBlueprintSteps(restorePlan.steps || []);
@@ -8622,19 +8603,6 @@ Rules:
         } catch (e) {
           toast(e.message || "Could not start conversation", "err");
         }
-      }
-
-      function setBlueprintAgent(id) {
-        const aid = (id || "aria").toLowerCase();
-        if (aid !== "aria" && aid !== "nova") return;
-        blueprintSelectedAgent = aid;
-        document.querySelectorAll(".agent-pick").forEach((btn) => {
-          if (!btn.dataset.agent) return;
-          btn.classList.toggle("active", btn.dataset.agent === aid);
-        });
-        blueprintPlan = null;
-        blueprintPriorPlan = null;
-        loadBlueprintHistory(aid);
       }
 
       function addBuildMsg(role, text, cls) {
@@ -8713,11 +8681,7 @@ Rules:
         const displayText = stripBlueprintPlanJson(reply);
         let plan = serverPlan || parseBlueprintPlan(reply);
         if (plan) {
-          plan.agent = (
-            plan.agent ||
-            blueprintSelectedAgent ||
-            "aria"
-          ).toLowerCase();
+          plan.agent = "aria";
           plan.steps = enrichBlueprintSteps(plan.steps);
           // Regenerate/edit often drops the bound sheet id — inherit from prior plan.
           plan = inheritSheetBindings(plan, blueprintPriorPlan || blueprintPlan);
@@ -8897,14 +8861,12 @@ Rules:
         }
         blueprintPlan = plan;
         blueprintPriorPlan = plan;
-        const agentId = plan.agent === "nova" ? "nova" : "aria";
+        const agentId = "aria";
         if (!getAuthBearerToken()) {
           toast("Sign in to deploy a workflow", "err");
           return;
         }
-        const agentName =
-          deployedAgents.get(agentId)?.name ||
-          (agentId === "nova" ? "Nova" : "Aria");
+        const agentName = deployedAgents.get(agentId)?.name || "Aria";
         const scheduleJson = readBlueprintSchedule();
         const record = {
           agent_id: agentId,
@@ -8946,9 +8908,7 @@ Rules:
             "assistant",
             "✓ **" +
               record.name +
-              "** is live on **" +
-              agentName +
-              "**." +
+              "** is live." +
               scheduleSummaryLabel(scheduleJson) +
               " I'll pause for your approval before any irreversible action.",
             "deployed",
