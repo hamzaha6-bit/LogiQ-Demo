@@ -28,6 +28,14 @@ AGENT_TABLES = {
     "vision": "leads",
 }
 
+# Client-filled order window for picklist SOP steps 10–13. Separate tab so
+# GS-10 cleanup of Picklist 1..N / Exceptions cannot wipe it, and so reading
+# these cells never rewrites the orders-tab schema lock.
+ORDER_RANGE_SHEET_DEFAULT = "Picklist Run"
+ORDER_RANGE_START_CELL_DEFAULT = "B1"
+ORDER_RANGE_END_CELL_DEFAULT = "B2"
+_A1_CELL_RE = re.compile(r"^[A-Z]+\d+$")
+
 
 class SheetsError(Exception):
     pass
@@ -185,6 +193,43 @@ def _a1_sheet_range(sheet_title: str, cell_range: str) -> str:
     """Build a quoted A1 range for a sheet tab (handles spaces / apostrophes)."""
     escaped = (sheet_title or "").replace("'", "''")
     return f"'{escaped}'!{cell_range}"
+
+
+def _coerce_truthy(value: Any) -> bool:
+    if value is True:
+        return True
+    if value is False or value is None:
+        return False
+    if isinstance(value, (int, float)):
+        return bool(value)
+    return str(value).strip().lower() in ("1", "true", "yes", "y", "on")
+
+
+def _normalize_a1_cell(cell: Any, *, label: str) -> str:
+    a1 = str(cell or "").strip().upper()
+    if not _A1_CELL_RE.match(a1):
+        raise SheetsError(f"{label} must be A1 notation like B1")
+    return a1
+
+
+def _read_a1_value(
+    service: Any,
+    spreadsheet_id: str,
+    sheet_title: str,
+    cell: str,
+) -> str:
+    a1 = _a1_sheet_range(sheet_title, cell)
+    result = (
+        service.spreadsheets()
+        .values()
+        .get(spreadsheetId=spreadsheet_id, range=a1)
+        .execute()
+    )
+    values = result.get("values") or []
+    if not values or not values[0]:
+        return ""
+    raw = values[0][0]
+    return "" if raw is None else str(raw).strip()
 
 
 def _resolve_sheet_meta(
@@ -417,11 +462,60 @@ def connect(
     }
 
 
+def read_order_range_cells(
+    url: str,
+    agent_id: str,
+    user_id: str,
+    *,
+    sheet_name: Optional[str] = None,
+    start_cell: Optional[str] = None,
+    end_cell: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Read start/end order numbers from two cells. Does not touch schema lock."""
+    _require_sheets(user_id)
+    spreadsheet_id = resolve_spreadsheet_id(url)
+    conn = get_connection(user_id, agent_id, spreadsheet_id)
+    if conn and conn.get("status") == "paused_schema_mismatch":
+        raise SchemaMismatchError(
+            "Sheet paused due to schema mismatch",
+            conn.get("schema_mismatch") or {},
+        )
+    tab = (sheet_name or "").strip() or ORDER_RANGE_SHEET_DEFAULT
+    start_a1 = _normalize_a1_cell(
+        start_cell or ORDER_RANGE_START_CELL_DEFAULT, label="start_cell"
+    )
+    end_a1 = _normalize_a1_cell(
+        end_cell or ORDER_RANGE_END_CELL_DEFAULT, label="end_cell"
+    )
+    service = get_sheets_service(user_id)
+    title = _resolve_sheet_title(service, spreadsheet_id, tab)
+    start_val = _read_a1_value(service, spreadsheet_id, title, start_a1)
+    end_val = _read_a1_value(service, spreadsheet_id, title, end_a1)
+    if not start_val or not end_val:
+        raise SheetsError(
+            f"Enter start and end order numbers on the {title!r} tab "
+            f"({start_a1} / {end_a1}) before running."
+        )
+    return {
+        "success": True,
+        "start": start_val,
+        "end": end_val,
+        "start_cell": start_a1,
+        "end_cell": end_a1,
+        "order_range_sheet_name": title,
+    }
+
+
 def read_sheet(
     url: str,
     agent_id: str,
     user_id: str,
     sheet_name: Optional[str] = None,
+    *,
+    read_order_range: Any = None,
+    start_cell: Optional[str] = None,
+    end_cell: Optional[str] = None,
+    order_range_sheet_name: Optional[str] = None,
 ) -> Dict[str, Any]:
     _require_sheets(user_id)
     spreadsheet_id, conn = _ensure_connection(
@@ -453,6 +547,26 @@ def read_sheet(
     }
     if title:
         out["sheet_name"] = title
+    wants_range = (
+        _coerce_truthy(read_order_range)
+        or bool(str(start_cell or "").strip())
+        or bool(str(end_cell or "").strip())
+        or bool(str(order_range_sheet_name or "").strip())
+    )
+    if wants_range:
+        rng = read_order_range_cells(
+            url,
+            agent_id,
+            user_id,
+            sheet_name=order_range_sheet_name,
+            start_cell=start_cell,
+            end_cell=end_cell,
+        )
+        out["start"] = rng["start"]
+        out["end"] = rng["end"]
+        out["start_cell"] = rng["start_cell"]
+        out["end_cell"] = rng["end_cell"]
+        out["order_range_sheet_name"] = rng["order_range_sheet_name"]
     return out
 
 

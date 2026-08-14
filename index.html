@@ -6228,11 +6228,19 @@ CREATE TABLE IF NOT EXISTS workflow_runs (id uuid DEFAULT gen_random_uuid() PRIM
             url: "Google Sheets URL",
             sheet_name:
               "optional tab title; default connection source_sheet_name or first sheet; missing name fails loudly",
+            read_order_range:
+              "optional; if true, also read start/end order numbers from two cells on a config tab (does not change schema lock)",
+            order_range_sheet_name:
+              "tab holding those two cells (default 'Picklist Run')",
+            start_cell: "A1 of start order number (default B1)",
+            end_cell: "A1 of end order number (default B2)",
           },
           outputs: {
             rows: "list of row objects",
             columns: "column name list",
             row_count: "number of rows",
+            start: "start order number from start_cell when read_order_range is set",
+            end: "end order number from end_cell when read_order_range is set",
           },
         },
         "GS-02": {
@@ -6423,9 +6431,12 @@ CREATE TABLE IF NOT EXISTS workflow_runs (id uuid DEFAULT gen_random_uuid() PRIM
             status_column: "status field name (e.g. Financial Status)",
             status_value:
               "required equality value (e.g. paid); case-insensitive by default",
-            id_column: "numeric ID column name",
-            min_id: "inclusive lower bound",
-            max_id: "inclusive upper bound",
+            id_column:
+              "numeric ID or Shopify order Name (#694358 is 694358)",
+            min_id:
+              "inclusive lower bound — picklist: {{step_N.output.start}} from GS-01 order-range cells",
+            max_id:
+              "inclusive upper bound — picklist: {{step_N.output.end}} from GS-01 order-range cells",
           },
           outputs: {
             rows: 'filtered list of row objects — chain into the next step as rows: "{{step_N.output.rows}}"',
@@ -6493,6 +6504,10 @@ CREATE TABLE IF NOT EXISTS workflow_runs (id uuid DEFAULT gen_random_uuid() PRIM
             columns: "column name list",
             sku_column: "first key column (e.g. Lineitem sku)",
             qty_column: "second key column (e.g. Lineitem quantity)",
+            min_count:
+              "only merge when the same SKU AND same qty appear this many times (Pound Fabrics SOP: 4). Below that, rows stay unmerged. Default 1",
+            write_summary_to_qty:
+              "optional; write 'Nm x count' into qty_column on merged rows",
             format_string:
               'REQUIRED summary template, e.g. "{qty}m x {count}" — step fails without this',
             summary_column:
@@ -6638,8 +6653,8 @@ Rules:
 - For calendar: GC-01 needs time_min/time_max; GC-02 needs optional time range; GC-03/GC-06 need title, start, end (ISO); GC-06 also needs attendees[]; GC-04/GC-05 need event_id.
 - XF-01 only filters by status equality + numeric ID range on columns that already exist. It cannot compare two columns, do date math, or create Flagged.
 - For credit-review / over-limit / overdue / Flagged logic use XF-06 with an ORDERED derive list (later columns may reference earlier derived ones). Typical order: Over limit → Days overdue → Overdue >30 days → Flagged (or of the two flags). Optionally filter_column=Flagged filter_value=yes. Never use XF-01 with status_column=Flagged unless Flagged already exists on the sheet. When chasing each flagged customer, follow with GM-05 batch (rows + to_column + templates) — one held draft per row, not sent.
-- Pound Fabrics / warehouse picklist: GS-01 read → XF-02 drop whole orders whose Lineitem name contains Express Shipping (group_column=Name) → XF-05 sku+qty min_count=4 format "{qty}m x {count}" write_summary_to_qty=true (never SKU-alone; triples stay unmerged) → GS-10 split_mode=sku_prefix_bands exception_field=Lineitem sku sheet1_before_product_name="Plain Polycotton Fabric" sku_prefix_breaks=["COT","DF","F","G","L","S"] (Sheet 1 = product-name cut, NOT SKU prefix; sheets 2–8 = SKU bands) → optional GS-11 format. Do NOT use volume-balance target_rows_per_tab for this workflow.
-- Prefer 2–6 steps (picklist may use 5). Be practical, not generic.
+- Pound Fabrics / warehouse picklist: GS-01 read with read_order_range=true (tab "Picklist Run", B1=start order number, B2=end — client fills these two cells before each run; blank fails) → XF-01 id_column=Name min_id="{{step_1.output.start}}" max_id="{{step_1.output.end}}" → XF-02 drop whole orders whose Lineitem name contains Express Shipping (group_column=Name) → XF-05 sku+qty min_count=4 format "{qty}m x {count}" write_summary_to_qty=true (literal SOP: merge only at 4+ same SKU+qty; never SKU-alone; triples stay unmerged) → GS-10 split_mode=sku_prefix_bands exception_field=Lineitem sku sheet1_before_product_name="Plain Polycotton Fabric" sku_prefix_breaks=["COT","DF","F","G","L","S"] (Sheet 1 = product-name cut, NOT SKU prefix; sheets 2–8 = SKU bands) → optional GS-11 format. Do NOT use volume-balance target_rows_per_tab for this workflow.
+- Prefer 2–6 steps (picklist may use 6). Be practical, not generic.
 - Tone: warm, concise, colleague-like — not a form or checklist.
 - Never mention internal codes, template variables, or raw JSON fields to the user in prose; codes belong only in the JSON block.`;
       }
