@@ -87,6 +87,7 @@ def test_gs08_bulk_writes_n_rows_in_one_update(picklist_table):
     values_api.update.assert_called_once()
     kwargs = values_api.update.call_args.kwargs
     assert kwargs["spreadsheetId"] == "abc123"
+    assert kwargs["valueInputOption"] == "RAW"
     assert kwargs["range"].startswith("'Picklist'!A1:")
     body_values = kwargs["body"]["values"]
     assert body_values[0] == picklist_table["columns"]
