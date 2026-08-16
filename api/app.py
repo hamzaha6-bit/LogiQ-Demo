@@ -18,6 +18,7 @@ from billing_status import billing_status_for_request
 from billing_webhook import WebhookError, process_event
 from client_agents import activate_agent_for_user, agents_status_for_user, pause_agent_for_user
 from http_auth import resolve_user_id
+from schema_health import check_schema_health
 from supabase_rest import pause_workflows_for_user
 from topup_checkout import TopupError, process_topup
 from workflow_approvals import list_pending_approvals_for_user, resolve_approval_for_user
@@ -36,12 +37,14 @@ class handler(BaseHTTPRequestHandler):
         if path.endswith("/ping"):
             self._json(200, {"status": "ok", "version": "2"})
         elif path.endswith("/health"):
+            schema_ok, schema = check_schema_health()
             self._json(
                 200,
                 {
-                    "status": "ok",
+                    "status": "ok" if schema_ok else "schema_incomplete",
                     "anthropic_configured": bool((os.environ.get("ANTHROPIC_API_KEY") or "").strip()),
                     "supabase_configured": bool(os.environ.get("SUPABASE_URL")),
+                    "schema": schema,
                 },
             )
         elif path.endswith("/config"):

@@ -163,6 +163,19 @@ def _update_workflow_run_times(
     rest_patch("workflows", match, payload)
 
 
+def _active_run_for_workflow(workflow_id: str) -> Optional[Dict[str, Any]]:
+    rows = rest_get(
+        "workflow_runs",
+        {
+            "workflow_id": f"eq.{workflow_id}",
+            "status": "in.(running,paused)",
+            "select": "id,status",
+            "limit": "1",
+        },
+    )
+    return rows[0] if rows else None
+
+
 def _create_run(workflow_id: str, *, user_id: str = "", client_id: str = "") -> Tuple[Optional[str], str]:
     payload: Dict[str, Any] = {
         "workflow_id": workflow_id,
@@ -176,6 +189,9 @@ def _create_run(workflow_id: str, *, user_id: str = "", client_id: str = "") -> 
     row, err = rest_post_with_error("workflow_runs", payload)
     if row and row.get("id"):
         return str(row["id"]), ""
+    err_l = (err or "").lower()
+    if "23505" in err_l or "duplicate" in err_l or "unique" in err_l:
+        return None, "already_running"
     return None, err or "Failed to create workflow run"
 
 
@@ -840,6 +856,15 @@ def run_workflow_for_user(
             gate_client_id=gate.client_id,
         )
 
+    active = _active_run_for_workflow(wid)
+    if active:
+        return 409, {
+            "detail": "This workflow is already running. Wait for it to finish before starting another run.",
+            "error": "workflow_already_running",
+            "status": active.get("status"),
+            "workflow_run_id": active.get("id"),
+        }
+
     tenant_client_id = (gate.client_id or "").strip()
     if not tenant_client_id or tenant_client_id == "owner-bypass":
         try:
@@ -849,6 +874,11 @@ def run_workflow_for_user(
 
     run_id, create_err = _create_run(wid, user_id=uid, client_id=tenant_client_id)
     if not run_id:
+        if create_err == "already_running":
+            return 409, {
+                "detail": "This workflow is already running. Wait for it to finish before starting another run.",
+                "error": "workflow_already_running",
+            }
         return 502, {"detail": create_err or "Failed to create workflow run"}
 
     record_allowed_action(gate.client_id, "workflow_run")

@@ -22,6 +22,7 @@ def test_app_and_ai_include_picklist_and_crypto():
         "api_lib/picklist_emit.py",
         "api_lib/picklist_format.py",
         "api_lib/sheet_transforms.py",
+        "api_lib/schema_health.py",
         "api_lib/workflow_approvals.py",
     ):
         assert needed in app, needed
