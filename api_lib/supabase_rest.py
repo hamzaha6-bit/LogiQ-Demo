@@ -1,4 +1,9 @@
-"""Shared Supabase REST helpers for Vercel API functions."""
+"""Shared Supabase REST helpers for Vercel API functions.
+
+AUDIT (G5): every service-role query bypasses RLS. Callers MUST filter by
+user_id and/or client_id for tenant tables. Do not PATCH/GET by primary key
+alone unless the row was just loaded through an ownership filter.
+"""
 from __future__ import annotations
 
 import os
@@ -172,6 +177,57 @@ def client_id_from_user_id(user_id: str) -> str:
         raise ValueError(f"no client membership for user {uid}")
     # TODO: multi-workspace selector when users belong to multiple clients
     return str(rows[0]["client_id"])
+
+
+def ensure_client_membership(user_id: str, *, display_name: str = "") -> str:
+    """Create a 1:1 client + owner membership + inactive entitlements if missing.
+
+    Idempotent. Required before execution_gate / user_integrations can succeed
+    for any real (non-OWNER_EMAILS) tenant.
+    """
+    uid = (user_id or "").strip()
+    if not uid:
+        raise ValueError("user_id is required")
+    try:
+        return client_id_from_user_id(uid)
+    except ValueError:
+        pass
+
+    name = (display_name or "").strip() or "Workspace"
+    row, err = rest_post_with_error("clients", {"name": name})
+    if not row or not row.get("id"):
+        try:
+            return client_id_from_user_id(uid)
+        except ValueError as lookup_exc:
+            raise ValueError(f"failed to create client: {err or lookup_exc}") from lookup_exc
+
+    client_id = str(row["id"])
+    member, merr = rest_post_with_error(
+        "client_members",
+        {"client_id": client_id, "user_id": uid, "role": "owner"},
+    )
+    if not member:
+        try:
+            return client_id_from_user_id(uid)
+        except ValueError as lookup_exc:
+            raise ValueError(
+                f"failed to create client membership: {merr or lookup_exc}"
+            ) from lookup_exc
+
+    rest_post(
+        "entitlements",
+        {
+            "client_id": client_id,
+            "status": "inactive",
+            "plan": None,
+            "actions_limit": 0,
+            "agents_limit": 0,
+            "workflows_limit": 0,
+            "spend_cap_pence": 0,
+        },
+        on_conflict="client_id",
+    )
+    return client_id
 
 
 def user_id_from_bearer(token: str) -> Optional[str]:

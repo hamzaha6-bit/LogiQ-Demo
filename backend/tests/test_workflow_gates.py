@@ -53,7 +53,7 @@ def test_create_workflow_allows_when_gate_passes(mock_gate: MagicMock, mock_post
     )
     status, payload = create_workflow_for_user(
         USER_ID,
-        {"agent_id": "aria", "steps": [{"step": 1, "code": "GS-01", "params": {"url": "https://x"}}]},
+        {"agent_id": "aria", "steps": [{"step": 1, "code": "GS-01", "params": {"url": "https://docs.google.com/spreadsheets/d/1qlOS1W3p1MIeZKViZEdCLnhXa_8fInsxjGN4Orzo0Ng/edit"}}]},
     )
     assert status == 200
     assert payload["workflow"]["id"] == "wf-1"

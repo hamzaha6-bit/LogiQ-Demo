@@ -20,6 +20,7 @@ from client_agents import activate_agent_for_user, agents_status_for_user, pause
 from http_auth import resolve_user_id
 from supabase_rest import pause_workflows_for_user
 from topup_checkout import TopupError, process_topup
+from workflow_approvals import list_pending_approvals_for_user, resolve_approval_for_user
 from workflow_create import create_workflow_for_user
 from workflow_delete import soft_delete_workflow_for_user
 from workflow_queries import latest_run_for_user_workflow, list_workflows_for_user
@@ -66,6 +67,8 @@ class handler(BaseHTTPRequestHandler):
             self._workflow_latest_run(latest_run_match.group(1))
         elif path.endswith("/workflows"):
             self._list_workflows()
+        elif path.endswith("/workflows/approvals"):
+            self._list_approvals()
         elif path.endswith("/audit/log"):
             self._json(200, {"logs": [], "entries": []})
         elif path.endswith("/cron/workflows"):
@@ -81,6 +84,8 @@ class handler(BaseHTTPRequestHandler):
             self._create_workflow()
         elif path.endswith("/workflows/run"):
             self._run_workflow()
+        elif path.endswith("/workflows/approvals/resolve"):
+            self._resolve_approval()
         elif path.endswith("/workflows/delete"):
             self._delete_workflow()
         elif path.endswith("/agents/activate"):
@@ -183,6 +188,25 @@ class handler(BaseHTTPRequestHandler):
             workflow_run_id=workflow_run_id,
             approval_id=approval_id,
         )
+        self._json(status, payload)
+
+    def _list_approvals(self):
+        user_id = resolve_user_id(self)
+        if not user_id:
+            self._json(401, {"detail": "Valid Bearer token required"})
+            return
+        status, payload = list_pending_approvals_for_user(user_id)
+        self._json(status, payload)
+
+    def _resolve_approval(self):
+        user_id = resolve_user_id(self)
+        if not user_id:
+            self._json(401, {"detail": "Valid Bearer token required"})
+            return
+        body = self._read_json_body()
+        approval_id = (body.get("approval_id") or "").strip()
+        decision = (body.get("decision") or body.get("action") or "").strip()
+        status, payload = resolve_approval_for_user(user_id, approval_id, decision)
         self._json(status, payload)
 
     def _create_workflow(self):

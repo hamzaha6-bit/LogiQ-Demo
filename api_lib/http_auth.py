@@ -2,19 +2,16 @@
 from __future__ import annotations
 
 from typing import Optional
-from urllib.parse import parse_qs, urlparse
 
 from supabase_rest import user_id_from_bearer
 
 
 def resolve_access_token(handler) -> Optional[str]:
-    qs = parse_qs(urlparse(handler.path).query)
-    token = (qs.get("token") or [""])[0]
-    if token:
-        return token.strip()
+    """Read the session from Authorization only — never from ?token= (leaks in logs/Referer)."""
     auth = handler.headers.get("Authorization", "")
     if auth.startswith("Bearer "):
-        return auth[7:].strip()
+        token = auth[7:].strip()
+        return token or None
     return None
 
 

@@ -49,7 +49,7 @@ from sheets_service import (
     write_row,
     write_rows,
 )
-from supabase_rest import client_id_from_user_id, rest_get, rest_patch, rest_post
+from supabase_rest import client_id_from_user_id, rest_get, rest_patch, rest_post, rest_post_with_error
 from workflow_context import (
     empty_context,
     is_missing_upstream_id,
@@ -147,6 +147,7 @@ def _create_approval(
 def _update_workflow_run_times(
     workflow_id: str,
     *,
+    user_id: str,
     last_run_at: str,
     next_run_at: Optional[str],
 ) -> None:
@@ -156,23 +157,33 @@ def _update_workflow_run_times(
     }
     if next_run_at is not None:
         payload["next_run_at"] = next_run_at
-    rest_patch("workflows", {"id": workflow_id}, payload)
+    match: Dict[str, str] = {"id": workflow_id}
+    if user_id:
+        match["user_id"] = user_id
+    rest_patch("workflows", match, payload)
 
 
-def _create_run(workflow_id: str) -> Optional[str]:
-    row = rest_post(
-        "workflow_runs",
-        {
-            "workflow_id": workflow_id,
-            "status": "running",
-            "context_json": {},
-        },
-    )
-    return str(row.get("id")) if row and row.get("id") else None
+def _create_run(workflow_id: str, *, user_id: str = "", client_id: str = "") -> Tuple[Optional[str], str]:
+    payload: Dict[str, Any] = {
+        "workflow_id": workflow_id,
+        "status": "running",
+        "context_json": {},
+    }
+    if user_id:
+        payload["user_id"] = user_id
+    if client_id and client_id != "owner-bypass":
+        payload["client_id"] = client_id
+    row, err = rest_post_with_error("workflow_runs", payload)
+    if row and row.get("id"):
+        return str(row["id"]), ""
+    return None, err or "Failed to create workflow run"
 
 
-def _load_run(run_id: str) -> Optional[Dict[str, Any]]:
-    rows = rest_get("workflow_runs", {"id": f"eq.{run_id}", "select": "*"})
+def _load_run(run_id: str, *, user_id: str = "") -> Optional[Dict[str, Any]]:
+    params: Dict[str, str] = {"id": f"eq.{run_id}", "select": "*"}
+    if user_id:
+        params["user_id"] = f"eq.{user_id}"
+    rows = rest_get("workflow_runs", params)
     return rows[0] if rows else None
 
 
@@ -183,6 +194,7 @@ def _save_run(
     status: Optional[str] = None,
     error: Optional[str] = None,
     completed: bool = False,
+    user_id: str = "",
 ) -> None:
     payload: Dict[str, Any] = {"context_json": context}
     if status:
@@ -191,7 +203,10 @@ def _save_run(
         payload["error"] = error
     if completed:
         payload["completed_at"] = _now_iso()
-    rest_patch("workflow_runs", {"id": run_id}, payload)
+    match: Dict[str, str] = {"id": run_id}
+    if user_id:
+        match["user_id"] = user_id
+    rest_patch("workflow_runs", match, payload)
 
 
 def _parse_steps(wf: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -626,7 +641,12 @@ def _finish_workflow_schedule(wf: Dict[str, Any], wid: str) -> None:
     schedule = parse_schedule(wf.get("schedule"))
     next_at = compute_next_run(schedule, datetime.now(timezone.utc))
     next_iso = next_at.isoformat() if next_at else None
-    _update_workflow_run_times(wid, last_run_at=_now_iso(), next_run_at=next_iso)
+    _update_workflow_run_times(
+        wid,
+        user_id=str(wf.get("user_id") or ""),
+        last_run_at=_now_iso(),
+        next_run_at=next_iso,
+    )
 
 
 def _finish_empty_run(
@@ -820,9 +840,16 @@ def run_workflow_for_user(
             gate_client_id=gate.client_id,
         )
 
-    run_id = _create_run(wid)
+    tenant_client_id = (gate.client_id or "").strip()
+    if not tenant_client_id or tenant_client_id == "owner-bypass":
+        try:
+            tenant_client_id = client_id_from_user_id(uid)
+        except ValueError:
+            tenant_client_id = ""
+
+    run_id, create_err = _create_run(wid, user_id=uid, client_id=tenant_client_id)
     if not run_id:
-        return 502, {"detail": "Failed to create workflow run"}
+        return 502, {"detail": create_err or "Failed to create workflow run"}
 
     record_allowed_action(gate.client_id, "workflow_run")
 
@@ -853,7 +880,7 @@ def _resume_after_approval(
     approval_id: str,
     gate_client_id: str = "",
 ) -> Tuple[int, Dict[str, Any]]:
-    run = _load_run(workflow_run_id)
+    run = _load_run(workflow_run_id, user_id=uid)
     if not run or str(run.get("workflow_id")) != wid:
         return 404, {"detail": "Workflow run not found"}
 
