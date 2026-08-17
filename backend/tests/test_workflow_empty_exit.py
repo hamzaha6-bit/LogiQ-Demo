@@ -56,7 +56,7 @@ def test_empty_results_template_flags_meta():
 @patch("workflow_runner.record_allowed_action")
 @patch("workflow_runner._finish_workflow_schedule")
 @patch("workflow_runner._save_run")
-@patch("workflow_runner._create_run", return_value="run-1")
+@patch("workflow_runner._create_run", return_value=("run-1", ""))
 @patch("workflow_runner._execute_step")
 @patch("workflow_runner.rest_get")
 @patch("workflow_runner.check_execution_gate")

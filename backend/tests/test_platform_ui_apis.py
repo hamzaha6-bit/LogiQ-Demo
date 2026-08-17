@@ -116,7 +116,7 @@ def test_create_workflow_success(mock_post, mock_gate):
             "name": "Remind patients",
             "description": "Send reminders",
             "trigger_description": "Every morning",
-            "steps": [{"step": 1, "code": "GS-01", "name": "Read sheet"}],
+            "steps": [{"step": 1, "code": "GS-01", "name": "Read sheet", "params": {"url": "https://docs.google.com/spreadsheets/d/1qlOS1W3p1MIeZKViZEdCLnhXa_8fInsxjGN4Orzo0Ng/edit"}}],
             "status": "active",
             "schedule": None,
         },
@@ -146,7 +146,7 @@ def test_create_workflow_resolves_client_id_for_owner_bypass(mock_post, mock_gat
             "name": "VPD Stock Duty",
             "description": "Reads the Stock_Ledger tab",
             "trigger_description": "Google Sheet linked: https://docs.google.com/spreadsheets/d/x",
-            "steps": [{"step": 1, "code": "GS-01", "name": "Read sheet"}],
+            "steps": [{"step": 1, "code": "GS-01", "name": "Read sheet", "params": {"url": "https://docs.google.com/spreadsheets/d/1qlOS1W3p1MIeZKViZEdCLnhXa_8fInsxjGN4Orzo0Ng/edit"}}],
         },
     )
     assert status == 200

@@ -13,12 +13,12 @@ from supabase import create_client
 
 from supabase_rest import (
     postgrest_error_code,
-    rest_get,
     rest_get_with_error,
     rest_patch_with_error,
     rest_post_with_error,
     sanitize_postgrest_error,
     user_id_from_bearer,
+    ensure_client_membership,
 )
 
 try:
@@ -70,6 +70,13 @@ def _postgrest_failure(step: str, status: int, body: str) -> dict:
 
 def _ensure_profile(user_id: str, name: str = "", email: str = ""):
     existing = _profile_row(user_id)
+    try:
+        ensure_client_membership(
+            user_id,
+            display_name=name or (email.split("@")[0] if email else ""),
+        )
+    except Exception as exc:
+        print(f"[auth] ensure_client_membership failed user_id={user_id}: {exc}")
     if existing:
         return existing
     row, err = rest_post_with_error(

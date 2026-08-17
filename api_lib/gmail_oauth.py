@@ -2,9 +2,12 @@
 from __future__ import annotations
 
 import base64
+import hashlib
+import hmac
 import json
 import os
 import secrets
+import time
 import traceback
 from typing import Optional, Tuple
 from urllib.parse import parse_qs, unquote, urlencode, urlparse
@@ -29,15 +32,12 @@ def _frontend_url() -> str:
 
 def _gmail_redirect(
     status: str,
-    access_token: Optional[str] = None,
     reason: Optional[str] = None,
     *,
     error_detail: str = "",
     stage: str = "",
 ) -> str:
     params = {"gmail": status}
-    if access_token:
-        params["token"] = access_token
     if reason:
         params["reason"] = reason
     if error_detail:
@@ -80,26 +80,60 @@ def _build_flow() -> Flow:
     return flow
 
 
+_OAUTH_STATE_MAX_AGE_SEC = 15 * 60
+
+
+def _oauth_state_secret() -> bytes:
+    raw = (
+        os.environ.get("OAUTH_STATE_SECRET")
+        or os.environ.get("TOKEN_ENCRYPTION_KEY")
+        or ""
+    ).strip()
+    if not raw:
+        raise RuntimeError(
+            "OAUTH_STATE_SECRET or TOKEN_ENCRYPTION_KEY is required to sign Google OAuth state"
+        )
+    return raw.encode("utf-8")
+
+
+def _sign_state_body(body: str) -> str:
+    return hmac.new(_oauth_state_secret(), body.encode("ascii"), hashlib.sha256).hexdigest()
+
+
 def _encode_oauth_state(user_id: Optional[str], access_token: Optional[str] = None) -> str:
-    # Keep state small — only user_id + nonce. Do NOT embed JWT (truncates in Google redirect).
+    # Keep state small — signed user_id + nonce + timestamp. Never embed JWT.
+    del access_token  # previously accepted; never encode tokens in state
     payload = {
         "user_id": user_id or "",
         "nonce": secrets.token_urlsafe(16),
+        "ts": int(time.time()),
     }
-    return base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip("=")
+    body = base64.urlsafe_b64encode(json.dumps(payload, separators=(",", ":")).encode()).decode().rstrip("=")
+    return f"{body}.{_sign_state_body(body)}"
 
 
 def _decode_oauth_state(state: str) -> Tuple[Optional[str], Optional[str]]:
+    """Return (user_id, unused_token). Token is always None — session stays in the browser."""
     if not state:
         print("[gmail_auth] state decode: empty state param")
         return None, None
     try:
-        pad = "=" * (-len(state) % 4)
-        data = json.loads(base64.urlsafe_b64decode(state + pad))
+        if "." not in state:
+            print("[gmail_auth] state decode FAILED: unsigned/legacy state rejected")
+            return None, None
+        body, sig = state.rsplit(".", 1)
+        expected = _sign_state_body(body)
+        if not hmac.compare_digest(expected, sig):
+            print("[gmail_auth] state decode FAILED: HMAC mismatch")
+            return None, None
+        pad = "=" * (-len(body) % 4)
+        data = json.loads(base64.urlsafe_b64decode(body + pad))
+        ts = int(data.get("ts") or 0)
+        if ts <= 0 or abs(int(time.time()) - ts) > _OAUTH_STATE_MAX_AGE_SEC:
+            print("[gmail_auth] state decode FAILED: expired")
+            return None, None
         uid = (data.get("user_id") or "").strip()
-        # Legacy payloads may include access_token — ignore for save, session restored via localStorage
-        token = (data.get("access_token") or "").strip()
-        return uid or None, token or None
+        return uid or None, None
     except Exception as exc:
         print(f"[gmail_auth] state decode FAILED: {type(exc).__name__}: {exc} state_len={len(state)}")
         return None, None
@@ -133,9 +167,9 @@ def handle_connect(handler) -> None:
             state=state,
         )
         _log_redirect_uri("connect", auth_url)
-        handler.send_response(302)
-        handler.send_header("Location", auth_url)
-        handler.end_headers()
+        handler._json(200, {"url": auth_url})
+    except RuntimeError as exc:
+        handler._json(503, {"detail": str(exc)})
     except Exception as exc:
         handler._json(500, {"detail": f"Google OAuth error: {exc}"})
 
@@ -206,9 +240,8 @@ def handle_callback(handler) -> None:
         _redirect(handler, _gmail_redirect("error", reason="not_configured", stage="not_configured"))
         return
 
-    user_id, access_token = _decode_oauth_state(state)
+    user_id, _unused_token = _decode_oauth_state(state)
     print(f"[gmail_auth] decoded state user_id: {user_id or '(missing)'}")
-    print(f"[gmail_auth] decoded state has access_token: {bool(access_token)}")
 
     if not user_id:
         print("[gmail_auth] ERROR: no user_id in OAuth state — cannot save token")
@@ -216,7 +249,6 @@ def handle_callback(handler) -> None:
             handler,
             _gmail_redirect(
                 "error",
-                access_token=access_token,
                 reason="missing_user_id",
                 error_detail="OAuth state did not contain user_id — connect while signed in",
                 stage="missing_user_id",
@@ -244,7 +276,6 @@ def handle_callback(handler) -> None:
             handler,
             _gmail_redirect(
                 "error",
-                access_token=access_token,
                 reason=_oauth_error_reason(exc),
                 error_detail=str(exc),
                 stage="token_exchange",
@@ -260,7 +291,6 @@ def handle_callback(handler) -> None:
                 handler,
                 _gmail_redirect(
                     "error",
-                    access_token=access_token,
                     reason="supabase_save_failed",
                     error_detail=save_error or "Failed to write token to Supabase",
                     stage="supabase_save",

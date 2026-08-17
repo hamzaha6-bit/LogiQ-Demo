@@ -385,10 +385,13 @@ def _validate_schema(locked: Dict[str, Any], columns: List[str]) -> Optional[Dic
     }
 
 
-def _pause_connection(conn_id: str, diff: Dict[str, Any]) -> None:
+def _pause_connection(conn_id: str, diff: Dict[str, Any], user_id: str = "") -> None:
+    match: Dict[str, str] = {"id": conn_id}
+    if user_id:
+        match["user_id"] = user_id
     rest_patch(
         "sheet_connections",
-        {"id": conn_id},
+        match,
         {
             "status": "paused_schema_mismatch",
             "schema_mismatch": diff,
@@ -537,7 +540,7 @@ def read_sheet(
     locked = conn.get("locked_schema") or {}
     diff = _validate_schema(locked, columns)
     if diff:
-        _pause_connection(conn["id"], diff)
+        _pause_connection(conn["id"], diff, user_id)
         raise SchemaMismatchError("Sheet schema changed — workflow paused", diff)
     out: Dict[str, Any] = {
         "success": True,
@@ -596,7 +599,7 @@ def write_row(
     _, columns = _rows_from_values(values)
     diff = _validate_schema(locked, columns)
     if diff:
-        _pause_connection(conn["id"], diff)
+        _pause_connection(conn["id"], diff, user_id)
         raise SchemaMismatchError("Sheet schema changed — write blocked", diff)
     row_values = [str(row_data.get(col, "")) for col in column_names]
     result = (
@@ -658,7 +661,7 @@ def update_row(
     _, columns = _rows_from_values(values)
     diff = _validate_schema(locked, columns)
     if diff:
-        _pause_connection(conn["id"], diff)
+        _pause_connection(conn["id"], diff, user_id)
         raise SchemaMismatchError("Sheet schema changed — update blocked", diff)
     if len(values) < row_num:
         raise SheetsError(f"Row {row_num} does not exist (sheet has {len(values)} rows including header)")
@@ -1093,7 +1096,7 @@ def poll(
     locked = conn.get("locked_schema") or {}
     diff = _validate_schema(locked, columns)
     if diff:
-        _pause_connection(conn["id"], diff)
+        _pause_connection(conn["id"], diff, user_id)
         raise SchemaMismatchError("Sheet schema changed — poll paused", diff)
     start_index = int(conn.get("poll_cursor") or 1)
     new_rows: List[Dict[str, str]] = []
@@ -1107,7 +1110,7 @@ def poll(
             new_rows.append(row)
     ok = rest_patch(
         "sheet_connections",
-        {"id": conn["id"]},
+        {"id": conn["id"], "user_id": user_id},
         {"poll_cursor": len(values), "updated_at": datetime.now(timezone.utc).isoformat()},
     )
     if not ok:

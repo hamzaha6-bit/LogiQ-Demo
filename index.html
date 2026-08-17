@@ -4756,6 +4756,7 @@
           };
           switchUserStore(authSession.user?.id);
           saveSessionToStorage();
+          await initSupabase();
           return true;
         } catch (e) {
           clearSessionStorage();
@@ -4772,6 +4773,7 @@
           authSession = { access_token: accessToken, user: profile };
           switchUserStore(authSession.user?.id);
           saveSessionToStorage();
+          await initSupabase();
           return true;
         } catch (e) {
           return false;
@@ -5295,6 +5297,7 @@
         if (data.user?.plan) authSession.user.plan = data.user.plan;
         saveSessionToStorage();
         switchUserStore(data.user?.id);
+        await initSupabase();
         goToAppHome();
         await refreshUserProfile();
         if (needsTosAcceptance()) {
@@ -5789,10 +5792,25 @@
 
         saveSessionToStorage();
         const token = authSession.access_token;
-        window.location.href =
-          API_BASE +
-          "/api/auth/gmail/connect?token=" +
-          encodeURIComponent(token);
+        try {
+          const res = await apiFetch("/api/auth/gmail/connect");
+          const data = await safeJson(res, {});
+          if (!res.ok || !data.url) {
+            toast(data.detail || "Could not start Google connect");
+            if (btn) {
+              btn.disabled = false;
+              btn.textContent = "Connect Gmail";
+            }
+            return;
+          }
+          window.location.href = data.url;
+        } catch (e) {
+          toast("Could not start Google connect");
+          if (btn) {
+            btn.disabled = false;
+            btn.textContent = "Connect Gmail";
+          }
+        }
       }
 
       async function disconnectGmail() {
@@ -7115,19 +7133,61 @@ Copy these into every GS-* step. Never replace with placeholders.`;
       }
 
       // ═══ 4. SUPABASE ═══
-      function initSupabase() {
+      const USER_SCOPED_TABLES = {
+        leads: true,
+        lead_emails: true,
+        invoices: true,
+        invoice_emails: true,
+        enquiries: true,
+        reports: true,
+        tasks: true,
+        agent_actions: true,
+        workflows: true,
+        workflow_approvals: true,
+        sheet_connections: true,
+        user_integrations: true,
+        audit_log: true,
+        usage_tracking: true,
+      };
+
+      async function initSupabase() {
+        const url = appConfig.supabase_url || KEYS.supabaseUrl;
+        const key = appConfig.supabase_anon_key || KEYS.supabaseAnon;
+        if (!url || !key || !window.supabase) {
+          supabaseClient = null;
+          return;
+        }
         try {
-          supabaseClient = window.supabase.createClient(
-            KEYS.supabaseUrl,
-            KEYS.supabaseAnon,
-          );
+          supabaseClient = window.supabase.createClient(url, key, {
+            auth: { persistSession: false, autoRefreshToken: false },
+          });
+          await attachSupabaseJwt();
           checkTables();
         } catch (e) {
           supabaseClient = null;
         }
       }
+
+      async function attachSupabaseJwt() {
+        if (!supabaseClient) return;
+        const token = getAuthBearerToken();
+        const stored = readSessionFromStorage() || {};
+        const refresh =
+          authSession?.refresh_token || stored.refresh_token || "";
+        if (!token || !refresh) return;
+        try {
+          await supabaseClient.auth.setSession({
+            access_token: token,
+            refresh_token: refresh,
+          });
+        } catch (e) {
+          console.warn("[supabase] setSession failed", e);
+        }
+      }
+
       async function checkTables() {
         if (!supabaseClient) return;
+        if (getAuthBearerToken()) return;
         try {
           const { error } = await supabaseClient
             .from("leads")
@@ -7199,10 +7259,15 @@ Copy these into every GS-* step. Never replace with placeholders.`;
       }
 
       async function dbGet(table, filter) {
-        if (supabaseClient && KEYS.supabaseUrl && KEYS.supabaseAnon) {
+        const scoped = { ...(filter || {}) };
+        const uid = typeof getCurrentUserId === "function" ? getCurrentUserId() : "";
+        if (USER_SCOPED_TABLES[table] && uid && scoped.user_id == null) {
+          scoped.user_id = uid;
+        }
+        if (supabaseClient && (appConfig.supabase_url || KEYS.supabaseUrl)) {
           try {
             let q = supabaseClient.from(table).select("*");
-            Object.entries(filter).forEach(([k, v]) => {
+            Object.entries(scoped).forEach(([k, v]) => {
               q = q.eq(k, v);
             });
             let res = await q.order("created_at", { ascending: false });
@@ -7211,7 +7276,7 @@ Copy these into every GS-* step. Never replace with placeholders.`;
           } catch (e) {}
         }
         let rows = memStore[table] || [];
-        Object.entries(filter).forEach(([k, v]) => {
+        Object.entries(scoped).forEach(([k, v]) => {
           rows = rows.filter((r) => r[k] === v);
         });
         return {
@@ -7228,9 +7293,11 @@ Copy these into every GS-* step. Never replace with placeholders.`;
           id: row.id || uid(),
           created_at: row.created_at || new Date().toISOString(),
         };
+        const ownerId = typeof getCurrentUserId === "function" ? getCurrentUserId() : "";
+        if (USER_SCOPED_TABLES[table] && ownerId && !rec.user_id) rec.user_id = ownerId;
         if (!memStore[table]) memStore[table] = [];
         memStore[table].push(rec);
-        if (supabaseClient && KEYS.supabaseUrl && KEYS.supabaseAnon) {
+        if (supabaseClient && (appConfig.supabase_url || KEYS.supabaseUrl)) {
           try {
             const { data, error } = await supabaseClient
               .from(table)
@@ -7249,14 +7316,13 @@ Copy these into every GS-* step. Never replace with placeholders.`;
       async function dbUpdate(table, id, updates) {
         const idx = (memStore[table] || []).findIndex((r) => r.id === id);
         if (idx >= 0) Object.assign(memStore[table][idx], updates);
-        if (supabaseClient && KEYS.supabaseUrl && KEYS.supabaseAnon) {
+        if (supabaseClient && (appConfig.supabase_url || KEYS.supabaseUrl)) {
           try {
-            const { data, error } = await supabaseClient
-              .from(table)
-              .update(updates)
-              .eq("id", id)
-              .select()
-              .single();
+            const ownerId =
+              typeof getCurrentUserId === "function" ? getCurrentUserId() : "";
+            let q = supabaseClient.from(table).update(updates).eq("id", id);
+            if (USER_SCOPED_TABLES[table] && ownerId) q = q.eq("user_id", ownerId);
+            const { data, error } = await q.select().single();
             if (!error && data) {
               syncMem(table, data);
               return data;
@@ -7496,7 +7562,7 @@ Copy these into every GS-* step. Never replace with placeholders.`;
           responded: "badge-warm",
           draft: "badge-cold",
         };
-        return `<span class="badge ${map[s] || "badge-cold"}">${status || "—"}</span>`;
+        return `<span class="badge ${map[s] || "badge-cold"}">${esc(status || "—")}</span>`;
       }
 
       function greeting() {
@@ -7592,7 +7658,7 @@ Copy these into every GS-* step. Never replace with placeholders.`;
       <div class="approval-actions">
         <button class="btn-approve" onclick="${opts.approveFn}">Approve</button>
         <button class="btn-deny" onclick="${opts.denyFn}">Deny</button>
-        <span class="approval-toggle" onclick="toggleApprovalExpand('${opts.id}')">${expanded ? "Hide details" : "Details +"}</span>
+        <span class="approval-toggle" onclick="toggleApprovalExpand('${esc(opts.id)}')">${expanded ? "Hide details" : "Details +"}</span>
       </div>
     </div>`;
         }
@@ -7634,8 +7700,8 @@ Copy these into every GS-* step. Never replace with placeholders.`;
               channel: a.integration || "—",
               trigger: plainApprovalLabel(labelMeta),
               draft: payload,
-              approveFn: "approveWorkflowApproval('" + a.id + "')",
-              denyFn: "rejectWorkflowApproval('" + a.id + "')",
+              approveFn: "approveWorkflowApproval(" + JSON.stringify(String(a.id)) + ")",
+              denyFn: "rejectWorkflowApproval(" + JSON.stringify(String(a.id)) + ")",
             });
           }),
           ...pendingActions.map((a) =>
@@ -7652,12 +7718,12 @@ Copy these into every GS-* step. Never replace with placeholders.`;
                   ? a.output
                   : JSON.stringify(a.output || {}, null, 2),
               approveFn:
-                "approveAction('" +
-                a.id +
-                "','" +
-                agentIdByName(a.agent) +
-                "')",
-              denyFn: "rejectAgentAction('" + a.id + "')",
+                "approveAction(" +
+                JSON.stringify(String(a.id)) +
+                "," +
+                JSON.stringify(String(agentIdByName(a.agent))) +
+                ")",
+              denyFn: "rejectAgentAction(" + JSON.stringify(String(a.id)) + ")",
             }),
           ),
         ].join("");
@@ -9661,31 +9727,19 @@ Copy these into every GS-* step. Never replace with placeholders.`;
       }
 
       async function expireStaleApprovals() {
-        const now = Date.now();
-        const { data: rows } = await dbGet("workflow_approvals", {});
-        for (const row of rows) {
-          if (row.status !== "pending" || !row.expires_at) continue;
-          if (new Date(row.expires_at).getTime() <= now) {
-            await dbUpdate("workflow_approvals", row.id, {
-              status: "expired",
-              resolved_at: new Date().toISOString(),
-            });
-            logAuditEvent(
-              deployedAgents.get(row.agent_id)?.name || row.agent_id,
-              "approval_expired",
-              { approval_id: row.id },
-            );
-          }
-        }
+        return;
       }
 
       async function loadPendingApprovals() {
-        await expireStaleApprovals();
-        const { data: wfApprovals } = await dbGet("workflow_approvals", {});
+        let pendingWf = [];
+        try {
+          const res = await apiFetch("/api/workflows/approvals");
+          const data = await safeJson(res, {});
+          if (res.ok) pendingWf = data.approvals || [];
+        } catch (e) {
+          pendingWf = [];
+        }
         const { data: actions } = await dbGet("agent_actions", {});
-        const pendingWf = (wfApprovals || []).filter(
-          (a) => a.status === "pending",
-        );
         const pendingActions = (actions || []).filter(
           (a) => a.status === "queued",
         );
@@ -9712,109 +9766,47 @@ Copy these into every GS-* step. Never replace with placeholders.`;
       }
 
       async function approveWorkflowApproval(approvalId) {
-        const { data: rows } = await dbGet("workflow_approvals", {});
-        const row = rows.find((r) => r.id === approvalId);
-        if (!row || row.status !== "pending") return;
-        const agent = deployedAgents.get(row.agent_id);
-        await dbUpdate("workflow_approvals", approvalId, {
-          status: "approved",
-          resolved_at: new Date().toISOString(),
-        });
-
-        if (row.workflow_run_id) {
-          try {
-            const res = await apiFetch("/api/workflows/run", {
-              method: "POST",
-              body: {
-                workflow_id: row.workflow_id,
-                workflow_run_id: row.workflow_run_id,
-                approval_id: approvalId,
-              },
-            });
-            const data = await safeJson(res, {});
-            if (!res.ok) {
-              toast(
-                data.detail || data.message || "Failed to resume workflow",
-                "err",
-              );
-            } else if (data.status === "pending_approval") {
-              toast("Approval needed — check your dashboard");
-              await loadPendingApprovals();
-            } else if (data.status === "completed") {
-              toast("Workflow completed", "success");
-            } else if (data.status === "failed") {
-              toast(data.detail || "Workflow step failed", "err");
-            } else {
-              toast("Action approved", "success");
-            }
-          } catch (e) {
-            toast("Failed to resume workflow", "err");
-          }
-          logAuditEvent(agent?.name || row.agent_id, "approval_granted", {
-            approval_id: approvalId,
-            code: row.primitive_code,
-            workflow_run_id: row.workflow_run_id,
+        try {
+          const res = await apiFetch("/api/workflows/approvals/resolve", {
+            method: "POST",
+            body: { approval_id: approvalId, decision: "approved" },
           });
-          updateApprovalBadgeCount();
-          if (currentPage === "dashboard") renderDashboard();
-          if (currentPage === "automations") renderAutomations();
-          return;
-        }
-
-        const code = row.primitive_code;
-        const payload = row.payload || {};
-        if (
-          (code === "GM-03" || code === "GM-04") &&
-          backendAvailable &&
-          payload.to
-        ) {
-          try {
-            const res = await apiFetch("/api/send/gmail", {
-              method: "POST",
-              body: {
-                to: payload.to,
-                subject: payload.subject || "(No subject)",
-                body: payload.body || "",
-                from_name: agent?.name || "LogiQ",
-              },
-            });
-            if (!res.ok) {
-              const err = await safeJson(res, {});
-              toast(err.detail || "Failed to send email", "error");
-            } else {
-              toast("Email sent", "success");
-            }
-          } catch (e) {
-            toast("Failed to send email", "error");
+          const data = await safeJson(res, {});
+          if (!res.ok) {
+            toast(data.detail || data.message || "Failed to resume workflow", "err");
+          } else if (data.status === "pending_approval") {
+            toast("Approval needed — check your dashboard");
+          } else if (data.status === "completed") {
+            toast("Workflow completed", "success");
+          } else if (data.status === "failed") {
+            toast(data.detail || "Workflow step failed", "err");
+          } else {
+            toast("Action approved", "success");
           }
-        } else {
-          toast("Action approved", "success");
+        } catch (e) {
+          toast("Failed to resume workflow", "err");
         }
-
-        logAuditEvent(agent?.name || row.agent_id, "approval_granted", {
-          approval_id: approvalId,
-          code,
-        });
-        await continueWorkflowAfterApproval(row);
         updateApprovalBadgeCount();
         if (currentPage === "dashboard") renderDashboard();
         if (currentPage === "automations") renderAutomations();
       }
 
       async function rejectWorkflowApproval(approvalId) {
-        const { data: rows } = await dbGet("workflow_approvals", {});
-        const row = rows.find((r) => r.id === approvalId);
-        if (!row || row.status !== "pending") return;
-        await dbUpdate("workflow_approvals", approvalId, {
-          status: "rejected",
-          resolved_at: new Date().toISOString(),
-        });
-        logAuditEvent(
-          deployedAgents.get(row.agent_id)?.name || row.agent_id,
-          "approval_rejected",
-          { approval_id: approvalId, code: row.primitive_code },
-        );
-        toast("Action rejected and skipped");
+        try {
+          const res = await apiFetch("/api/workflows/approvals/resolve", {
+            method: "POST",
+            body: { approval_id: approvalId, decision: "rejected" },
+          });
+          const data = await safeJson(res, {});
+          if (!res.ok) {
+            toast(data.detail || "Could not reject approval", "err");
+            return;
+          }
+          toast("Action rejected and skipped");
+        } catch (e) {
+          toast("Could not reject approval", "err");
+          return;
+        }
         updateApprovalBadgeCount();
         if (currentPage === "dashboard") renderDashboard();
         if (currentPage === "automations") renderAutomations();
@@ -11991,13 +11983,13 @@ Be proactive, concise, use **bold** for emphasis.`;
             }
             return `<div class="queue-card" id="qc-${a.id}">
       <div class="queue-id">${esc(a.item_id)}</div>
-      <div class="reasoning-panel"><span class="reasoning-toggle" onclick="this.nextElementSibling.classList.toggle('open')">▸ ${agent.name}'s reasoning</span>
+      <div class="reasoning-panel"><span class="reasoning-toggle" onclick="this.nextElementSibling.classList.toggle('open')">▸ ${esc(agent.name)}'s reasoning</span>
         <div class="reasoning-text">${esc(a.reasoning || output.reasoning || "")}</div></div>
       <div class="queue-output">${output.subject ? `<div class="subj">${esc(output.subject)}</div>` : ""}${esc(output.body || "")}</div>
       <div class="queue-actions">
-        <button class="btn-sm ok" onclick="approveAction('${a.id}','${agent.id}')">Approve</button>
-        <button class="btn-sm" onclick="editAction('${a.id}','${agent.id}')">Edit</button>
-        <button class="btn-sm" onclick="regenerateAction('${a.id}','${agent.id}')">Regenerate</button>
+        <button class="btn-sm ok" onclick="approveAction('${esc(a.id)}','${esc(agent.id)}')">Approve</button>
+        <button class="btn-sm" onclick="editAction('${esc(a.id)}','${esc(agent.id)}')">Edit</button>
+        <button class="btn-sm" onclick="regenerateAction('${esc(a.id)}','${esc(agent.id)}')">Regenerate</button>
       </div></div>`;
           })
           .join("");
@@ -12304,7 +12296,7 @@ Be proactive, concise, use **bold** for emphasis.`;
               ? "⚡ Send via Gmail"
               : "✓ Mark as sent";
             actionsDiv.innerHTML = `<span style="color:var(--ok);font-size:12px;font-weight:500">✓ Approved — ready to send</span>
-        <button class="btn-sm brand" onclick="sendAction('${actionId}','${agentId}')">${sendLabel}</button>`;
+        <button class="btn-sm brand" onclick="sendAction('${esc(actionId)}','${esc(agentId)}')">${sendLabel}</button>`;
           }
         }
         toast("✓ Approved");
@@ -13051,8 +13043,8 @@ Be proactive, concise, use **bold** for emphasis.`;
           const what = a.summary || a.action_name || "Action awaiting approval";
           return `<div class="auto-approval-row">
           <div class="meta"><div class="who">${esc(agent)}</div><div class="what">${esc(what)}</div></div>
-          <button class="btn-approve" onclick="approveWorkflowApproval('${a.id}')">Approve</button>
-          <button class="btn-deny" onclick="rejectWorkflowApproval('${a.id}')">Reject</button>
+          <button class="btn-approve" onclick="approveWorkflowApproval('${esc(a.id)}')">Approve</button>
+          <button class="btn-deny" onclick="rejectWorkflowApproval('${esc(a.id)}')">Reject</button>
         </div>`;
         })
         .join("")}
@@ -13103,7 +13095,7 @@ Be proactive, concise, use **bold** for emphasis.`;
         <span class="wf-badge ${status.cls}">${esc(status.label)}</span>
       </div>
       <div class="wf-card-actions" onclick="event.stopPropagation()">
-        <button type="button" class="btn-ghost" style="font-size:12px;padding:6px 10px" onclick="runAutomationFromCard('${esc(wf.id)}', this)">Run</button>
+        <button type="button" class="btn-ghost" style="font-size:12px;padding:6px 10px" onclick="runAutomationFromCard('${esc(wf.id)}', this)">Run now</button>
         <div id="wf-del-${esc(wf.id)}">
           <button type="button" class="btn-ghost" style="font-size:12px;padding:6px 10px" onclick="confirmDeleteAutomation('${esc(wf.id)}')">Delete</button>
         </div>
@@ -13241,8 +13233,8 @@ Be proactive, concise, use **bold** for emphasis.`;
                   icon = "⏳";
                   detail = "Waiting for your approval";
                   extra = `<div style="margin-top:8px;display:flex;gap:8px">
-          <button class="btn-approve" onclick="event.stopPropagation();approveWorkflowApproval('${pending.id}')">Approve</button>
-          <button class="btn-deny" onclick="event.stopPropagation();rejectWorkflowApproval('${pending.id}')">Reject</button>
+          <button class="btn-approve" onclick="event.stopPropagation();approveWorkflowApproval('${esc(pending.id)}')">Approve</button>
+          <button class="btn-deny" onclick="event.stopPropagation();rejectWorkflowApproval('${esc(pending.id)}')">Reject</button>
         </div>`;
                 } else if (
                   runFailed &&
@@ -13411,6 +13403,7 @@ Be proactive, concise, use **bold** for emphasis.`;
 
       async function init() {
         await loadAppConfig();
+        await initSupabase();
         await checkHealth();
         switchUserStore("_demo");
         if (isBillingPath()) {
