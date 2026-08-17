@@ -1,9 +1,7 @@
 -- 012_workflow_isolation.sql
 -- RLS + user ownership on workflow_runs; user-scoped policies on workflows /
--- workflow_approvals.
+-- workflow_approvals; one active run per workflow.
 -- FLAG: Apply manually in Supabase SQL Editor (after 011_sheet_source_tab.sql).
--- Wait for the concurrency PR before applying if you want the E16 unique index
--- in the same 012 file.
 
 BEGIN;
 
@@ -27,6 +25,25 @@ WHERE wr.workflow_id = w.id
 
 CREATE INDEX IF NOT EXISTS idx_workflow_runs_user ON workflow_runs(user_id);
 CREATE INDEX IF NOT EXISTS idx_workflow_runs_client ON workflow_runs(client_id);
+
+-- Collapse duplicate in-flight runs before the uniqueness lock.
+WITH ranked AS (
+  SELECT id,
+         ROW_NUMBER() OVER (PARTITION BY workflow_id ORDER BY started_at DESC NULLS LAST) AS rn
+  FROM workflow_runs
+  WHERE status IN ('running', 'paused')
+    AND workflow_id IS NOT NULL
+)
+UPDATE workflow_runs
+SET status = 'cancelled',
+    error = 'Superseded by concurrent-run lock (012)',
+    completed_at = COALESCE(completed_at, now())
+WHERE id IN (SELECT id FROM ranked WHERE rn > 1);
+
+-- E16: at most one running/paused run per workflow (cron + manual + multi-instance).
+CREATE UNIQUE INDEX IF NOT EXISTS idx_workflow_runs_one_active
+  ON workflow_runs (workflow_id)
+  WHERE status IN ('running', 'paused') AND workflow_id IS NOT NULL;
 
 ALTER TABLE workflow_runs ENABLE ROW LEVEL SECURITY;
 
