@@ -40,6 +40,7 @@ def decrypt_field(value: str) -> str:
     if not value:
         return value
     if not value.startswith(_PREFIX):
+        # Legacy plaintext from before encryption shipped — still readable, never re-stored as plaintext.
         return value
     ciphertext = value[len(_PREFIX) :]
     try:

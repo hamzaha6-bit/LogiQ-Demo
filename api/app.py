@@ -290,7 +290,20 @@ class handler(BaseHTTPRequestHandler):
 
         try:
             result = run_due_scheduled_workflows()
-            self._json(200, result)
+            workflows = []
+            for item in result.get("workflows") or []:
+                payload = item.get("result") if isinstance(item.get("result"), dict) else {}
+                workflows.append(
+                    {
+                        "workflow_id": item.get("workflow_id"),
+                        "user_id": item.get("user_id"),
+                        "name": item.get("name"),
+                        "http_status": item.get("http_status"),
+                        "status": payload.get("status"),
+                        "detail": payload.get("detail") or payload.get("error"),
+                    }
+                )
+            self._json(200, {"ran": result.get("ran", 0), "workflows": workflows})
         except Exception as exc:
             print(f"[cron/workflows] failed: {exc}")
             self._json(500, {"detail": "Scheduled workflow run failed"})

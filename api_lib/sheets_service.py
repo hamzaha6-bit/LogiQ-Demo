@@ -608,7 +608,7 @@ def write_row(
         .append(
             spreadsheetId=spreadsheet_id,
             range=_qualified_range(title, "A:ZZ"),
-            valueInputOption="USER_ENTERED",
+            valueInputOption="RAW",
             insertDataOption="INSERT_ROWS",
             body={"values": [row_values]},
         )
@@ -674,7 +674,7 @@ def update_row(
         .update(
             spreadsheetId=spreadsheet_id,
             range=a1,
-            valueInputOption="USER_ENTERED",
+            valueInputOption="RAW",
             body={"values": [row_values]},
         )
         .execute()
@@ -725,7 +725,7 @@ def write_cell(
         .update(
             spreadsheetId=spreadsheet_id,
             range=a1,
-            valueInputOption="USER_ENTERED",
+            valueInputOption="RAW",
             body={"values": [["" if value is None else str(value)]]},
         )
         .execute()
@@ -899,7 +899,7 @@ def write_rows(
         .update(
             spreadsheetId=sid,
             range=a1,
-            valueInputOption="USER_ENTERED",
+            valueInputOption="RAW",
             body={"values": matrix},
         )
         .execute()
