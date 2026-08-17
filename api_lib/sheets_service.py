@@ -344,6 +344,53 @@ def get_connection(user_id: str, agent_id: str, spreadsheet_id: str) -> Optional
     return rows[0] if rows else None
 
 
+def get_connection_for_spreadsheet(
+    user_id: str, spreadsheet_id: str
+) -> Optional[Dict[str, Any]]:
+    """Latest sheet_connections row for this user + workbook (any agent)."""
+    rows = rest_get(
+        "sheet_connections",
+        {
+            "user_id": f"eq.{user_id}",
+            "spreadsheet_id": f"eq.{spreadsheet_id}",
+            "select": "*",
+            "limit": "1",
+        },
+    )
+    return rows[0] if rows else None
+
+
+def _managed_output_titles_from_conn(conn: Optional[Dict[str, Any]]) -> List[str]:
+    if not conn:
+        return []
+    raw = conn.get("managed_output_titles") or []
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except json.JSONDecodeError:
+            return []
+    if not isinstance(raw, list):
+        return []
+    out: List[str] = []
+    for item in raw:
+        title = str(item or "").strip()
+        if title:
+            out.append(title)
+    return out
+
+
+def _persist_managed_output_titles(
+    conn: Optional[Dict[str, Any]], titles: List[str]
+) -> None:
+    if not conn or not conn.get("id") or not conn.get("user_id"):
+        return
+    rest_patch(
+        "sheet_connections",
+        {"id": str(conn["id"]), "user_id": str(conn["user_id"])},
+        {"managed_output_titles": sorted(set(titles))},
+    )
+
+
 def _ensure_connection(
     url: str,
     agent_id: str,
@@ -874,9 +921,12 @@ def write_rows(
     column_names = _normalize_bulk_columns(rows, columns)
     if not column_names:
         raise SheetsError("columns required (or inferable from rows)")
+    wanted = (sheet_name or "").strip()
+    if not wanted:
+        raise SheetsError("GS-08 requires sheet_name — refusing to default to the first tab")
 
     service = get_sheets_service(user_id)
-    title = _resolve_sheet_title(service, sid, sheet_name)
+    title = _resolve_sheet_title(service, sid, wanted)
     cleared = False
     if _coerce_bool(clear_first, False):
         service.spreadsheets().values().clear(
@@ -1217,20 +1267,23 @@ def emit_picklist(
     reserved template names hard-fail before any managed-tab delete.
 
     Template mode (template_sheet_name set):
-    - Always delete known managed outputs, then DuplicateSheetRequest recreate.
+    - Delete owned managed outputs (last emit + this run's planned titles),
+      then DuplicateSheetRequest recreate.
+    - Never name-pattern sweep the workbook (a human tab named "Picklist 9"
+      or "Exceptions" is left alone unless this connection owns it).
     - Never reuse prior blank-created tabs; never fall back to addSheet.
     - Missing template hard-fails.
     - Template / exceptions_template named like a managed output hard-fails
       (never silently delete the template).
     - Optional exceptions_template_sheet_name; else exceptions share the picklist template.
+    - Source tab / "Picklist Run" / template tabs are never deleted.
 
     Blank mode (no template): create missing tabs via addSheet; clear+write;
-    delete only orphan managed titles not needed this run.
+    delete only owned titles not needed this run.
     """
     from picklist_emit import (  # local import avoids cycles in tests
         EmitError,
         is_managed_output_title,
-        is_managed_picklist_title,
         parse_emit_params,
     )
 
@@ -1305,6 +1358,18 @@ def emit_picklist(
     service = get_sheets_service(user_id)
     existing = _list_sheet_properties(service, sid)
     by_title = {p["title"]: p["sheetId"] for p in existing}
+    conn = get_connection_for_spreadsheet(user_id, sid)
+    stored_titles = _managed_output_titles_from_conn(conn)
+    owned_titles = set(stored_titles) | set(needed_titles)
+    protected_titles = {ORDER_RANGE_SHEET_DEFAULT}
+    source_title = ((conn or {}).get("source_sheet_name") or "").strip()
+    if source_title:
+        protected_titles.add(source_title)
+    if template_name:
+        protected_titles.add(template_name)
+    if exc_template_name:
+        protected_titles.add(exc_template_name)
+    owned_titles -= protected_titles
 
     use_template = bool(template_name)
     if use_template:
@@ -1320,20 +1385,22 @@ def emit_picklist(
                 f"Exceptions template sheet {exc_template_name!r} not found "
                 f"(available: {available})"
             )
-        # Always delete + reduplicate managed outputs (idempotent recreate).
+        # Delete owned outputs only (this run's titles plus last emit), then reduplicate.
         managed_ids: List[int] = []
         for props in existing:
             title = props["title"]
-            if is_managed_picklist_title(title, prefix=prefix) or title == exc_name:
-                managed_ids.append(props["sheetId"])
+            if title in protected_titles or title not in owned_titles:
+                continue
+            managed_ids.append(props["sheetId"])
         deleted = _delete_sheets_by_ids(service, sid, managed_ids)
     else:
-        # Blank mode: remove managed titles not needed this run only.
+        # Blank mode: remove owned titles not needed this run only.
         orphan_ids: List[int] = []
         for props in existing:
             title = props["title"]
-            managed = is_managed_picklist_title(title, prefix=prefix) or title == exc_name
-            if managed and title not in needed_titles:
+            if title in protected_titles or title not in owned_titles:
+                continue
+            if title not in needed_titles:
                 orphan_ids.append(props["sheetId"])
         deleted = _delete_sheets_by_ids(service, sid, orphan_ids)
 
@@ -1404,6 +1471,8 @@ def emit_picklist(
                 "updated_range": write_out.get("updated_range"),
             }
         )
+
+    _persist_managed_output_titles(conn, [t["sheet_name"] for t in written])
 
     return {
         "success": True,

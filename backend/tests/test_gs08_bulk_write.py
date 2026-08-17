@@ -217,19 +217,20 @@ def test_gs02_still_uses_schema_lock():
 
 # ── sheet_name targeting ─────────────────────────────────────────────────────
 
-def test_gs08_defaults_to_first_sheet_when_name_omitted(picklist_table):
+def test_gs08_fails_loudly_when_name_omitted(picklist_table):
     service, values_api = _mock_service(titles=("Orders", "Picklist"))
     with patch("sheets_service._require_sheets"), \
          patch("sheets_service.get_sheets_service", return_value=service):
-        out = _execute_step(
-            "GS-08",
-            {"url": SHEET_URL, **picklist_table},
-            user_id="u1",
-            agent_id="aria",
-            agent_name="Aria",
-        )
-    assert out["sheet_name"] == "Orders"
-    assert values_api.update.call_args.kwargs["range"].startswith("'Orders'!A1:")
+        with pytest.raises(StepExecutionError) as exc:
+            _execute_step(
+                "GS-08",
+                {"url": SHEET_URL, **picklist_table},
+                user_id="u1",
+                agent_id="aria",
+                agent_name="Aria",
+            )
+    assert "sheet_name" in str(exc.value).lower()
+    values_api.update.assert_not_called()
 
 
 def test_gs08_loud_fail_when_named_sheet_missing(picklist_table):
