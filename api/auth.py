@@ -453,8 +453,10 @@ class handler(BaseHTTPRequestHandler):
             },
         )
 
-    def _json(self, status, payload):
+    def _json(self, status, payload, extra_headers=None):
         self.send_response(status)
         self.send_header("Content-type", "application/json")
+        for key, value in (extra_headers or {}).items():
+            self.send_header(key, value)
         self.end_headers()
         self.wfile.write(json.dumps(payload).encode())
