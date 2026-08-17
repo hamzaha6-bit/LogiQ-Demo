@@ -1,7 +1,8 @@
 -- 015_managed_output_tabs.sql
 -- Persist GS-10 tab titles owned by a sheet connection so emit deletes only
 -- tabs this workflow created, not any workbook tab matching "Picklist N".
--- FLAG: Apply manually in Supabase SQL Editor (after 014_integration_user_isolation.sql).
+-- FLAG: Apply manually in Supabase SQL Editor (after 013_schema_health.sql;
+-- independent of 014 — adds a column only).
 
 BEGIN;
 
