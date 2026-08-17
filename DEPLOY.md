@@ -11,12 +11,12 @@
 ## 1. Supabase setup
 
 1. Create a project at https://supabase.com/dashboard
-2. Open **SQL Editor** and run the full contents of `backend/schema.sql`
-3. Enable **Row Level Security** on all tables for production:
-   - `user_profiles`: users can read/update own row (`auth.uid() = id`)
-   - `user_integrations`: users can read own rows (`auth.uid() = user_id`)
-   - `audit_log`, `usage_tracking`, agent data tables: scope by `user_id`
-4. In **Authentication → URL Configuration**, set:
+2. Open **SQL Editor** and run, in order:
+   - `backend/schema.sql`
+   - then every file in `backend/migrations/` from `001_rls_foundation.sql` through `013_schema_health.sql`
+3. `GET /api/health` → `schema.ok` must be `true` (`missing_tables` empty). If not, a migration was skipped.
+4. Enable **Row Level Security** is applied by those migrations — do not skip 001 / 012.
+5. In **Authentication → URL Configuration**, set:
    - Site URL: `https://app.logiq.org.uk` (or your Vercel URL)
    - Redirect URLs: `https://app.logiq.org.uk/**`, `http://localhost:8000/**`
 5. Copy **Project URL**, **anon key**, and **service role key** from Settings → API
@@ -66,6 +66,9 @@ Set all variables from `.env.example`. Minimum for production:
 | `STRIPE_*_PRICE_ID` | For billing |
 | `FRONTEND_URL` | Yes — `https://app.logiq.org.uk` |
 | `OAUTH_REDIRECT_BASE` | Yes — same as FRONTEND_URL |
+| `TOKEN_ENCRYPTION_KEY` | Yes — Fernet key; encrypts Google OAuth tokens at rest |
+| `OAUTH_STATE_SECRET` | Recommended — HMAC for Gmail OAuth `state` (falls back to TOKEN_ENCRYPTION_KEY) |
+| `CRON_SECRET` | Yes — Bearer token for `/api/cron/workflows` (Vercel cron Authorization header) |
 
 ## 5. Custom domain (app.logiq.org.uk)
 
@@ -90,7 +93,7 @@ On startup, the server prints `backend/schema.sql` to the terminal — run it in
 
 ## 7. Verify deployment
 
-- `GET /api/health` — returns `supabase_configured: true`
+- `GET /api/health` — returns `supabase_configured: true` and `schema.ok: true`
 - Sign up via the login screen
 - Connect Gmail from onboarding
 - Deploy an agent via Build tab

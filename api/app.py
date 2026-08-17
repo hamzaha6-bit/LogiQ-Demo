@@ -18,6 +18,7 @@ from billing_status import billing_status_for_request
 from billing_webhook import WebhookError, process_event
 from client_agents import activate_agent_for_user, agents_status_for_user, pause_agent_for_user
 from http_auth import resolve_user_id
+from schema_health import check_schema_health
 from supabase_rest import pause_workflows_for_user
 from topup_checkout import TopupError, process_topup
 from workflow_approvals import list_pending_approvals_for_user, resolve_approval_for_user
@@ -36,12 +37,14 @@ class handler(BaseHTTPRequestHandler):
         if path.endswith("/ping"):
             self._json(200, {"status": "ok", "version": "2"})
         elif path.endswith("/health"):
+            schema_ok, schema = check_schema_health()
             self._json(
                 200,
                 {
-                    "status": "ok",
+                    "status": "ok" if schema_ok else "schema_incomplete",
                     "anthropic_configured": bool((os.environ.get("ANTHROPIC_API_KEY") or "").strip()),
                     "supabase_configured": bool(os.environ.get("SUPABASE_URL")),
+                    "schema": schema,
                 },
             )
         elif path.endswith("/config"):
@@ -287,7 +290,20 @@ class handler(BaseHTTPRequestHandler):
 
         try:
             result = run_due_scheduled_workflows()
-            self._json(200, result)
+            workflows = []
+            for item in result.get("workflows") or []:
+                payload = item.get("result") if isinstance(item.get("result"), dict) else {}
+                workflows.append(
+                    {
+                        "workflow_id": item.get("workflow_id"),
+                        "user_id": item.get("user_id"),
+                        "name": item.get("name"),
+                        "http_status": item.get("http_status"),
+                        "status": payload.get("status"),
+                        "detail": payload.get("detail") or payload.get("error"),
+                    }
+                )
+            self._json(200, {"ran": result.get("ran", 0), "workflows": workflows})
         except Exception as exc:
             print(f"[cron/workflows] failed: {exc}")
             self._json(500, {"detail": "Scheduled workflow run failed"})
