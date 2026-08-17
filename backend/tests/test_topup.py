@@ -19,7 +19,7 @@ os.environ.setdefault("STRIPE_TOPUP_PRICE_500", "price_test_topup_500")
 os.environ.setdefault("STRIPE_WEBHOOK_SECRET", "whsec_test_dummy_for_unit_tests")
 
 from billing_webhook import handle_checkout_session_completed  # noqa: E402
-from entitlements import apply_topup  # noqa: E402
+from entitlements import EntitlementError, apply_topup  # noqa: E402
 from topup_checkout import TopupError, process_topup  # noqa: E402
 
 USER_ID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
@@ -35,7 +35,7 @@ ACTIVE_ENTITLEMENT = {
 
 @patch("topup_checkout.get_stripe")
 @patch("topup_checkout.get_entitlement", return_value=ACTIVE_ENTITLEMENT)
-@patch("topup_checkout.client_id_from_user_id", return_value=CLIENT_ID)
+@patch("topup_checkout.require_billing_owner", return_value=CLIENT_ID)
 def test_valid_pack_active_subscriber_returns_url(
     mock_client_id: MagicMock,
     mock_entitlement: MagicMock,
@@ -53,10 +53,11 @@ def test_valid_pack_active_subscriber_returns_url(
     assert create_kwargs["client_reference_id"] == CLIENT_ID
     assert create_kwargs["metadata"]["topup_actions"] == "100"
     assert create_kwargs["metadata"]["pack_size"] == "100"
+    assert create_kwargs["metadata"]["client_id"] == CLIENT_ID
 
 
 @patch("topup_checkout.get_entitlement", return_value=ACTIVE_ENTITLEMENT)
-@patch("topup_checkout.client_id_from_user_id", return_value=CLIENT_ID)
+@patch("topup_checkout.require_billing_owner", return_value=CLIENT_ID)
 def test_invalid_pack_size_returns_400(
     mock_client_id: MagicMock,
     mock_entitlement: MagicMock,
@@ -67,7 +68,7 @@ def test_invalid_pack_size_returns_400(
 
 
 @patch("topup_checkout.get_entitlement", return_value={**ACTIVE_ENTITLEMENT, "status": "inactive"})
-@patch("topup_checkout.client_id_from_user_id", return_value=CLIENT_ID)
+@patch("topup_checkout.require_billing_owner", return_value=CLIENT_ID)
 def test_inactive_subscriber_returns_403(
     mock_client_id: MagicMock,
     mock_entitlement: MagicMock,
@@ -83,7 +84,7 @@ def test_unauthenticated_returns_401() -> None:
     assert exc.value.status == 401
 
 
-@patch("entitlements.rest_patch_filter")
+@patch("entitlements.rest_patch_filter", return_value=True)
 @patch("entitlements.get_entitlement", return_value=ACTIVE_ENTITLEMENT)
 def test_apply_topup_increases_actions_limit(
     mock_get_entitlement: MagicMock,
@@ -93,15 +94,17 @@ def test_apply_topup_increases_actions_limit(
     mock_patch.assert_called_once()
     payload = mock_patch.call_args.args[2]
     assert payload["actions_limit"] == 600
+    assert payload["purchased_topup_actions"] == 100
 
 
 @patch("entitlements.rest_patch_filter")
 @patch("entitlements.get_entitlement", return_value={**ACTIVE_ENTITLEMENT, "status": "inactive"})
-def test_apply_topup_inactive_client_no_op(
+def test_apply_topup_inactive_client_fails_closed(
     mock_get_entitlement: MagicMock,
     mock_patch: MagicMock,
 ) -> None:
-    apply_topup(CLIENT_ID, 100)
+    with pytest.raises(EntitlementError):
+        apply_topup(CLIENT_ID, 100)
     mock_patch.assert_not_called()
 
 

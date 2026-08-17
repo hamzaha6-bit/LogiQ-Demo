@@ -19,6 +19,7 @@ REQUIRED_TABLES = (
     "blueprint_messages",
     "sheet_connections",
     "schema_migrations",
+    "stripe_events",
 )
 
 

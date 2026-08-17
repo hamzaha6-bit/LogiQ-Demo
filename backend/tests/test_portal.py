@@ -15,6 +15,7 @@ sys.path.insert(0, str(_API_LIB))
 
 os.environ.setdefault("STRIPE_SECRET_KEY", "sk_test_dummy")
 
+from billing_auth import BillingAuthError  # noqa: E402
 from billing_portal import PortalError, process_portal  # noqa: E402
 
 USER_ID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
@@ -29,7 +30,7 @@ ACTIVE_ENTITLEMENT = {
 
 @patch("billing_portal.get_stripe")
 @patch("billing_portal.get_entitlement", return_value=ACTIVE_ENTITLEMENT)
-@patch("billing_portal.client_id_from_user_id", return_value=CLIENT_ID)
+@patch("billing_portal.require_billing_owner", return_value=CLIENT_ID)
 def test_active_subscriber_returns_portal_url(
     mock_client_id: MagicMock,
     mock_entitlement: MagicMock,
@@ -48,7 +49,7 @@ def test_active_subscriber_returns_portal_url(
 
 
 @patch("billing_portal.get_entitlement", return_value={**ACTIVE_ENTITLEMENT, "stripe_customer_id": None})
-@patch("billing_portal.client_id_from_user_id", return_value=CLIENT_ID)
+@patch("billing_portal.require_billing_owner", return_value=CLIENT_ID)
 def test_inactive_subscriber_no_customer_id_returns_403(
     mock_client_id: MagicMock,
     mock_entitlement: MagicMock,
@@ -63,7 +64,7 @@ def test_inactive_subscriber_no_customer_id_returns_403(
 
 
 @patch("billing_portal.get_entitlement")
-@patch("billing_portal.client_id_from_user_id", side_effect=ValueError("no client membership"))
+@patch("billing_portal.require_billing_owner", side_effect=BillingAuthError(400, "no client membership"))
 def test_no_client_membership_returns_400(
     mock_client_id: MagicMock,
     mock_entitlement: MagicMock,

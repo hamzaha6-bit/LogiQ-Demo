@@ -24,6 +24,7 @@ def test_app_and_ai_include_picklist_and_crypto():
         "api_lib/sheet_transforms.py",
         "api_lib/schema_health.py",
         "api_lib/workflow_approvals.py",
+        "api_lib/billing_auth.py",
     ):
         assert needed in app, needed
     for needed in ("api_lib/crypto.py", "api_lib/sheets_service.py", "api_lib/google_oauth.py"):

@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
+from billing_auth import BillingAuthError, require_billing_owner
 from entitlements import get_entitlement
 from stripe_client import get_stripe
-from supabase_rest import client_id_from_user_id
 
 PORTAL_RETURN_URL = "https://app.logiqops.co.uk/billing/success"
 
@@ -19,13 +19,10 @@ class PortalError(Exception):
 
 
 def process_portal(user_id: Optional[str]) -> Dict[str, str]:
-    if not user_id:
-        raise PortalError(401, {"detail": "Not authenticated"})
-
     try:
-        client_id = client_id_from_user_id(user_id)
-    except ValueError as exc:
-        raise PortalError(400, {"detail": str(exc)}) from exc
+        client_id = require_billing_owner(user_id)
+    except BillingAuthError as exc:
+        raise PortalError(exc.status, {"detail": exc.detail}) from exc
 
     entitlement = get_entitlement(client_id)
     status = (entitlement.get("status") or "").strip().lower() if entitlement else ""
