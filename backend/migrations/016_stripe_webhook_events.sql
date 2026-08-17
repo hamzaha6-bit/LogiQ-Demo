@@ -1,7 +1,8 @@
 -- 016_stripe_webhook_events.sql
 -- Idempotent Stripe event store + preserve purchased top-up packs across
 -- subscription.updated (plan limits must not wipe actions_limit bonuses).
--- FLAG: Apply manually in Supabase SQL Editor (after 015_managed_output_tabs.sql).
+-- FLAG: Apply manually in Supabase SQL Editor (after 013_schema_health.sql;
+-- independent of 014/015 — does not require those migrations).
 
 BEGIN;
 
