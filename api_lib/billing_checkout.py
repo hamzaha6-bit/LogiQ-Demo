@@ -5,8 +5,9 @@ from __future__ import annotations
 import os
 from typing import Any, Dict, Optional
 
+from billing_auth import BillingAuthError, require_billing_owner
+from entitlements import get_entitlement
 from stripe_client import get_stripe
-from supabase_rest import client_id_from_user_id
 
 VALID_TIERS = frozenset({"spark", "starter", "pro", "business"})
 
@@ -47,15 +48,24 @@ def create_checkout_session(client_id: str, tier: str) -> str:
         raise CheckoutError(400, f"Stripe price not configured for tier '{normalized}'")
 
     stripe = get_stripe()
-    session = stripe.checkout.Session.create(
-        mode="subscription",
-        line_items=[{"price": price_id, "quantity": 1}],
-        client_reference_id=client_id,
-        allow_promotion_codes=True,
-        success_url=CHECKOUT_SUCCESS_URL,
-        cancel_url=CHECKOUT_CANCEL_URL,
-        automatic_tax={"enabled": False},
+    entitlement = get_entitlement(client_id)
+    customer_id = (
+        (entitlement.get("stripe_customer_id") or "").strip() if entitlement else ""
     )
+    create_kwargs: Dict[str, Any] = {
+        "mode": "subscription",
+        "line_items": [{"price": price_id, "quantity": 1}],
+        "client_reference_id": client_id,
+        "metadata": {"client_id": client_id},
+        "subscription_data": {"metadata": {"client_id": client_id}},
+        "allow_promotion_codes": True,
+        "success_url": CHECKOUT_SUCCESS_URL,
+        "cancel_url": CHECKOUT_CANCEL_URL,
+        "automatic_tax": {"enabled": False},
+    }
+    if customer_id:
+        create_kwargs["customer"] = customer_id
+    session = stripe.checkout.Session.create(**create_kwargs)
     if not session.url:
         raise CheckoutError(502, "Stripe did not return a checkout URL")
     return session.url
@@ -70,9 +80,9 @@ def process_checkout(user_id: Optional[str], tier: Optional[str]) -> Dict[str, s
         raise CheckoutError(400, "tier is required")
 
     try:
-        client_id = client_id_from_user_id(user_id)
-    except ValueError as exc:
-        raise CheckoutError(400, str(exc)) from exc
+        client_id = require_billing_owner(user_id)
+    except BillingAuthError as exc:
+        raise CheckoutError(exc.status, exc.detail) from exc
 
     url = create_checkout_session(client_id, tier_value)
     return {"url": url}

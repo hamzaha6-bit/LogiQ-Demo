@@ -8,12 +8,16 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Optional
 
 from entitlements import (
+    EntitlementError,
     apply_topup,
+    get_entitlement,
     get_entitlement_by_subscription_id,
+    purchased_topup_actions,
     sync_user_profiles_plan,
     upsert_entitlement,
 )
 from stripe_client import get_stripe
+from supabase_rest import rest_delete, rest_post_with_error
 from tiers import limits_for, tier_from_price_id
 
 logger = logging.getLogger("logiq.billing_webhook")
@@ -122,6 +126,7 @@ def _inactive_entitlement_payload(client_id: str) -> Dict[str, Any]:
         "agents_limit": limits["agents"],
         "workflows_limit": limits["workflows"],
         "spend_cap_pence": limits["spend_cap_pence"],
+        "purchased_topup_actions": 0,
     }
 
 
@@ -165,8 +170,15 @@ def _entitlement_payload_from_subscription(
 def _apply_active_subscription(client_id: str, subscription: Dict[str, Any]) -> None:
     payload = _entitlement_payload_from_subscription(client_id, subscription)
     if not payload:
-        return
-    upsert_entitlement(payload)
+        raise WebhookError(500, f"Unknown Stripe price for client {client_id}")
+    existing = get_entitlement(client_id)
+    bonus = purchased_topup_actions(existing)
+    payload["purchased_topup_actions"] = bonus
+    payload["actions_limit"] = int(payload["actions_limit"] or 0) + bonus
+    try:
+        upsert_entitlement(payload)
+    except EntitlementError as exc:
+        raise WebhookError(500, str(exc)) from exc
     sync_user_profiles_plan(client_id, payload["plan"])
     try:
         from hook_handler import send_subscription_confirmation
@@ -187,10 +199,13 @@ def _fetch_subscription(subscription_id: str) -> Dict[str, Any]:
 
 def handle_checkout_session_completed(event: Any) -> None:
     session = _as_dict(event["data"]["object"])
-    client_id = (session.get("client_reference_id") or "").strip()
+    metadata = session.get("metadata") or {}
+    client_id = (
+        (session.get("client_reference_id") or "").strip()
+        or str(metadata.get("client_id") or "").strip()
+    )
     if not client_id:
-        logger.warning("checkout.session.completed missing client_reference_id")
-        return
+        raise WebhookError(500, "checkout.session.completed missing client_id")
 
     subscription_id = session.get("subscription")
     if subscription_id:
@@ -198,83 +213,84 @@ def handle_checkout_session_completed(event: Any) -> None:
         _apply_active_subscription(client_id, subscription)
         return
 
-    metadata = session.get("metadata") or {}
     mode = (session.get("mode") or "").strip().lower()
     topup_actions = metadata.get("topup_actions")
     if mode == "payment" and topup_actions:
         try:
             actions_to_add = int(topup_actions)
-        except (TypeError, ValueError):
-            logger.warning(
-                "checkout.session.completed invalid topup_actions for client %s",
-                client_id,
-            )
-            return
-        apply_topup(client_id, actions_to_add)
+        except (TypeError, ValueError) as exc:
+            raise WebhookError(
+                500,
+                f"checkout.session.completed invalid topup_actions for client {client_id}",
+            ) from exc
+        try:
+            apply_topup(client_id, actions_to_add)
+        except EntitlementError as exc:
+            raise WebhookError(500, str(exc)) from exc
         return
 
-    logger.warning("checkout.session.completed unhandled session for client %s", client_id)
+    raise WebhookError(500, f"checkout.session.completed unhandled session for client {client_id}")
+
+
+def _resolve_subscription_client_id(subscription: Dict[str, Any], subscription_id: str) -> str:
+    existing = get_entitlement_by_subscription_id(subscription_id)
+    client_id = (existing or {}).get("client_id")
+    if not client_id:
+        client_id = (subscription.get("metadata") or {}).get("client_id")
+    client_id = str(client_id or "").strip()
+    if not client_id:
+        raise WebhookError(
+            500, f"Could not resolve client_id for subscription {subscription_id}"
+        )
+    return client_id
 
 
 def handle_subscription_created(event: Any) -> None:
     subscription = _as_dict(event["data"]["object"])
-    client_id = (subscription.get("metadata") or {}).get("client_id")
-    if not client_id:
-        existing = get_entitlement_by_subscription_id(str(subscription.get("id") or ""))
-        if existing:
-            client_id = existing.get("client_id")
-    if not client_id:
-        logger.warning("subscription.created could not resolve client_id for %s", subscription.get("id"))
-        return
-    _apply_active_subscription(str(client_id), subscription)
+    subscription_id = str(subscription.get("id") or "")
+    client_id = _resolve_subscription_client_id(subscription, subscription_id)
+    _apply_active_subscription(client_id, subscription)
 
 
 def handle_subscription_updated(event: Any) -> None:
     subscription = _as_dict(event["data"]["object"])
     subscription_id = str(subscription.get("id") or "")
-    existing = get_entitlement_by_subscription_id(subscription_id)
-    client_id = (existing or {}).get("client_id")
-    if not client_id:
-        client_id = (subscription.get("metadata") or {}).get("client_id")
-    if not client_id:
-        logger.warning("subscription.updated could not resolve client_id for %s", subscription_id)
-        return
-    _apply_active_subscription(str(client_id), subscription)
+    client_id = _resolve_subscription_client_id(subscription, subscription_id)
+    _apply_active_subscription(client_id, subscription)
 
 
 def handle_subscription_deleted(event: Any) -> None:
     subscription = _as_dict(event["data"]["object"])
     subscription_id = str(subscription.get("id") or "")
-    existing = get_entitlement_by_subscription_id(subscription_id)
-    client_id = (existing or {}).get("client_id")
-    if not client_id:
-        client_id = (subscription.get("metadata") or {}).get("client_id")
-    if not client_id:
-        logger.warning("subscription.deleted could not resolve client_id for %s", subscription_id)
-        return
-
-    upsert_entitlement(_inactive_entitlement_payload(str(client_id)))
-    sync_user_profiles_plan(str(client_id), None)
+    client_id = _resolve_subscription_client_id(subscription, subscription_id)
+    try:
+        upsert_entitlement(_inactive_entitlement_payload(client_id))
+    except EntitlementError as exc:
+        raise WebhookError(500, str(exc)) from exc
+    sync_user_profiles_plan(client_id, None)
 
 
 def handle_invoice_payment_failed(event: Any) -> None:
     invoice = _as_dict(event["data"]["object"])
     subscription_id = invoice.get("subscription")
     if not subscription_id:
-        logger.warning("invoice.payment_failed missing subscription id")
-        return
+        raise WebhookError(500, "invoice.payment_failed missing subscription id")
 
     existing = get_entitlement_by_subscription_id(str(subscription_id))
     if not existing:
-        logger.warning("invoice.payment_failed no entitlement for subscription %s", subscription_id)
-        return
+        raise WebhookError(
+            500, f"invoice.payment_failed no entitlement for subscription {subscription_id}"
+        )
 
-    upsert_entitlement(
-        {
-            "client_id": existing["client_id"],
-            "status": "past_due",
-        }
-    )
+    try:
+        upsert_entitlement(
+            {
+                "client_id": existing["client_id"],
+                "status": "past_due",
+            }
+        )
+    except EntitlementError as exc:
+        raise WebhookError(500, str(exc)) from exc
 
 
 _EVENT_HANDLERS: Dict[str, Callable[[Any], None]] = {
@@ -286,6 +302,28 @@ _EVENT_HANDLERS: Dict[str, Callable[[Any], None]] = {
 }
 
 
+def _is_unique_violation(err: str) -> bool:
+    lower = (err or "").lower()
+    return "23505" in lower or "duplicate" in lower or "unique" in lower or "http 409" in lower
+
+
+def _claim_stripe_event(event_id: str, event_type: str) -> bool:
+    """Insert event.id. True = this process owns it. False = already processed."""
+    _row, err = rest_post_with_error(
+        "stripe_events",
+        {"event_id": event_id, "event_type": event_type},
+    )
+    if not err:
+        return True
+    if _is_unique_violation(err):
+        return False
+    raise WebhookError(500, f"Failed to claim Stripe event {event_id}: {err}")
+
+
+def _release_stripe_event(event_id: str) -> None:
+    rest_delete("stripe_events", {"event_id": event_id})
+
+
 def process_event(payload: bytes, sig_header: str) -> Dict[str, bool]:
     try:
         event = verify_event(payload, sig_header)
@@ -294,9 +332,26 @@ def process_event(payload: bytes, sig_header: str) -> Dict[str, bool]:
 
     event_type = event["type"]
     handler = _EVENT_HANDLERS.get(event_type)
-    if handler:
-        handler(event)
-    else:
+    if not handler:
         logger.info("Ignoring unhandled Stripe event type: %s", event_type)
+        return {"received": True}
+
+    event_id = str(event.get("id") or "").strip()
+    if not event_id:
+        raise WebhookError(500, f"Stripe event missing id (type={event_type})")
+
+    claimed = _claim_stripe_event(event_id, event_type)
+    if not claimed:
+        logger.info("Duplicate Stripe event %s ignored", event_id)
+        return {"received": True}
+
+    try:
+        handler(event)
+    except WebhookError:
+        _release_stripe_event(event_id)
+        raise
+    except Exception as exc:
+        _release_stripe_event(event_id)
+        raise WebhookError(500, str(exc)) from exc
 
     return {"received": True}

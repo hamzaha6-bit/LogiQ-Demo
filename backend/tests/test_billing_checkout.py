@@ -27,16 +27,17 @@ os.environ.setdefault("STRIPE_PRICE_BUSINESS", "price_test_business")
 
 import billing_checkout  # noqa: E402
 import stripe_client  # noqa: E402
+from billing_auth import BillingAuthError, require_billing_owner  # noqa: E402
 from billing_checkout import CheckoutError, create_checkout_session, process_checkout  # noqa: E402
-from supabase_rest import client_id_from_user_id  # noqa: E402
 
 KNOWN_USER_ID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 KNOWN_CLIENT_ID = "11111111-2222-4333-8444-555555555555"
 
 
+@patch("billing_checkout.get_entitlement", return_value=None)
 @patch("billing_checkout.get_stripe")
-@patch("billing_checkout.client_id_from_user_id", return_value=KNOWN_CLIENT_ID)
-def test_tier_spark_returns_checkout_url(mock_client_id, mock_get_stripe) -> None:
+@patch("billing_checkout.require_billing_owner", return_value=KNOWN_CLIENT_ID)
+def test_tier_spark_returns_checkout_url(mock_owner, mock_get_stripe, mock_entitlement) -> None:
     mock_session = MagicMock()
     mock_session.url = "https://checkout.stripe.com/c/pay/cs_test_abc123"
     mock_get_stripe.return_value.checkout.Session.create.return_value = mock_session
@@ -49,11 +50,13 @@ def test_tier_spark_returns_checkout_url(mock_client_id, mock_get_stripe) -> Non
     assert create_kwargs["mode"] == "subscription"
     assert create_kwargs["allow_promotion_codes"] is True
     assert create_kwargs["automatic_tax"] == {"enabled": False}
+    assert create_kwargs["metadata"]["client_id"] == KNOWN_CLIENT_ID
+    assert create_kwargs["subscription_data"]["metadata"]["client_id"] == KNOWN_CLIENT_ID
 
 
 @patch("billing_checkout.get_stripe")
-@patch("billing_checkout.client_id_from_user_id", return_value=KNOWN_CLIENT_ID)
-def test_invalid_tier_returns_400(mock_client_id, mock_get_stripe) -> None:
+@patch("billing_checkout.require_billing_owner", return_value=KNOWN_CLIENT_ID)
+def test_invalid_tier_returns_400(mock_owner, mock_get_stripe) -> None:
     with pytest.raises(CheckoutError) as exc:
         process_checkout(KNOWN_USER_ID, "concierge")
     assert exc.value.status == 400
@@ -73,8 +76,9 @@ def test_unauthenticated_returns_401() -> None:
     assert exc.value.status == 401
 
 
+@patch("billing_checkout.get_entitlement", return_value=None)
 @patch("billing_checkout.get_stripe")
-def test_client_reference_id_matches_client_id(mock_get_stripe) -> None:
+def test_client_reference_id_matches_client_id(mock_get_stripe, mock_entitlement) -> None:
     client_id = str(uuid.uuid4())
     mock_session = MagicMock()
     mock_session.url = "https://checkout.stripe.com/c/pay/cs_test_xyz"
@@ -84,26 +88,42 @@ def test_client_reference_id_matches_client_id(mock_get_stripe) -> None:
 
     create_kwargs = mock_get_stripe.return_value.checkout.Session.create.call_args.kwargs
     assert create_kwargs["client_reference_id"] == client_id
+    assert create_kwargs["metadata"]["client_id"] == client_id
+    assert create_kwargs["subscription_data"]["metadata"]["client_id"] == client_id
     assert create_kwargs["line_items"][0]["quantity"] == 1
     assert create_kwargs["line_items"][0]["price"].startswith("price_")
 
 
-@patch("supabase_rest.rest_get")
-def test_client_id_from_user_id_returns_uuid(mock_rest_get) -> None:
+@patch("billing_auth.rest_get")
+def test_require_billing_owner_returns_owner_client(mock_rest_get) -> None:
     mock_rest_get.return_value = [
-        {"client_id": KNOWN_CLIENT_ID, "created_at": "2026-01-01T00:00:00Z"},
+        {"client_id": KNOWN_CLIENT_ID, "role": "owner"},
     ]
-    result = client_id_from_user_id(KNOWN_USER_ID)
+    result = require_billing_owner(KNOWN_USER_ID)
     assert result == KNOWN_CLIENT_ID
     uuid.UUID(result)
-    mock_rest_get.assert_called_once()
 
 
-@patch("supabase_rest.rest_get", return_value=[])
-def test_client_id_from_user_id_raises_when_no_membership(mock_rest_get) -> None:
+@patch("billing_auth.rest_get", return_value=[{"client_id": KNOWN_CLIENT_ID, "role": "member"}])
+def test_require_billing_owner_rejects_member(mock_rest_get) -> None:
+    with pytest.raises(BillingAuthError) as exc:
+        require_billing_owner(KNOWN_USER_ID)
+    assert exc.value.status == 403
+
+
+@patch("billing_checkout.require_billing_owner", side_effect=BillingAuthError(403, "Only the client owner can manage billing"))
+def test_member_cannot_start_checkout(mock_owner) -> None:
+    with pytest.raises(CheckoutError) as exc:
+        process_checkout(KNOWN_USER_ID, "spark")
+    assert exc.value.status == 403
+
+
+@patch("billing_auth.rest_get", return_value=[])
+def test_require_billing_owner_raises_when_no_membership(mock_rest_get) -> None:
     fake_user = "00000000-0000-4000-8000-000000099999"
-    with pytest.raises(ValueError, match=f"no client membership for user {fake_user}"):
-        client_id_from_user_id(fake_user)
+    with pytest.raises(BillingAuthError) as exc:
+        require_billing_owner(fake_user)
+    assert exc.value.status == 400
 
 
 def test_stripe_secret_key_missing_raises_at_import() -> None:

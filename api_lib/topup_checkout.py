@@ -5,9 +5,9 @@ from __future__ import annotations
 import os
 from typing import Any, Dict, Optional
 
+from billing_auth import BillingAuthError, require_billing_owner
 from entitlements import get_entitlement
 from stripe_client import get_stripe
-from supabase_rest import client_id_from_user_id
 
 TOPUP_PACKS: Dict[str, Dict[str, Any]] = {
     "100": {"actions": 100, "price_env": "STRIPE_TOPUP_PRICE_100"},
@@ -46,15 +46,26 @@ def create_topup_session(client_id: str, pack_size: str) -> str:
 
     actions = int(pack["actions"])
     stripe = get_stripe()
-    session = stripe.checkout.Session.create(
-        mode="payment",
-        line_items=[{"price": price_id, "quantity": 1}],
-        client_reference_id=client_id,
-        metadata={"topup_actions": str(actions), "pack_size": pack_size},
-        success_url=CHECKOUT_SUCCESS_URL,
-        cancel_url=CHECKOUT_CANCEL_URL,
-        automatic_tax={"enabled": False},
+    create_kwargs: Dict[str, Any] = {
+        "mode": "payment",
+        "line_items": [{"price": price_id, "quantity": 1}],
+        "client_reference_id": client_id,
+        "metadata": {
+            "topup_actions": str(actions),
+            "pack_size": pack_size,
+            "client_id": client_id,
+        },
+        "success_url": CHECKOUT_SUCCESS_URL,
+        "cancel_url": CHECKOUT_CANCEL_URL,
+        "automatic_tax": {"enabled": False},
+    }
+    entitlement = get_entitlement(client_id)
+    customer_id = (
+        (entitlement.get("stripe_customer_id") or "").strip() if entitlement else ""
     )
+    if customer_id:
+        create_kwargs["customer"] = customer_id
+    session = stripe.checkout.Session.create(**create_kwargs)
     if not session.url:
         raise TopupError(502, "Stripe did not return a checkout URL")
     return session.url
@@ -69,9 +80,9 @@ def process_topup(user_id: Optional[str], pack_size: Optional[str]) -> Dict[str,
         raise TopupError(400, f"Invalid pack_size '{pack_size}' — must be one of: 100, 500")
 
     try:
-        client_id = client_id_from_user_id(user_id)
-    except ValueError as exc:
-        raise TopupError(400, str(exc)) from exc
+        client_id = require_billing_owner(user_id)
+    except BillingAuthError as exc:
+        raise TopupError(exc.status, exc.detail) from exc
 
     entitlement = get_entitlement(client_id)
     status = (entitlement.get("status") or "").strip().lower() if entitlement else ""

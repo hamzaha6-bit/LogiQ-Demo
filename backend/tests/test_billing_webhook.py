@@ -264,6 +264,77 @@ def test_process_event_invalid_signature_returns_400() -> None:
     assert exc.value.status == 400
 
 
+def test_checkout_missing_client_id_fails_closed() -> None:
+    with pytest.raises(WebhookError) as exc:
+        handle_checkout_session_completed(
+            _event("checkout.session.completed", {"client_reference_id": "", "metadata": {}})
+        )
+    assert exc.value.status == 500
+
+
+@patch("billing_webhook.handle_checkout_session_completed")
+@patch("billing_webhook._claim_stripe_event", return_value=False)
+@patch("billing_webhook.verify_event")
+def test_duplicate_event_id_is_acked_without_reapply(
+    mock_verify: MagicMock,
+    mock_claim: MagicMock,
+    mock_handler: MagicMock,
+) -> None:
+    mock_verify.return_value = {
+        "id": "evt_dup",
+        "type": "checkout.session.completed",
+        "data": {"object": {}},
+    }
+    result = process_event(b"{}", "sig")
+    assert result == {"received": True}
+    mock_handler.assert_not_called()
+
+
+@patch("billing_webhook._release_stripe_event")
+@patch("billing_webhook._claim_stripe_event", return_value=True)
+@patch("billing_webhook.verify_event")
+def test_handler_failure_releases_claim_and_returns_500(
+    mock_verify: MagicMock,
+    mock_claim: MagicMock,
+    mock_release: MagicMock,
+) -> None:
+    mock_verify.return_value = {
+        "id": "evt_fail",
+        "type": "checkout.session.completed",
+        "data": {"object": {"client_reference_id": ""}},
+    }
+    with pytest.raises(WebhookError) as exc:
+        process_event(b"{}", "sig")
+    assert exc.value.status == 500
+    mock_release.assert_called_once_with("evt_fail")
+
+
+@patch("billing_webhook.sync_user_profiles_plan")
+@patch("billing_webhook.upsert_entitlement")
+@patch("billing_webhook.get_entitlement")
+@patch("billing_webhook.get_entitlement_by_subscription_id")
+def test_subscription_updated_preserves_purchased_topups(
+    mock_get_by_sub: MagicMock,
+    mock_get_entitlement: MagicMock,
+    mock_upsert: MagicMock,
+    mock_sync_profiles: MagicMock,
+) -> None:
+    mock_get_by_sub.return_value = {"client_id": CLIENT_ID}
+    mock_get_entitlement.return_value = {
+        "client_id": CLIENT_ID,
+        "plan": "starter",
+        "actions_limit": 600,
+        "purchased_topup_actions": 100,
+    }
+    handle_subscription_updated(
+        _event("customer.subscription.updated", _subscription_object(price_id="price_test_starter"))
+    )
+    upsert_payload = mock_upsert.call_args.args[0]
+    assert upsert_payload["plan"] == "starter"
+    assert upsert_payload["purchased_topup_actions"] == 100
+    assert upsert_payload["actions_limit"] == 600
+
+
 def test_stripe_webhook_secret_missing_raises_at_import() -> None:
     original = os.environ.pop("STRIPE_WEBHOOK_SECRET", None)
     try:
