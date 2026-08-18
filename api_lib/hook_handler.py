@@ -177,6 +177,16 @@ def is_user_created_hook_path(path: str) -> bool:
 
 
 def handle_user_created_hook(handler: BaseHTTPRequestHandler) -> None:
+    secret = _hook_secret()
+    if not secret:
+        print("[auth_hook] SUPABASE_AUTH_HOOK_SECRET not set — refusing hook")
+        json_response(
+            handler,
+            401,
+            {"error": {"message": "Auth hook secret not configured"}},
+        )
+        return
+
     from standardwebhooks.webhooks import Webhook, WebhookVerificationError
 
     try:
@@ -185,12 +195,6 @@ def handle_user_created_hook(handler: BaseHTTPRequestHandler) -> None:
         payload_text = raw.decode("utf-8")
     except Exception as exc:
         json_response(handler, 400, {"error": {"message": f"Invalid request body: {exc}"}})
-        return
-
-    secret = _hook_secret()
-    if not secret:
-        print("[auth_hook] SUPABASE_AUTH_HOOK_SECRET not set")
-        json_response(handler, 200, {})
         return
 
     headers = {

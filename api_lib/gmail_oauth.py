@@ -81,6 +81,7 @@ def _build_flow() -> Flow:
 
 
 _OAUTH_STATE_MAX_AGE_SEC = 15 * 60
+OAUTH_NONCE_COOKIE = "logiq_oauth_nonce"
 
 
 def _oauth_state_secret() -> bytes:
@@ -100,20 +101,23 @@ def _sign_state_body(body: str) -> str:
     return hmac.new(_oauth_state_secret(), body.encode("ascii"), hashlib.sha256).hexdigest()
 
 
-def _encode_oauth_state(user_id: Optional[str], access_token: Optional[str] = None) -> str:
+def _encode_oauth_state(
+    user_id: Optional[str], access_token: Optional[str] = None
+) -> Tuple[str, str]:
     # Keep state small — signed user_id + nonce + timestamp. Never embed JWT.
     del access_token  # previously accepted; never encode tokens in state
+    nonce = secrets.token_urlsafe(16)
     payload = {
         "user_id": user_id or "",
-        "nonce": secrets.token_urlsafe(16),
+        "nonce": nonce,
         "ts": int(time.time()),
     }
     body = base64.urlsafe_b64encode(json.dumps(payload, separators=(",", ":")).encode()).decode().rstrip("=")
-    return f"{body}.{_sign_state_body(body)}"
+    return f"{body}.{_sign_state_body(body)}", nonce
 
 
 def _decode_oauth_state(state: str) -> Tuple[Optional[str], Optional[str]]:
-    """Return (user_id, unused_token). Token is always None — session stays in the browser."""
+    """Return (user_id, nonce). Both None when state is missing, unsigned, or expired."""
     if not state:
         print("[gmail_auth] state decode: empty state param")
         return None, None
@@ -133,10 +137,41 @@ def _decode_oauth_state(state: str) -> Tuple[Optional[str], Optional[str]]:
             print("[gmail_auth] state decode FAILED: expired")
             return None, None
         uid = (data.get("user_id") or "").strip()
-        return uid or None, None
+        nonce = (data.get("nonce") or "").strip()
+        return (uid or None), (nonce or None)
     except Exception as exc:
         print(f"[gmail_auth] state decode FAILED: {type(exc).__name__}: {exc} state_len={len(state)}")
         return None, None
+
+
+def _cookie_value(header: Optional[str], name: str) -> Optional[str]:
+    if not header:
+        return None
+    for part in header.split(";"):
+        key, sep, value = part.strip().partition("=")
+        if sep and key == name:
+            return value
+    return None
+
+
+def _oauth_nonce_cookie_header(nonce: str, *, clear: bool = False) -> str:
+    if clear or not nonce:
+        return (
+            f"{OAUTH_NONCE_COOKIE}=; HttpOnly; Secure; SameSite=Lax; "
+            "Path=/api/auth/gmail; Max-Age=0"
+        )
+    return (
+        f"{OAUTH_NONCE_COOKIE}={nonce}; HttpOnly; Secure; SameSite=Lax; "
+        f"Path=/api/auth/gmail; Max-Age={_OAUTH_STATE_MAX_AGE_SEC}"
+    )
+
+
+def _oauth_nonce_matches(expected: Optional[str], cookie_header: Optional[str]) -> bool:
+    got = _cookie_value(cookie_header, OAUTH_NONCE_COOKIE) or ""
+    want = expected or ""
+    if not want or not got:
+        return False
+    return hmac.compare_digest(want, got)
 
 
 def is_gmail_auth_path(path: str) -> bool:
@@ -158,7 +193,7 @@ def handle_connect(handler) -> None:
         return
     try:
         flow = _build_flow()
-        state = _encode_oauth_state(user_id)
+        state, nonce = _encode_oauth_state(user_id)
         print(f"[gmail_auth] connect — state_len={len(state)} user_id={user_id}")
         auth_url, _ = flow.authorization_url(
             access_type="offline",
@@ -167,7 +202,11 @@ def handle_connect(handler) -> None:
             state=state,
         )
         _log_redirect_uri("connect", auth_url)
-        handler._json(200, {"url": auth_url})
+        handler._json(
+            200,
+            {"url": auth_url},
+            extra_headers={"Set-Cookie": _oauth_nonce_cookie_header(nonce)},
+        )
     except RuntimeError as exc:
         handler._json(503, {"detail": str(exc)})
     except Exception as exc:
@@ -240,19 +279,27 @@ def handle_callback(handler) -> None:
         _redirect(handler, _gmail_redirect("error", reason="not_configured", stage="not_configured"))
         return
 
-    user_id, _unused_token = _decode_oauth_state(state)
+    user_id, nonce = _decode_oauth_state(state)
     print(f"[gmail_auth] decoded state user_id: {user_id or '(missing)'}")
-
-    if not user_id:
-        print("[gmail_auth] ERROR: no user_id in OAuth state — cannot save token")
+    cookie_header = handler.headers.get("Cookie")
+    if not user_id or not nonce or not _oauth_nonce_matches(nonce, cookie_header):
+        print(
+            "[gmail_auth] ERROR: OAuth CSRF check failed "
+            f"(user_id={bool(user_id)} nonce={bool(nonce)} cookie={bool(_cookie_value(cookie_header, OAUTH_NONCE_COOKIE))})"
+        )
         _redirect(
             handler,
             _gmail_redirect(
                 "error",
-                reason="missing_user_id",
-                error_detail="OAuth state did not contain user_id — connect while signed in",
-                stage="missing_user_id",
+                reason="oauth_csrf" if user_id else "missing_user_id",
+                error_detail=(
+                    "OAuth callback nonce did not match this browser session"
+                    if user_id
+                    else "OAuth state did not contain user_id — connect while signed in"
+                ),
+                stage="oauth_csrf" if user_id else "missing_user_id",
             ),
+            extra_headers={"Set-Cookie": _oauth_nonce_cookie_header("", clear=True)},
         )
         return
 
@@ -302,7 +349,11 @@ def handle_callback(handler) -> None:
         return
 
     print(f"[gmail_auth] === OAuth callback succeeded (user_id={user_id}) ===")
-    _redirect(handler, _gmail_redirect("connected"))
+    _redirect(
+        handler,
+        _gmail_redirect("connected"),
+        extra_headers={"Set-Cookie": _oauth_nonce_cookie_header("", clear=True)},
+    )
 
 
 def handle_status(handler) -> None:
@@ -339,7 +390,9 @@ def handle_disconnect(handler) -> None:
     handler._json(200, {"success": True, "connected": False})
 
 
-def _redirect(handler, url: str) -> None:
+def _redirect(handler, url: str, extra_headers=None) -> None:
     handler.send_response(302)
     handler.send_header("Location", url)
+    for key, value in (extra_headers or {}).items():
+        handler.send_header(key, value)
     handler.end_headers()
