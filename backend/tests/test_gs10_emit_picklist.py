@@ -288,8 +288,15 @@ def test_gs10_idempotent_rerun_deletes_orphan_picklist_tabs(fixture_rows):
     service, spreadsheets, state = _mock_service(
         titles=("Sheet1", "Picklist 1", "Picklist 2", "Picklist 3", "Exceptions")
     )
+    owned = {
+        "id": "conn-1",
+        "user_id": "u1",
+        "source_sheet_name": "Picklist Run",
+        "managed_output_titles": ["Picklist 1", "Picklist 2", "Picklist 3", "Exceptions"],
+    }
     with patch("sheets_service._require_sheets"), \
-         patch("sheets_service.get_sheets_service", return_value=service):
+         patch("sheets_service.get_sheets_service", return_value=service), \
+         patch("sheets_service.get_connection_for_spreadsheet", return_value=owned):
         out = _execute_step(
             "GS-10",
             {
@@ -320,8 +327,15 @@ def test_gs10_empty_input_cleans_managed_tabs():
     service, spreadsheets, state = _mock_service(
         titles=("Sheet1", "Picklist 1", "Exceptions")
     )
+    owned = {
+        "id": "conn-1",
+        "user_id": "u1",
+        "source_sheet_name": "Picklist Run",
+        "managed_output_titles": ["Picklist 1", "Exceptions"],
+    }
     with patch("sheets_service._require_sheets"), \
-         patch("sheets_service.get_sheets_service", return_value=service):
+         patch("sheets_service.get_sheets_service", return_value=service), \
+         patch("sheets_service.get_connection_for_spreadsheet", return_value=owned):
         out = _execute_step(
             "GS-10",
             {
@@ -628,3 +642,72 @@ def test_parse_emit_sku_prefix_mode_always_eight_picklists():
     assert plan["picklists"][0]["sheet_name"] == "Picklist 1"
     assert plan["picklists"][7]["sheet_name"] == "Picklist 8"
     assert plan["exceptions"]["row_count"] == 1
+    assert plan["picklist_prefix"] == "Picklist"
+    assert plan["exception_sheet_name"] == "Exceptions"
+
+
+def test_gs10_does_not_delete_unowned_picklist_named_tabs(fixture_rows):
+    """A human tab named Picklist 99 / Exceptions is not owned — leave it."""
+    rows = [r for r in fixture_rows["rows"] if str(r.get("Lineitem sku") or "").strip()][:4]
+    service, spreadsheets, state = _mock_service(
+        titles=("Sheet1", "Picklist Run", "Picklist 99", "Exceptions", "Picklist 1")
+    )
+    owned = {
+        "id": "conn-1",
+        "user_id": "u1",
+        "source_sheet_name": "Picklist Run",
+        "managed_output_titles": ["Picklist 1"],
+    }
+    with patch("sheets_service._require_sheets"), \
+         patch("sheets_service.get_sheets_service", return_value=service), \
+         patch("sheets_service.get_connection_for_spreadsheet", return_value=owned):
+        _execute_step(
+            "GS-10",
+            {
+                "url": SHEET_URL,
+                "rows": rows,
+                "columns": fixture_rows["columns"],
+                "exception_field": "Lineitem sku",
+                "tab_count": 1,
+                "keep_groups_intact": False,
+            },
+            user_id="u1",
+            agent_id="aria",
+            agent_name="Aria",
+        )
+    assert "Picklist 99" in state["titles"]
+    assert "Exceptions" in state["titles"]
+    assert "Picklist Run" in state["titles"]
+
+
+def test_gs10_never_deletes_picklist_run_source_tab(fixture_rows):
+    rows = [r for r in fixture_rows["rows"] if str(r.get("Lineitem sku") or "").strip()][:2]
+    service, spreadsheets, state = _mock_service(
+        titles=("Picklist Run", "Picklist Template", "Picklist 1")
+    )
+    owned = {
+        "id": "conn-1",
+        "user_id": "u1",
+        "source_sheet_name": "Picklist Run",
+        "managed_output_titles": ["Picklist Run", "Picklist 1"],
+    }
+    with patch("sheets_service._require_sheets"), \
+         patch("sheets_service.get_sheets_service", return_value=service), \
+         patch("sheets_service.get_connection_for_spreadsheet", return_value=owned):
+        _execute_step(
+            "GS-10",
+            {
+                "url": SHEET_URL,
+                "rows": rows,
+                "columns": fixture_rows["columns"],
+                "exception_field": "Lineitem sku",
+                "tab_count": 1,
+                "keep_groups_intact": False,
+                "template_sheet_name": "Picklist Template",
+            },
+            user_id="u1",
+            agent_id="aria",
+            agent_name="Aria",
+        )
+    assert "Picklist Run" in state["titles"]
+    assert "Picklist Template" in state["titles"]

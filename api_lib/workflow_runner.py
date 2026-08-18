@@ -488,6 +488,10 @@ def _execute_sheets_step(
         if code == "GS-08":
             if not url and not spreadsheet_id:
                 raise StepExecutionError("GS-08 requires a sheet url or spreadsheet_id")
+            if not sheet_name:
+                raise StepExecutionError(
+                    "GS-08 requires sheet_name — refusing to default to the first tab"
+                )
             rows = params.get("rows")
             columns = params.get("columns")
             nested = (

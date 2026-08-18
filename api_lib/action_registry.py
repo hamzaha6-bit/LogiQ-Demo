@@ -110,7 +110,7 @@ ACTION_REGISTRY: Dict[str, Dict[str, Any]] = {
             "url": "Google Sheets URL (or spreadsheet_id)",
             "rows": "list of row objects (or from prior XF/GS-01 output)",
             "columns": "column name list for the output schema",
-            "sheet_name": "optional tab title; default first sheet; missing name fails loudly",
+            "sheet_name": "required tab title; missing name fails loudly (never defaults to the first sheet)",
             "clear_first": "optional; clear tab then write (default false / opt-in)",
         },
     },
